@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TouchableOpacity } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ScanFace, Users, ChevronLeft, AlertCircle } from 'lucide-react-native';
 
@@ -78,10 +78,11 @@ export default function ClassDetailScreen() {
     avg: string;
     isDelegated: string;
     regularFaculty: string;
+    initialMode?: string;
   }>();
 
   const [students, setStudents] = useState(DEMO_STUDENTS);
-  const [markingMode, setMarkingMode] = useState(false);
+  const [markingMode, setMarkingMode] = useState(params.initialMode === 'review');
   const [reviewTab, setReviewTab] = useState<'check' | 'found'>('check');
   const [marks, setMarks] = useState<Record<string, 'PRESENT' | 'ABSENT'>>({});
   const [confirmSheetVisible, setConfirmSheetVisible] = useState(false);
@@ -297,10 +298,29 @@ export default function ClassDetailScreen() {
         variant="primary"
         style={styles.takeAttendanceButton}
         icon={<ScanFace size={20} color="#ffffff" />}
-        onPress={() => setMarkingMode(true)}
+        onPress={() => {
+          router.push({
+            pathname: '/(faculty)/session/scan',
+            params: {
+              sectionId: params.id || '1',
+              subject: params.subject || 'Data Structures',
+              section: params.section || 'CSE 3A',
+              room: params.room || 'LH-204',
+            },
+          });
+        }}
       >
-        Take attendance
+        Start scanning
       </Button>
+
+      <TouchableOpacity
+        onPress={() => setMarkingMode(true)}
+        style={{ marginTop: 10, marginBottom: 8, alignItems: 'center' }}
+      >
+        <Text style={{ fontSize: 13, color: Colors.soft, textDecorationLine: 'underline' }}>
+          Mark attendance manually
+        </Text>
+      </TouchableOpacity>
 
       <SectionTitle>Students</SectionTitle>
 
