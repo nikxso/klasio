@@ -7,6 +7,7 @@
  */
 
 import { FaceDetectionResult, IFaceDetector, RawFrame } from '../../../perception/contracts';
+import { PerceptionClient } from '../../../perception/perceptionClient';
 
 export class YuNetDetector implements IFaceDetector {
   readonly modelName = 'YuNet';
@@ -14,12 +15,21 @@ export class YuNetDetector implements IFaceDetector {
 
   private isInitialized = false;
   private modelPath: string = '';
-  private confidenceThreshold: number = 0.6;
+  private confidenceThreshold: number = 0.4;
   private nmsThreshold: number = 0.3;
+  private targetWidth: number = 640;
+  private targetHeight: number = 640;
 
-  constructor(confidenceThreshold: number = 0.6, nmsThreshold: number = 0.3) {
+  constructor(
+    confidenceThreshold: number = 0.4,
+    nmsThreshold: number = 0.3,
+    targetWidth: number = 640,
+    targetHeight: number = 640
+  ) {
     this.confidenceThreshold = confidenceThreshold;
     this.nmsThreshold = nmsThreshold;
+    this.targetWidth = targetWidth;
+    this.targetHeight = targetHeight;
   }
 
   public async initialize(modelPath?: string): Promise<void> {
@@ -29,13 +39,16 @@ export class YuNetDetector implements IFaceDetector {
 
   public async detectFaces(frame: RawFrame): Promise<FaceDetectionResult[]> {
     if (!this.isInitialized) {
-      throw new Error('YuNetDetector is not initialized');
+      await this.initialize();
     }
-    // Simulation / runtime delegation hook:
-    // In production React Native VisionCamera frame processor, this delegates via JSI
-    // to the native ONNX Runtime / OpenCV dnn session.
-    // In the ML Lab benchmark testbed, it returns decoded detections.
-    return [];
+    const { results } = await PerceptionClient.detect(
+      frame,
+      'YuNet',
+      this.targetWidth,
+      this.targetHeight,
+      this.confidenceThreshold
+    );
+    return results;
   }
 
   public async dispose(): Promise<void> {

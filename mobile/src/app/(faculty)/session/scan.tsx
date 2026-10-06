@@ -42,16 +42,23 @@ import {
   ANALYSIS_RESOLUTIONS,
   FormattedCapability,
 } from '@/perception/cameraFormatPolicy';
-import type { FaceDetectionResult } from '@/perception/contracts';
+import type { FaceDetectionResult, RawFrame } from '@/perception/contracts';
+import { YuNetDetector, SCRFDDetector } from '@/lab';
 
 interface DetectedFaceBox {
   id: string;
-  x: number; // percentage [0, 100] or relative
+  x: number; // percentage [0, 100]
   y: number;
   width: number;
   height: number;
   confidence: number;
-  isRecognised?: boolean;
+  landmarks?: {
+    leftEye: { x: number; y: number };
+    rightEye: { x: number; y: number };
+    noseTip: { x: number; y: number };
+    mouthLeft: { x: number; y: number };
+    mouthRight: { x: number; y: number };
+  };
 }
 
 export default function FacultyScanningScreen() {
@@ -67,6 +74,7 @@ export default function FacultyScanningScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
 
   // Camera and sensor state
+  const cameraRef = useRef<Camera>(null);
   const [cameraPosition, setCameraPosition] = useState<'back' | 'front'>('back');
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
@@ -74,13 +82,17 @@ export default function FacultyScanningScreen() {
   const [permissionDeniedCount, setPermissionDeniedCount] = useState<number>(0);
   const [isRequestingPermission, setIsRequestingPermission] = useState<boolean>(false);
 
+  // Foreground & active camera status
+  const isForeground = appState === 'active' || appState === 'unknown';
+  const isCameraActive = isForeground && hasPermission && !isPaused && cameraError === null;
+
   // Perception / Detector state
   const [activeDetector, setActiveDetector] = useState<'YuNet' | 'SCRFD-500M'>('YuNet');
+  const [analysisPreference, setAnalysisPreference] = useState<'STANDARD_640' | 'LIGHTWEIGHT_320'>('STANDARD_640');
   const [detectedFaces, setDetectedFaces] = useState<DetectedFaceBox[]>([]);
   const [detectionLatencyMs, setDetectionLatencyMs] = useState<number>(0);
-  const [detectionCadenceFps, setDetectionCadenceFps] = useState<number>(6);
-  const [recognizedCount, setRecognizedCount] = useState<number>(0);
-  const totalStudents = 24; // Standard class roster count
+  const [detectionCadenceFps, setDetectionCadenceFps] = useState<number>(0);
+  const [totalFramesAnalyzed, setTotalFramesAnalyzed] = useState<number>(0);
 
   // Viewfinder layout metrics for coordinate mapping
   const [viewfinderLayout, setViewfinderLayout] = useState<{ width: number; height: number }>({
@@ -94,6 +106,10 @@ export default function FacultyScanningScreen() {
   // Scanline animation
   const scanlineAnim = useRef(new Animated.Value(0)).current;
 
+  // Detection loop refs
+  const isDetectingRef = useRef(false);
+  const lastFrameTimeRef = useRef(Date.now());
+
   // Camera devices
   const backDevice = useCameraDevice('back');
   const frontDevice = useCameraDevice('front');
@@ -102,10 +118,37 @@ export default function FacultyScanningScreen() {
   // Dynamic preview format policy
   const policyDecision = useMemo(() => {
     if (!device) return null;
-    return selectBestPreviewFormat(device, 'auto', ANALYSIS_RESOLUTIONS.STANDARD_640);
-  }, [device]);
+    return selectBestPreviewFormat(
+      device,
+      'auto',
+      ANALYSIS_RESOLUTIONS[analysisPreference]
+    );
+  }, [device, analysisPreference]);
 
   const format = policyDecision?.selectedFormat;
+
+  // Swappable detector instances implementing IFaceDetector
+  const yunetDetector = useMemo(
+    () =>
+      new YuNetDetector(
+        0.35,
+        0.3,
+        policyDecision?.analysisConfig.targetWidth || 640,
+        policyDecision?.analysisConfig.targetHeight || 640
+      ),
+    [policyDecision]
+  );
+
+  const scrfdDetector = useMemo(
+    () =>
+      new SCRFDDetector(
+        0.30,
+        0.4,
+        policyDecision?.analysisConfig.targetWidth || 640,
+        policyDecision?.analysisConfig.targetHeight || 640
+      ),
+    [policyDecision]
+  );
 
   // Scanline animation loop
   useEffect(() => {
@@ -174,6 +217,126 @@ export default function FacultyScanningScreen() {
     setCameraError(error?.message || 'Camera capture failed');
   }, []);
 
+  // Continuous non-blocking face detection cycle
+  useEffect(() => {
+    if (!isCameraActive) {
+      setDetectedFaces([]);
+      return;
+    }
+
+    let isMounted = true;
+    let timerId: any = null;
+
+    const runDetection = async () => {
+      if (!isMounted || !isCameraActive || isDetectingRef.current) {
+        if (isMounted && isCameraActive) {
+          timerId = setTimeout(runDetection, 100);
+        }
+        return;
+      }
+
+      isDetectingRef.current = true;
+      const cycleStart = performance.now();
+
+      try {
+        if (cameraRef.current) {
+          const snap = await cameraRef.current.takeSnapshot({ quality: 80 });
+          if (snap?.path && isMounted) {
+            const rawFrame: RawFrame = {
+              width: snap.width,
+              height: snap.height,
+              format: 'jpeg',
+              timestampMs: Date.now(),
+              data: snap.path,
+              uri: 'file://' + snap.path,
+              rotationDegrees: 0,
+            };
+
+            const detector = activeDetector === 'YuNet' ? yunetDetector : scrfdDetector;
+            const detections = await detector.detectFaces(rawFrame);
+
+            if (isMounted) {
+              const elapsed = Math.round(performance.now() - cycleStart);
+              setDetectionLatencyMs(elapsed);
+              setTotalFramesAnalyzed((prev) => prev + 1);
+
+              const now = Date.now();
+              const deltaMs = now - lastFrameTimeRef.current;
+              lastFrameTimeRef.current = now;
+              if (deltaMs > 0) {
+                const instantaneousFps = Math.min(30, Math.round(1000 / deltaMs));
+                setDetectionCadenceFps((prev) =>
+                  prev === 0 ? instantaneousFps : Math.round(prev * 0.7 + instantaneousFps * 0.3)
+                );
+              }
+
+              const mappedBoxes: DetectedFaceBox[] = detections.map((d, index) => {
+                const b = d.boundingBox;
+                const xPct = b.x * 100;
+                const yPct = b.y * 100;
+                const wPct = b.width * 100;
+                const hPct = b.height * 100;
+
+                let mappedLandmarks: DetectedFaceBox['landmarks'] = undefined;
+                if (d.landmarks) {
+                  mappedLandmarks = {
+                    leftEye: {
+                      x: d.landmarks.leftEye.x * 100,
+                      y: d.landmarks.leftEye.y * 100,
+                    },
+                    rightEye: {
+                      x: d.landmarks.rightEye.x * 100,
+                      y: d.landmarks.rightEye.y * 100,
+                    },
+                    noseTip: {
+                      x: d.landmarks.noseTip.x * 100,
+                      y: d.landmarks.noseTip.y * 100,
+                    },
+                    mouthLeft: {
+                      x: d.landmarks.mouthLeft.x * 100,
+                      y: d.landmarks.mouthLeft.y * 100,
+                    },
+                    mouthRight: {
+                      x: d.landmarks.mouthRight.x * 100,
+                      y: d.landmarks.mouthRight.y * 100,
+                    },
+                  };
+                }
+
+                return {
+                  id: `face_${index}_${Math.round(b.x * 1000)}`,
+                  x: Math.max(0, Math.min(100, xPct)),
+                  y: Math.max(0, Math.min(100, yPct)),
+                  width: Math.max(0, Math.min(100, wPct)),
+                  height: Math.max(0, Math.min(100, hPct)),
+                  confidence: d.confidence,
+                  landmarks: mappedLandmarks,
+                };
+              });
+
+              setDetectedFaces(mappedBoxes);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Detection Loop Warning]:', err?.message);
+      } finally {
+        isDetectingRef.current = false;
+        if (isMounted && isCameraActive) {
+          // Paced delay: ~4 to 6 FPS cadence
+          timerId = setTimeout(runDetection, 120);
+        }
+      }
+    };
+
+    timerId = setTimeout(runDetection, 400);
+
+    return () => {
+      isMounted = false;
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [isCameraActive, activeDetector, cameraPosition, yunetDetector, scrfdDetector]);
+
   const handleDone = () => {
     router.replace({
       pathname: '/(faculty)/section/[id]',
@@ -186,9 +349,6 @@ export default function FacultyScanningScreen() {
       },
     });
   };
-
-  const isForeground = appState === 'active' || appState === 'unknown';
-  const isCameraActive = isForeground && hasPermission && !isPaused && cameraError === null;
 
   const scanlineTranslateY = scanlineAnim.interpolate({
     inputRange: [0, 1],
@@ -210,6 +370,7 @@ export default function FacultyScanningScreen() {
         {hasPermission && device != null && format != null && !cameraError ? (
           <>
             <Camera
+              ref={cameraRef}
               key={`${device.id}-${format.videoWidth}x${format.videoHeight}`}
               style={StyleSheet.absoluteFill}
               device={device}
@@ -237,33 +398,81 @@ export default function FacultyScanningScreen() {
               />
             )}
 
-            {/* Detected Face Bounding Box Overlays */}
+            {/* Detected Face Bounding Box & Facial Landmark Overlays */}
             {detectedFaces.map((face) => (
-              <View
-                key={face.id}
-                style={[
-                  styles.boundingBox,
-                  face.isRecognised ? styles.boxRecognised : styles.boxDetecting,
-                  {
-                    left: `${face.x}%`,
-                    top: `${face.y}%`,
-                    width: `${face.width}%`,
-                    height: `${face.height}%`,
-                  },
-                ]}
-              >
-                {face.isRecognised && (
-                  <View style={styles.checkBadge}>
-                    <Check size={11} color="#1f1a29" strokeWidth={3} />
+              <React.Fragment key={face.id}>
+                {/* Bounding Box */}
+                <View
+                  style={[
+                    styles.boundingBox,
+                    styles.boxDetecting,
+                    {
+                      left: `${face.x}%`,
+                      top: `${face.y}%`,
+                      width: `${face.width}%`,
+                      height: `${face.height}%`,
+                    },
+                  ]}
+                >
+                  <View style={styles.confidenceTag}>
+                    <Text style={styles.confidenceText}>
+                      {activeDetector === 'YuNet' ? 'YuNet' : 'SCRFD'}{' '}
+                      {Math.round(face.confidence * 100)}%
+                    </Text>
                   </View>
-                )}
-                <View style={styles.confidenceTag}>
-                  <Text style={styles.confidenceText}>
-                    {activeDetector === 'YuNet' ? 'YuNet' : 'SCRFD'}{' '}
-                    {Math.round(face.confidence * 100)}%
-                  </Text>
                 </View>
-              </View>
+
+                {/* 5-Point Facial Landmarks (Eyes, Nose, Mouth Corners) */}
+                {face.landmarks && (
+                  <>
+                    <View
+                      style={[
+                        styles.landmarkDot,
+                        {
+                          left: `${face.landmarks.leftEye.x}%`,
+                          top: `${face.landmarks.leftEye.y}%`,
+                        },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.landmarkDot,
+                        {
+                          left: `${face.landmarks.rightEye.x}%`,
+                          top: `${face.landmarks.rightEye.y}%`,
+                        },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.landmarkDot,
+                        {
+                          left: `${face.landmarks.noseTip.x}%`,
+                          top: `${face.landmarks.noseTip.y}%`,
+                        },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.landmarkDot,
+                        {
+                          left: `${face.landmarks.mouthLeft.x}%`,
+                          top: `${face.landmarks.mouthLeft.y}%`,
+                        },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.landmarkDot,
+                        {
+                          left: `${face.landmarks.mouthRight.x}%`,
+                          top: `${face.landmarks.mouthRight.y}%`,
+                        },
+                      ]}
+                    />
+                  </>
+                )}
+              </React.Fragment>
             ))}
           </>
         ) : (
@@ -389,16 +598,18 @@ export default function FacultyScanningScreen() {
           },
         ]}
       >
-        {/* Attendance Counter Display */}
+        {/* Face Detection Counter Display */}
         <View style={styles.counterRow}>
-          <Text style={styles.counterBig}>{recognizedCount}</Text>
-          <Text style={styles.counterTotal}> / {totalStudents}</Text>
+          <Text style={styles.counterBig}>{detectedFaces.length}</Text>
+          <Text style={styles.counterTotal}> faces localized</Text>
         </View>
 
         {/* User Guidance Prompt */}
         <Text style={styles.guidanceText}>
           {isPaused
             ? 'Camera paused — tap play to resume'
+            : detectedFaces.length > 0
+            ? `${detectedFaces.length} student face${detectedFaces.length > 1 ? 's' : ''} tracked in viewfinder`
             : 'Slowly pan across the room to spot students…'}
         </Text>
 
@@ -456,6 +667,32 @@ export default function FacultyScanningScreen() {
                 </View>
               </View>
 
+              {/* Analysis Resolution Preference Switcher */}
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Analysis Resolution:</Text>
+                <View style={styles.pillGroup}>
+                  {(['STANDARD_640', 'LIGHTWEIGHT_320'] as const).map((pref) => (
+                    <TouchableOpacity
+                      key={pref}
+                      style={[
+                        styles.diagPill,
+                        analysisPreference === pref && styles.diagPillActive,
+                      ]}
+                      onPress={() => setAnalysisPreference(pref)}
+                    >
+                      <Text
+                        style={[
+                          styles.diagPillText,
+                          analysisPreference === pref && styles.diagPillTextActive,
+                        ]}
+                      >
+                        {pref === 'STANDARD_640' ? '640²' : '320²'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
               {/* Camera Name */}
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Camera:</Text>
@@ -484,28 +721,40 @@ export default function FacultyScanningScreen() {
                 </Text>
               </View>
 
-              {/* Analysis Resolution */}
+              {/* Aspect Ratio */}
               <View style={styles.diagRow}>
-                <Text style={styles.diagLabel}>Analysis Resolution:</Text>
+                <Text style={styles.diagLabel}>Aspect Ratio:</Text>
+                <Text style={styles.diagVal}>
+                  {policyDecision ? policyDecision.selectedCapability.aspectRatioLabel : 'N/A'}
+                </Text>
+              </View>
+
+              {/* Decoupled ML Analysis Resolution */}
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Decoupled ML Input:</Text>
                 <Text style={[styles.diagVal, { color: '#f0a868', fontWeight: '600' }]}>
                   {policyDecision
-                    ? `${policyDecision.analysisConfig.targetWidth} × ${policyDecision.analysisConfig.targetHeight} (Decoupled)`
+                    ? `${policyDecision.analysisConfig.targetWidth} × ${policyDecision.analysisConfig.targetHeight}`
                     : 'N/A'}
                 </Text>
               </View>
 
-              {/* Detector Latency */}
+              {/* Live Detector Latency */}
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Inference Latency:</Text>
-                <Text style={styles.diagVal}>
-                  {activeDetector === 'YuNet' ? '74.98 ms (Bench)' : '105.02 ms (Bench)'}
+                <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '600' }]}>
+                  {detectionLatencyMs > 0 ? `${detectionLatencyMs} ms` : 'Awaiting frame...'}
                 </Text>
               </View>
 
-              {/* Detection Cadence */}
+              {/* Live Detection Cadence */}
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Detection Cadence:</Text>
-                <Text style={styles.diagVal}>{detectionCadenceFps} FPS (Every 5th frame)</Text>
+                <Text style={styles.diagVal}>
+                  {detectionCadenceFps > 0
+                    ? `${detectionCadenceFps} FPS (${totalFramesAnalyzed} frames)`
+                    : 'Initializing...'}
+                </Text>
               </View>
 
               {/* Detected Faces */}
@@ -591,25 +840,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'flex-start',
   },
-  boxRecognised: {
-    borderColor: '#7fd1ad',
-    backgroundColor: 'rgba(127, 209, 173, 0.12)',
-  },
   boxDetecting: {
-    borderColor: 'rgba(255, 255, 255, 0.65)',
-    borderStyle: 'dashed',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#7fd1ad',
+    borderWidth: 2,
+    backgroundColor: 'rgba(127, 209, 173, 0.14)',
   },
-  checkBadge: {
+  landmarkDot: {
     position: 'absolute',
-    bottom: -6,
-    right: -6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#7fd1ad',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#f0a868',
+    borderColor: '#ffffff',
+    borderWidth: 1.5,
+    marginLeft: -4,
+    marginTop: -4,
+    zIndex: 6,
   },
   confidenceTag: {
     position: 'absolute',

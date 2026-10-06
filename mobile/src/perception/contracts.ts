@@ -33,16 +33,18 @@ export interface FacialLandmarks {
 export interface RawFrame {
   width: number;
   height: number;
-  format: 'yuv420' | 'rgba' | 'nv21';
+  format: 'yuv420' | 'rgba' | 'nv21' | 'jpeg';
   timestampMs: number;
-  data: Uint8Array | ArrayBuffer;
+  data: Uint8Array | ArrayBuffer | string;
   rotationDegrees: 0 | 90 | 180 | 270;
+  uri?: string;
 }
 
 export interface FaceDetectionResult {
   boundingBox: FaceBoundingBox;
   confidence: number;
   landmarks?: FacialLandmarks;
+  latencyMs?: number;
 }
 
 export interface TrackedFace {

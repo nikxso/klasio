@@ -7,6 +7,7 @@
  */
 
 import { FaceDetectionResult, IFaceDetector, RawFrame } from '../../../perception/contracts';
+import { PerceptionClient } from '../../../perception/perceptionClient';
 
 export class SCRFDDetector implements IFaceDetector {
   readonly modelName = 'SCRFD-500M';
@@ -14,12 +15,21 @@ export class SCRFDDetector implements IFaceDetector {
 
   private isInitialized = false;
   private modelPath: string = '';
-  private confidenceThreshold: number = 0.5;
+  private confidenceThreshold: number = 0.35;
   private nmsThreshold: number = 0.4;
+  private targetWidth: number = 640;
+  private targetHeight: number = 640;
 
-  constructor(confidenceThreshold: number = 0.5, nmsThreshold: number = 0.4) {
+  constructor(
+    confidenceThreshold: number = 0.35,
+    nmsThreshold: number = 0.4,
+    targetWidth: number = 640,
+    targetHeight: number = 640
+  ) {
     this.confidenceThreshold = confidenceThreshold;
     this.nmsThreshold = nmsThreshold;
+    this.targetWidth = targetWidth;
+    this.targetHeight = targetHeight;
   }
 
   public async initialize(modelPath?: string): Promise<void> {
@@ -29,9 +39,16 @@ export class SCRFDDetector implements IFaceDetector {
 
   public async detectFaces(frame: RawFrame): Promise<FaceDetectionResult[]> {
     if (!this.isInitialized) {
-      throw new Error('SCRFDDetector is not initialized');
+      await this.initialize();
     }
-    return [];
+    const { results } = await PerceptionClient.detect(
+      frame,
+      'SCRFD-500M',
+      this.targetWidth,
+      this.targetHeight,
+      this.confidenceThreshold
+    );
+    return results;
   }
 
   public async dispose(): Promise<void> {
