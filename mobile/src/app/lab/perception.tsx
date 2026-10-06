@@ -1,27 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
+  StyleSheet,
   View,
   Text,
-  StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
   AppState,
   AppStateStatus,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
 import {
   Camera,
   useCameraDevice,
   useCameraPermission,
-  useCameraFormat,
 } from 'react-native-vision-camera';
+import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import * as Device from 'expo-device';
-import { router } from 'expo-router';
 import {
-  Camera as CameraIcon,
-  SwitchCamera,
+  Camera as SwitchCamera,
   ArrowLeft,
   ChevronDown,
   ChevronUp,
@@ -29,30 +27,98 @@ import {
   Activity,
   Cpu,
   Settings,
+  Layers,
 } from 'lucide-react-native';
+import {
+  selectBestPreviewFormat,
+  enumerateDeviceFormats,
+  ANALYSIS_RESOLUTIONS,
+} from '../../perception/cameraFormatPolicy';
 
 export default function PerceptionLabScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const [cameraPosition, setCameraPosition] = useState<'back' | 'front'>('back');
+  const [formatPreference, setFormatPreference] = useState<'auto' | '1080p' | '720p'>('auto');
+  const [analysisPreference, setAnalysisPreference] = useState<'STANDARD_640' | 'LIGHTWEIGHT_320'>('STANDARD_640');
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(true);
   const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
   const [switchLatency, setSwitchLatency] = useState<number | null>(null);
   const [permissionDeniedCount, setPermissionDeniedCount] = useState<number>(0);
 
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
-  // VisionCamera device selection based on chosen position
-  const device = useCameraDevice(cameraPosition);
+  // Enumerate both camera devices
+  const backDevice = useCameraDevice('back');
+  const frontDevice = useCameraDevice('front');
+  const device = cameraPosition === 'back' ? backDevice : frontDevice;
 
-  // Dynamic preview format: queries hardware capabilities with graceful fallback
-  const format = useCameraFormat(device, [
-    { videoResolution: { width: 1280, height: 720 } },
-    { videoResolution: { width: 1920, height: 1080 } },
-    { videoResolution: { width: 960, height: 540 } },
-    { fps: 30 },
-    { fps: 24 },
-    { fps: 15 },
-  ]);
+  // Log complete capability tables for both hardware sensors
+  useEffect(() => {
+    if (backDevice) {
+      const backCaps = enumerateDeviceFormats(backDevice);
+      console.log(
+        '[CAMERA_FORMATS_BACK_ENUM]',
+        JSON.stringify(
+          {
+            deviceId: backDevice.id,
+            name: backDevice.name,
+            totalFormats: backCaps.length,
+            formats: backCaps.map((c) => ({
+              resolution: `${c.videoWidth}x${c.videoHeight}`,
+              aspectRatio: `${c.aspectRatioLabel} (${c.aspectRatioNumeric})`,
+              fps: `${c.minFps}-${c.maxFps}`,
+              frameDurationMs: c.frameDurationMs,
+              photoResolution: `${c.photoWidth}x${c.photoHeight}`,
+              autoFocus: c.autoFocusSystem,
+              videoHdr: c.supportsVideoHdr,
+            })),
+          },
+          null,
+          2
+        )
+      );
+    }
+  }, [backDevice]);
+
+  useEffect(() => {
+    if (frontDevice) {
+      const frontCaps = enumerateDeviceFormats(frontDevice);
+      console.log(
+        '[CAMERA_FORMATS_FRONT_ENUM]',
+        JSON.stringify(
+          {
+            deviceId: frontDevice.id,
+            name: frontDevice.name,
+            totalFormats: frontCaps.length,
+            formats: frontCaps.map((c) => ({
+              resolution: `${c.videoWidth}x${c.videoHeight}`,
+              aspectRatio: `${c.aspectRatioLabel} (${c.aspectRatioNumeric})`,
+              fps: `${c.minFps}-${c.maxFps}`,
+              frameDurationMs: c.frameDurationMs,
+              photoResolution: `${c.photoWidth}x${c.photoHeight}`,
+              autoFocus: c.autoFocusSystem,
+              videoHdr: c.supportsVideoHdr,
+            })),
+          },
+          null,
+          2
+        )
+      );
+    }
+  }, [frontDevice]);
+
+  // Dynamic preview format selected according to documented capability policy
+  const policyDecision = useMemo(() => {
+    if (!device) return null;
+    return selectBestPreviewFormat(
+      device,
+      formatPreference,
+      ANALYSIS_RESOLUTIONS[analysisPreference]
+    );
+  }, [device, formatPreference, analysisPreference]);
+
+  const format = policyDecision?.selectedFormat;
 
   // Handle application foreground/background transitions
   useEffect(() => {
@@ -96,8 +162,9 @@ export default function PerceptionLabScreen() {
 
       {/* Camera Viewport Area */}
       <View style={styles.cameraContainer}>
-        {hasPermission && device != null ? (
+        {hasPermission && device != null && format != null ? (
           <Camera
+            key={`${device.id}-${format.videoWidth}x${format.videoHeight}`}
             style={StyleSheet.absoluteFill}
             device={device}
             format={format}
@@ -240,31 +307,115 @@ export default function PerceptionLabScreen() {
 
             {showDiagnostics && (
               <View style={styles.diagnosticsContent}>
+                {/* Format Preference Pill Bar */}
+                <View style={styles.preferenceRow}>
+                  <Text style={styles.preferenceLabel}>Format Policy:</Text>
+                  <View style={styles.pillGroup}>
+                    {(['auto', '1080p', '720p'] as const).map((pref) => (
+                      <TouchableOpacity
+                        key={pref}
+                        style={[
+                          styles.pillButton,
+                          formatPreference === pref && styles.pillButtonActive,
+                        ]}
+                        onPress={() => setFormatPreference(pref)}
+                      >
+                        <Text
+                          style={[
+                            styles.pillButtonText,
+                            formatPreference === pref && styles.pillButtonTextActive,
+                          ]}
+                        >
+                          {pref.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* ML Analysis Target Resolution Pill Bar */}
+                <View style={styles.preferenceRow}>
+                  <Text style={styles.preferenceLabel}>ML Target:</Text>
+                  <View style={styles.pillGroup}>
+                    {(['STANDARD_640', 'LIGHTWEIGHT_320'] as const).map((key) => (
+                      <TouchableOpacity
+                        key={key}
+                        style={[
+                          styles.pillButton,
+                          analysisPreference === key && styles.pillButtonActive,
+                        ]}
+                        onPress={() => setAnalysisPreference(key)}
+                      >
+                        <Text
+                          style={[
+                            styles.pillButtonText,
+                            analysisPreference === key && styles.pillButtonTextActive,
+                          ]}
+                        >
+                          {key === 'STANDARD_640' ? '640×640' : '320×320'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Camera Name / ID */}
                 <View style={styles.diagRow}>
-                  <Text style={styles.diagLabel}>Device Hardware:</Text>
+                  <Text style={styles.diagLabel}>Camera:</Text>
                   <Text style={styles.diagValue}>
-                    {Device.modelName
-                      ? `${Device.manufacturer || ''} ${Device.modelName}`.trim()
-                      : 'Android Device'}
+                    {cameraPosition.toUpperCase()} ({device ? device.name || device.id : 'N/A'})
                   </Text>
                 </View>
 
+                {/* Resolution */}
                 <View style={styles.diagRow}>
-                  <Text style={styles.diagLabel}>Active Camera:</Text>
-                  <Text style={styles.diagValue}>
-                    {cameraPosition.toUpperCase()} {device ? `(${device.name})` : ''}
+                  <Text style={styles.diagLabel}>Resolution:</Text>
+                  <Text style={[styles.diagValue, { color: '#2e6b57', fontWeight: '700' }]}>
+                    {policyDecision
+                      ? `${policyDecision.selectedCapability.videoWidth} × ${policyDecision.selectedCapability.videoHeight}`
+                      : 'N/A'}
                   </Text>
                 </View>
 
+                {/* FPS */}
                 <View style={styles.diagRow}>
-                  <Text style={styles.diagLabel}>Stream Resolution:</Text>
+                  <Text style={styles.diagLabel}>FPS:</Text>
                   <Text style={styles.diagValue}>
-                    {format
-                      ? `${format.videoWidth}×${format.videoHeight} @ ${format.maxFps} FPS`
-                      : 'Auto / Default'}
+                    {policyDecision
+                      ? `${policyDecision.selectedCapability.maxFps} FPS (${policyDecision.selectedCapability.minFps}-${policyDecision.selectedCapability.maxFps})`
+                      : 'N/A'}
                   </Text>
                 </View>
 
+                {/* Aspect Ratio */}
+                <View style={styles.diagRow}>
+                  <Text style={styles.diagLabel}>Aspect Ratio:</Text>
+                  <Text style={styles.diagValue}>
+                    {policyDecision
+                      ? `${policyDecision.selectedCapability.aspectRatioLabel} (${policyDecision.selectedCapability.aspectRatioNumeric})`
+                      : 'N/A'}
+                  </Text>
+                </View>
+
+                {/* ML Analysis Resolution */}
+                <View style={styles.diagRow}>
+                  <Text style={styles.diagLabel}>Analysis Resolution:</Text>
+                  <Text style={[styles.diagValue, { color: '#c47d3b', fontWeight: '600' }]}>
+                    {policyDecision
+                      ? `${policyDecision.analysisConfig.targetWidth} × ${policyDecision.analysisConfig.targetHeight} (Decoupled)`
+                      : 'N/A'}
+                  </Text>
+                </View>
+
+                {/* Policy Detail */}
+                <View style={styles.diagRow}>
+                  <Text style={styles.diagLabel}>Policy Detail:</Text>
+                  <Text style={[styles.diagValue, { fontSize: 11, maxWidth: '60%' }]} numberOfLines={1}>
+                    {policyDecision?.policyReason || 'Default'}
+                  </Text>
+                </View>
+
+                {/* Lifecycle State */}
                 <View style={styles.diagRow}>
                   <Text style={styles.diagLabel}>Lifecycle State:</Text>
                   <Text
@@ -281,6 +432,7 @@ export default function PerceptionLabScreen() {
                   </Text>
                 </View>
 
+                {/* Switch Latency */}
                 <View style={styles.diagRow}>
                   <Text style={styles.diagLabel}>Switch Latency:</Text>
                   <Text style={styles.diagValue}>
@@ -288,15 +440,7 @@ export default function PerceptionLabScreen() {
                   </Text>
                 </View>
 
-                <View style={styles.diagRow}>
-                  <Text style={styles.diagLabel}>Sensor Orientation:</Text>
-                  <Text style={styles.diagValue}>
-                    {device?.sensorOrientation !== undefined
-                      ? `${device.sensorOrientation}°`
-                      : 'N/A'}
-                  </Text>
-                </View>
-
+                {/* Safe Area Insets */}
                 <View style={styles.diagRow}>
                   <Text style={styles.diagLabel}>Safe Area Insets:</Text>
                   <Text style={styles.diagValue}>
@@ -431,7 +575,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(26, 22, 34, 0.88)',
     borderRadius: 16,
     padding: 4,
-    marginBottom: 12,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.12)',
   },
@@ -468,19 +612,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
     backgroundColor: '#fbf6ee',
     borderBottomWidth: 1,
     borderBottomColor: '#efe7da',
   },
   diagnosticsTitle: {
     color: '#2a2338',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   diagnosticsContent: {
-    padding: 14,
-    gap: 6,
+    padding: 12,
+    gap: 5,
+  },
+  preferenceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0ece1',
+  },
+  preferenceLabel: {
+    color: '#756d82',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  pillGroup: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  pillButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: '#ede7f6',
+  },
+  pillButtonActive: {
+    backgroundColor: '#2e6b57',
+  },
+  pillButtonText: {
+    fontSize: 11,
+    color: '#5e4e75',
+    fontWeight: '600',
+  },
+  pillButtonTextActive: {
+    color: '#ffffff',
   },
   diagRow: {
     flexDirection: 'row',
@@ -489,12 +669,12 @@ const styles = StyleSheet.create({
   },
   diagLabel: {
     color: '#756d82',
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '500',
   },
   diagValue: {
     color: '#2a2338',
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
   },
 });

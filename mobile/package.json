@@ -43,7 +43,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:storage": "node src/storage/__tests__/database.test.mjs"
+    "test:storage": "node src/storage/__tests__/database.test.mjs",
+    "test:perception": "node --test src/perception/__tests__/cameraFormatPolicy.test.mjs"
   },
   "private": true
 }
