@@ -9,6 +9,7 @@
 export * from './adapters/quality/HeuristicQualityGate';
 export * from './adapters/matchers/CosineGalleryMatcher';
 export * from './adapters/trackers/CentroidIoUTracker';
+export * from './adapters/trackers/TemporalCentroidTracker';
 export * from './adapters/detectors/YuNetDetector';
 export * from './adapters/detectors/SCRFDDetector';
 export * from './adapters/detectors/DirectOnDeviceDetector';

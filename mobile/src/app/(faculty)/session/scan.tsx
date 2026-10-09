@@ -13,7 +13,11 @@ import {
   Dimensions,
   Platform,
   findNodeHandle,
+  LogBox,
+  ScrollView,
 } from 'react-native';
+
+LogBox.ignoreAllLogs(true);
 
 import {
   Camera,
@@ -48,11 +52,18 @@ import {
 } from '@/perception/cameraFormatPolicy';
 import type { FaceDetectionResult, RawFrame } from '@/perception/contracts';
 import { DetailedPerceptionTimings } from '@/perception/perceptionClient';
-import { YuNetDetector, SCRFDDetector, DirectOnDeviceDetector } from '@/lab';
-
+import {
+  YuNetDetector,
+  SCRFDDetector,
+  DirectOnDeviceDetector,
+  TemporalCentroidTracker,
+} from '@/lab';
 
 interface DetectedFaceBox {
   id: string;
+  trackId?: number;
+  trackingState?: 'tentative' | 'confirmed' | 'coasting';
+  isConfirmed?: boolean;
   frameId?: string;
   captureTimestampMs?: number;
   resultAgeMs?: number;
@@ -105,6 +116,27 @@ export default function FacultyScanningScreen() {
   const [detectionCadenceFps, setDetectionCadenceFps] = useState<number>(0);
   const [totalFramesAnalyzed, setTotalFramesAnalyzed] = useState<number>(0);
   const [detailedTimings, setDetailedTimings] = useState<DetailedPerceptionTimings | null>(null);
+
+  // Tracking state (Step C — Live Face Tracking)
+  const [isTrackingEnabled, setIsTrackingEnabled] = useState<boolean>(true);
+  const [trackingCadenceFps, setTrackingCadenceFps] = useState<number>(0);
+  const [trackerStats, setTrackerStats] = useState<{
+    activeTracks: number;
+    confirmedTracks: number;
+    coastingTracks: number;
+    tentativeTracks: number;
+    totalCreated: number;
+    totalRetired: number;
+    lastStepDurationMs: number;
+  }>({
+    activeTracks: 0,
+    confirmedTracks: 0,
+    coastingTracks: 0,
+    tentativeTracks: 0,
+    totalCreated: 0,
+    totalRetired: 0,
+    lastStepDurationMs: 0,
+  });
 
   // Frame sequence, queue, and latency state (Part A & C)
   const frameSeqRef = useRef<number>(0);
@@ -282,6 +314,21 @@ export default function FacultyScanningScreen() {
     []
   );
 
+  // Temporal Face Tracker (Step C — Live Face Tracking)
+  const tracker = useMemo(
+    () =>
+      new TemporalCentroidTracker({
+        iouThreshold: 0.30,
+        centroidDistanceThreshold: 0.18,
+        sizeRatioThreshold: 0.40,
+        minHitsToConfirm: 2,
+        maxCoastDurationMs: 850,
+        smoothingAlpha: 0.40,
+        velocityDamping: 0.92,
+      }),
+    []
+  );
+
 
   // Scanline animation loop
   useEffect(() => {
@@ -349,6 +396,70 @@ export default function FacultyScanningScreen() {
     console.error('[VisionCamera Error]:', error);
     setCameraError(error?.message || 'Camera capture failed');
   }, []);
+
+  // Continuous Decoupled Temporal Tracking Presentation Loop (~30 FPS)
+  const lastTrackingTickRef = useRef<number>(Date.now());
+  useEffect(() => {
+    if (!isCameraActive || !isTrackingEnabled) {
+      if (!isTrackingEnabled) {
+        tracker.reset();
+      }
+      return;
+    }
+
+    let isMounted = true;
+
+    const tickTracking = () => {
+      if (!isMounted || !isCameraActive || !isTrackingEnabled) return;
+
+      const now = Date.now();
+      const dt = now - lastTrackingTickRef.current;
+      lastTrackingTickRef.current = now;
+
+      if (dt > 0) {
+        const instFps = Math.min(60, Math.round(1000 / dt));
+        setTrackingCadenceFps((prev) => (prev === 0 ? instFps : Math.round(prev * 0.8 + instFps * 0.2)));
+      }
+
+      const activeTracks = tracker.step(now);
+      const stats = tracker.getDiagnostics();
+      setTrackerStats(stats);
+
+      const mapped: DetectedFaceBox[] = activeTracks.map((t) => {
+        const b = t.boundingBox;
+        const isCoasting = t.timeSinceLastSeenMs > 250;
+        return {
+          id: `track_${t.trackId}`,
+          trackId: t.trackId,
+          trackingState: isCoasting ? 'coasting' : t.isConfirmed ? 'confirmed' : 'tentative',
+          isConfirmed: t.isConfirmed,
+          confidence: t.confidence,
+          x: Math.max(0, Math.min(100, b.x * 100)),
+          y: Math.max(0, Math.min(100, b.y * 100)),
+          width: Math.max(0, Math.min(100, b.width * 100)),
+          height: Math.max(0, Math.min(100, b.height * 100)),
+          landmarks: t.landmarks
+            ? {
+                leftEye: { x: t.landmarks.leftEye.x * 100, y: t.landmarks.leftEye.y * 100 },
+                rightEye: { x: t.landmarks.rightEye.x * 100, y: t.landmarks.rightEye.y * 100 },
+                noseTip: { x: t.landmarks.noseTip.x * 100, y: t.landmarks.noseTip.y * 100 },
+                mouthLeft: { x: t.landmarks.mouthLeft.x * 100, y: t.landmarks.mouthLeft.y * 100 },
+                mouthRight: { x: t.landmarks.mouthRight.x * 100, y: t.landmarks.mouthRight.y * 100 },
+              }
+            : undefined,
+        };
+      });
+
+      setDetectedFaces(mapped);
+    };
+
+    const intervalId = setInterval(tickTracking, 33); // 30 FPS Presentation Ticker
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [isCameraActive, isTrackingEnabled, tracker]);
 
   // Continuous non-blocking face detection cycle
   useEffect(() => {
@@ -575,15 +686,27 @@ export default function FacultyScanningScreen() {
                 );
               }
 
-              setDetectedFaces(mappedBoxes);
+              // STEP C: Pass sparse detections to temporal tracker for rate decoupling
+              if (isTrackingEnabled) {
+                tracker.update(detections, captureStartWall);
+                const currentStats = tracker.getDiagnostics();
+                setTrackerStats(currentStats);
+                console.log(
+                  `[TRACKER_UPDATE] Mode: ${activeDetector} | Detections: ${detections.length} | ` +
+                  `ActiveTracks: ${currentStats.activeTracks} (Conf: ${currentStats.confirmedTracks}, Coast: ${currentStats.coastingTracks}) | ` +
+                  `Created: ${currentStats.totalCreated} | Retired: ${currentStats.totalRetired} | Step: ${currentStats.lastStepDurationMs}ms`
+                );
+              } else {
+                setDetectedFaces(mappedBoxes);
 
-              // Auto-clear stale boxes after 900ms if no new detections arrive
-              if (staleClearTimerRef.current) clearTimeout(staleClearTimerRef.current);
-              staleClearTimerRef.current = setTimeout(() => {
-                if (isMounted) {
-                  setDetectedFaces([]);
-                }
-              }, 900);
+                // Auto-clear stale boxes after 900ms if no new detections arrive
+                if (staleClearTimerRef.current) clearTimeout(staleClearTimerRef.current);
+                staleClearTimerRef.current = setTimeout(() => {
+                  if (isMounted) {
+                    setDetectedFaces([]);
+                  }
+                }, 900);
+              }
             }
           }
         }
@@ -681,7 +804,7 @@ export default function FacultyScanningScreen() {
               />
             )}
 
-            {/* Detected Face Bounding Box & Facial Landmark Overlays */}
+            {/* Detected Face Bounding Box & Facial Landmark Overlays (Step C: Temporal Tracks) */}
             {detectedFaces.map((face) => (
               <React.Fragment key={face.id}>
                 {/* Bounding Box */}
@@ -689,7 +812,15 @@ export default function FacultyScanningScreen() {
                   pointerEvents="none"
                   style={[
                     styles.boundingBox,
-                    face.isStale ? styles.boxStale : styles.boxDetecting,
+                    face.trackingState === 'coasting'
+                      ? styles.boxCoasting
+                      : face.isConfirmed
+                      ? styles.boxConfirmed
+                      : face.trackingState === 'tentative'
+                      ? styles.boxTentative
+                      : face.isStale
+                      ? styles.boxStale
+                      : styles.boxDetecting,
                     {
                       left: `${face.x}%`,
                       top: `${face.y}%`,
@@ -698,12 +829,27 @@ export default function FacultyScanningScreen() {
                     },
                   ]}
                 >
-                  <View style={[styles.confidenceTag, face.isStale && styles.confidenceTagStale]}>
-                    <Text style={styles.confidenceText}>
-                      {activeDetector === 'YuNet' ? 'YuNet' : 'SCRFD'}{' '}
-                      {Math.round(face.confidence * 100)}%
-                      {face.resultAgeMs != null ? ` · ${face.resultAgeMs}ms` : ''}
-                      {face.isStale ? ' [STALE]' : ''}
+                  <View
+                    style={[
+                      styles.confidenceTag,
+                      face.trackingState === 'coasting'
+                        ? styles.confidenceTagCoasting
+                        : face.isConfirmed
+                        ? styles.confidenceTagConfirmed
+                        : face.trackingState === 'tentative'
+                        ? styles.confidenceTagTentative
+                        : face.isStale
+                        ? styles.confidenceTagStale
+                        : null,
+                    ]}
+                  >
+                    <Text style={styles.confidenceText} numberOfLines={1}>
+                      {face.trackId != null
+                        ? `Track #${face.trackId}${face.trackingState === 'coasting' ? ' [Coast]' : face.isConfirmed ? ' [Conf]' : ' [Tent]'}`
+                        : activeDetector === 'YuNet'
+                        ? 'YuNet'
+                        : 'SCRFD'}
+                      {` · ${Math.round(face.confidence * 100)}%`}
                     </Text>
                   </View>
                 </View>
@@ -1015,7 +1161,12 @@ export default function FacultyScanningScreen() {
           </TouchableOpacity>
 
           {showDiagnostics && (
-            <View style={styles.diagContent}>
+            <ScrollView
+              style={styles.diagScroll}
+              contentContainerStyle={styles.diagContent}
+              nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+            >
               {/* Detector Switcher */}
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Detector Candidate:</Text>
@@ -1039,6 +1190,46 @@ export default function FacultyScanningScreen() {
                       </Text>
                     </TouchableOpacity>
                   ))}
+                </View>
+              </View>
+
+              {/* Tracking Mode Switcher (Step C) */}
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Tracking Mode:</Text>
+                <View style={styles.pillGroup}>
+                  <TouchableOpacity
+                    style={[
+                      styles.diagPill,
+                      isTrackingEnabled && styles.diagPillActive,
+                    ]}
+                    onPress={() => setIsTrackingEnabled(true)}
+                  >
+                    <Text
+                      style={[
+                        styles.diagPillText,
+                        isTrackingEnabled && styles.diagPillTextActive,
+                      ]}
+                    >
+                      Temporal (30 FPS)
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.diagPill,
+                      !isTrackingEnabled && styles.diagPillActive,
+                    ]}
+                    onPress={() => setIsTrackingEnabled(false)}
+                  >
+                    <Text
+                      style={[
+                        styles.diagPillText,
+                        !isTrackingEnabled && styles.diagPillTextActive,
+                      ]}
+                    >
+                      Raw Detector (~3.5 FPS)
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -1297,23 +1488,57 @@ export default function FacultyScanningScreen() {
               </View>
 
               <View style={styles.diagDivider} />
+              <Text style={styles.diagSectionTitle}>Live Temporal Tracking (Step C)</Text>
 
-              {/* Live Detection Cadence */}
               <View style={styles.diagRow}>
-                <Text style={styles.diagLabel}>Detection Cadence:</Text>
-                <Text style={styles.diagVal}>
-                  {detectionCadenceFps > 0
-                    ? `${detectionCadenceFps} FPS (${totalFramesAnalyzed} frames)`
-                    : 'Initializing...'}
+                <Text style={styles.diagLabel}>Tracker Engine:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '700' }]}>
+                  {tracker.trackerName}
                 </Text>
               </View>
 
-              {/* Detected Faces */}
               <View style={styles.diagRow}>
-                <Text style={styles.diagLabel}>Faces in Frame:</Text>
+                <Text style={styles.diagLabel}>Tracking Render Cadence:</Text>
                 <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '700' }]}>
-                  {detectedFaces.length} detected
+                  {isTrackingEnabled && trackingCadenceFps > 0
+                    ? `${trackingCadenceFps} FPS (Continuous)`
+                    : isTrackingEnabled
+                    ? 'Active'
+                    : 'Disabled (Raw Mode)'}
                 </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Detector Cadence (Decoupled):</Text>
+                <Text style={[styles.diagVal, { color: '#f0a868', fontWeight: '600' }]}>
+                  {detectionCadenceFps > 0 ? `${detectionCadenceFps} FPS (Sparse)` : 'Awaiting...'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Active Tracked Faces:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '700' }]}>
+                  {trackerStats.activeTracks} active ({trackerStats.confirmedTracks} conf, {trackerStats.coastingTracks} coast)
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Tracking Step Duration:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad' }]}>
+                  {trackerStats.lastStepDurationMs.toFixed(2)} ms (&lt; 1ms target)
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Track Lifecycle (Created / Retired):</Text>
+                <Text style={styles.diagVal}>
+                  {trackerStats.totalCreated} created · {trackerStats.totalRetired} retired
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Total Frames Analyzed:</Text>
+                <Text style={styles.diagVal}>{totalFramesAnalyzed} frames</Text>
               </View>
 
               {/* Permission & Lifecycle */}
@@ -1334,7 +1559,7 @@ export default function FacultyScanningScreen() {
                 <Text style={styles.diagLabel}>Perception Error:</Text>
                 <Text style={styles.diagVal}>{cameraError || 'None'}</Text>
               </View>
-            </View>
+            </ScrollView>
           )}
         </View>
       </View>
@@ -1396,6 +1621,24 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: 'rgba(127, 209, 173, 0.14)',
   },
+  boxConfirmed: {
+    borderColor: '#7fd1ad',
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(127, 209, 173, 0.16)',
+  },
+  boxTentative: {
+    borderColor: 'rgba(127, 209, 173, 0.75)',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(127, 209, 173, 0.08)',
+  },
+  boxCoasting: {
+    borderColor: '#f0a868',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(240, 168, 104, 0.12)',
+    opacity: 0.88,
+  },
   boxStale: {
     borderColor: '#f0a868',
     borderWidth: 2,
@@ -1417,12 +1660,25 @@ const styles = StyleSheet.create({
   },
   confidenceTag: {
     position: 'absolute',
-    top: -18,
-    left: 4,
-    backgroundColor: 'rgba(31, 26, 41, 0.85)',
+    top: -20,
+    left: 2,
+    backgroundColor: 'rgba(31, 26, 41, 0.88)',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 95,
+    zIndex: 8,
+  },
+  confidenceTagConfirmed: {
+    backgroundColor: 'rgba(38, 92, 73, 0.94)',
+  },
+  confidenceTagTentative: {
+    backgroundColor: 'rgba(64, 56, 79, 0.90)',
+  },
+  confidenceTagCoasting: {
+    backgroundColor: 'rgba(189, 98, 30, 0.94)',
   },
   confidenceTagStale: {
     backgroundColor: 'rgba(240, 168, 104, 0.9)',
@@ -1431,6 +1687,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 9.5,
     fontWeight: '700',
+    flexShrink: 0,
   },
   topHeader: {
     position: 'absolute',
@@ -1598,6 +1855,9 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 12.5,
     fontWeight: '700',
+  },
+  diagScroll: {
+    maxHeight: 220,
   },
   diagContent: {
     padding: 12,

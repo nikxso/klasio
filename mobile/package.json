@@ -44,7 +44,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test:storage": "node src/storage/__tests__/database.test.mjs",
-    "test:perception": "node --test src/perception/__tests__/cameraFormatPolicy.test.mjs"
+    "test:perception": "node --test src/perception/__tests__/cameraFormatPolicy.test.mjs",
+    "test:tracker": "node --test src/lab/__tests__/temporalTracker.test.mjs"
   },
   "private": true
 }
