@@ -35,6 +35,8 @@ import {
   ChevronUp,
   ScanFace,
   Cpu,
+  Focus,
+  RotateCcw,
 } from 'lucide-react-native';
 import { Colors, Radii } from '@/theme/tokens';
 import {
@@ -43,6 +45,7 @@ import {
   FormattedCapability,
 } from '@/perception/cameraFormatPolicy';
 import type { FaceDetectionResult, RawFrame } from '@/perception/contracts';
+import { DetailedPerceptionTimings } from '@/perception/perceptionClient';
 import { YuNetDetector, SCRFDDetector } from '@/lab';
 
 interface DetectedFaceBox {
@@ -93,6 +96,7 @@ export default function FacultyScanningScreen() {
   const [detectionLatencyMs, setDetectionLatencyMs] = useState<number>(0);
   const [detectionCadenceFps, setDetectionCadenceFps] = useState<number>(0);
   const [totalFramesAnalyzed, setTotalFramesAnalyzed] = useState<number>(0);
+  const [detailedTimings, setDetailedTimings] = useState<DetailedPerceptionTimings | null>(null);
 
   // Viewfinder layout metrics for coordinate mapping
   const [viewfinderLayout, setViewfinderLayout] = useState<{ width: number; height: number }>({
@@ -114,6 +118,105 @@ export default function FacultyScanningScreen() {
   const backDevice = useCameraDevice('back');
   const frontDevice = useCameraDevice('front');
   const device = cameraPosition === 'back' ? backDevice : frontDevice;
+
+  // Camera Operator Controls: Zoom
+  const [zoom, setZoom] = useState<number>(1.0);
+  const minZoom = device?.minZoom ?? 1.0;
+  const maxZoom = device?.maxZoom ?? 8.0;
+  const neutralZoom = device?.neutralZoom ?? 1.0;
+
+  // Reset zoom when camera device flips
+  useEffect(() => {
+    if (device) {
+      setZoom(device.neutralZoom ?? 1.0);
+    }
+  }, [device?.id]);
+
+  // Zoom preset levels based on device limits
+  const zoomPresets = useMemo(() => {
+    const presets = [1.0];
+    if (maxZoom >= 2.0) presets.push(2.0);
+    if (maxZoom >= 3.0) presets.push(3.0);
+    if (maxZoom >= 5.0) presets.push(5.0);
+    return presets;
+  }, [maxZoom]);
+
+  const handleSetZoom = useCallback(
+    (targetZoom: number) => {
+      const clamped = Math.max(minZoom, Math.min(maxZoom, targetZoom));
+      setZoom(clamped);
+    },
+    [minZoom, maxZoom]
+  );
+
+  const handleResetZoom = useCallback(() => {
+    setZoom(neutralZoom);
+  }, [neutralZoom]);
+
+  // Camera Operator Controls: Focus
+  const [focusPoint, setFocusPoint] = useState<{ x: number; y: number; id: number } | null>(null);
+  const [isManualFocus, setIsManualFocus] = useState<boolean>(false);
+  const focusReticleAnim = useRef(new Animated.Value(0)).current;
+  const autoFocusTimerRef = useRef<any>(null);
+
+  // Tap-to-focus handler
+  const handleTapToFocus = useCallback(
+    async (event: any) => {
+      if (!cameraRef.current || !isCameraActive) return;
+      const { locationX, locationY } = event.nativeEvent;
+      if (typeof locationX !== 'number' || typeof locationY !== 'number') return;
+
+      const pointId = Date.now();
+      setFocusPoint({ x: Math.round(locationX), y: Math.round(locationY), id: pointId });
+      setIsManualFocus(true);
+
+      // Trigger reticle spring + delay + fade animation
+      focusReticleAnim.setValue(0);
+      Animated.sequence([
+        Animated.spring(focusReticleAnim, {
+          toValue: 1,
+          friction: 6,
+          tension: 90,
+          useNativeDriver: true,
+        }),
+        Animated.delay(1800),
+        Animated.timing(focusReticleAnim, {
+          toValue: 0,
+          duration: 350,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        setFocusPoint((curr) => (curr?.id === pointId ? null : curr));
+      });
+
+      // Clear existing AF restore timer and reset manual focus flag after 3.5s
+      if (autoFocusTimerRef.current) clearTimeout(autoFocusTimerRef.current);
+      autoFocusTimerRef.current = setTimeout(() => {
+        setIsManualFocus(false);
+      }, 3500);
+
+      try {
+        await cameraRef.current.focus({ x: locationX, y: locationY });
+      } catch (err: any) {
+        console.warn('[VisionCamera Focus Error]:', err?.message);
+      }
+    },
+    [isCameraActive, focusReticleAnim]
+  );
+
+  const handleResetAutoFocus = useCallback(() => {
+    setIsManualFocus(false);
+    setFocusPoint(null);
+    if (autoFocusTimerRef.current) clearTimeout(autoFocusTimerRef.current);
+    if (cameraRef.current && viewfinderLayout) {
+      cameraRef.current
+        .focus({
+          x: viewfinderLayout.width / 2,
+          y: viewfinderLayout.height / 2,
+        })
+        .catch(() => {});
+    }
+  }, [viewfinderLayout]);
 
   // Dynamic preview format policy
   const policyDecision = useMemo(() => {
@@ -240,7 +343,11 @@ export default function FacultyScanningScreen() {
 
       try {
         if (cameraRef.current) {
+          const snapStart = performance.now();
           const snap = await cameraRef.current.takeSnapshot({ quality: 80 });
+          const snapEnd = performance.now();
+          const acquisitionMs = Math.round(snapEnd - snapStart);
+
           if (snap?.path && isMounted) {
             const rawFrame: RawFrame = {
               width: snap.width,
@@ -253,52 +360,44 @@ export default function FacultyScanningScreen() {
             };
 
             const detector = activeDetector === 'YuNet' ? yunetDetector : scrfdDetector;
-            const detections = await detector.detectFaces(rawFrame);
+            const { results: detections, timings } = await detector.detectFacesDetailed(rawFrame);
 
             if (isMounted) {
-              const elapsed = Math.round(performance.now() - cycleStart);
-              setDetectionLatencyMs(elapsed);
-              setTotalFramesAnalyzed((prev) => prev + 1);
-
-              const now = Date.now();
-              const deltaMs = now - lastFrameTimeRef.current;
-              lastFrameTimeRef.current = now;
-              if (deltaMs > 0) {
-                const instantaneousFps = Math.min(30, Math.round(1000 / deltaMs));
-                setDetectionCadenceFps((prev) =>
-                  prev === 0 ? instantaneousFps : Math.round(prev * 0.7 + instantaneousFps * 0.3)
-                );
-              }
+              const mapStart = performance.now();
+              const isFront = cameraPosition === 'front';
 
               const mappedBoxes: DetectedFaceBox[] = detections.map((d, index) => {
                 const b = d.boundingBox;
-                const xPct = b.x * 100;
+                // In front camera preview, preview viewport is mirrored horizontally
+                const xNorm = isFront ? Math.max(0, 1.0 - (b.x + b.width)) : b.x;
+                const xPct = xNorm * 100;
                 const yPct = b.y * 100;
                 const wPct = b.width * 100;
                 const hPct = b.height * 100;
 
                 let mappedLandmarks: DetectedFaceBox['landmarks'] = undefined;
                 if (d.landmarks) {
+                  const mapLx = (lx: number) => (isFront ? Math.max(0, 1.0 - lx) : lx) * 100;
                   mappedLandmarks = {
                     leftEye: {
-                      x: d.landmarks.leftEye.x * 100,
-                      y: d.landmarks.leftEye.y * 100,
+                      x: mapLx(isFront ? d.landmarks.rightEye.x : d.landmarks.leftEye.x),
+                      y: (isFront ? d.landmarks.rightEye.y : d.landmarks.leftEye.y) * 100,
                     },
                     rightEye: {
-                      x: d.landmarks.rightEye.x * 100,
-                      y: d.landmarks.rightEye.y * 100,
+                      x: mapLx(isFront ? d.landmarks.leftEye.x : d.landmarks.rightEye.x),
+                      y: (isFront ? d.landmarks.leftEye.y : d.landmarks.rightEye.y) * 100,
                     },
                     noseTip: {
-                      x: d.landmarks.noseTip.x * 100,
+                      x: mapLx(d.landmarks.noseTip.x),
                       y: d.landmarks.noseTip.y * 100,
                     },
                     mouthLeft: {
-                      x: d.landmarks.mouthLeft.x * 100,
-                      y: d.landmarks.mouthLeft.y * 100,
+                      x: mapLx(isFront ? d.landmarks.mouthRight.x : d.landmarks.mouthLeft.x),
+                      y: (isFront ? d.landmarks.mouthRight.y : d.landmarks.mouthLeft.y) * 100,
                     },
                     mouthRight: {
-                      x: d.landmarks.mouthRight.x * 100,
-                      y: d.landmarks.mouthRight.y * 100,
+                      x: mapLx(isFront ? d.landmarks.mouthLeft.x : d.landmarks.mouthRight.x),
+                      y: (isFront ? d.landmarks.mouthLeft.y : d.landmarks.mouthRight.y) * 100,
                     },
                   };
                 }
@@ -313,6 +412,51 @@ export default function FacultyScanningScreen() {
                   landmarks: mappedLandmarks,
                 };
               });
+
+              const mapEnd = performance.now();
+              const clientMappingMs = Math.round(mapEnd - mapStart);
+              const totalE2EMs = Math.round(performance.now() - cycleStart);
+              const inferMs = timings?.serverInferenceMs || (detections[0]?.latencyMs ?? 0);
+              const overheadMs = Math.max(0, totalE2EMs - inferMs);
+
+              setDetectionLatencyMs(totalE2EMs);
+              setTotalFramesAnalyzed((prev) => prev + 1);
+
+              const fullTimings: DetailedPerceptionTimings = {
+                frameAcquisitionMs: acquisitionMs,
+                frameConversionMs: timings?.frameConversionMs ?? 0,
+                networkRoundtripMs: timings?.networkRoundtripMs ?? 0,
+                networkTransportMs: timings?.networkTransportMs ?? 0,
+                serverPayloadReadMs: timings?.serverPayloadReadMs ?? 0,
+                serverDecodeImageMs: timings?.serverDecodeImageMs ?? 0,
+                serverPreprocessMs: timings?.serverPreprocessMs ?? 0,
+                serverInferenceMs: inferMs,
+                serverPostprocessMs: timings?.serverPostprocessMs ?? 0,
+                serverTotalMs: timings?.serverTotalMs ?? 0,
+                clientTotalMs: timings?.clientTotalMs ?? 0,
+                clientResultHandlingMs: clientMappingMs,
+                totalEndToEndMs: totalE2EMs,
+                overheadOutsideInferenceMs: overheadMs,
+              };
+              setDetailedTimings(fullTimings);
+              console.log(
+                `[PERCEPTION_BREAKDOWN] Detector: ${activeDetector} | Size: ${analysisPreference} | ` +
+                `Acq: ${fullTimings.frameAcquisitionMs}ms | Conv: ${fullTimings.frameConversionMs}ms | ` +
+                `Net: ${fullTimings.networkTransportMs}ms | SrvDec: ${fullTimings.serverDecodeImageMs}ms | ` +
+                `SrvPre: ${fullTimings.serverPreprocessMs}ms | Infer: ${fullTimings.serverInferenceMs}ms | ` +
+                `SrvPost: ${fullTimings.serverPostprocessMs}ms | Map: ${fullTimings.clientResultHandlingMs}ms | ` +
+                `TotalE2E: ${fullTimings.totalEndToEndMs}ms | Overhead: ${fullTimings.overheadOutsideInferenceMs}ms`
+              );
+
+              const now = Date.now();
+              const deltaMs = now - lastFrameTimeRef.current;
+              lastFrameTimeRef.current = now;
+              if (deltaMs > 0) {
+                const instantaneousFps = Math.min(30, Math.round(1000 / deltaMs));
+                setDetectionCadenceFps((prev) =>
+                  prev === 0 ? instantaneousFps : Math.round(prev * 0.7 + instantaneousFps * 0.3)
+                );
+              }
 
               setDetectedFaces(mappedBoxes);
             }
@@ -380,15 +524,25 @@ export default function FacultyScanningScreen() {
               video={false}
               audio={false}
               onError={handleCameraError}
+              zoom={zoom}
+              enableZoomGesture={true}
+            />
+
+            {/* Tap-to-focus gesture receiver over viewfinder */}
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={handleTapToFocus}
+              accessibilityLabel="Tap viewfinder to focus"
             />
 
             {/* Gradient Darkening Vignette */}
-            <View style={styles.gradientTop} />
-            <View style={styles.gradientBottom} />
+            <View style={styles.gradientTop} pointerEvents="none" />
+            <View style={styles.gradientBottom} pointerEvents="none" />
 
             {/* Glowing Scanline Animation */}
             {!isPaused && (
               <Animated.View
+                pointerEvents="none"
                 style={[
                   styles.scanline,
                   {
@@ -403,6 +557,7 @@ export default function FacultyScanningScreen() {
               <React.Fragment key={face.id}>
                 {/* Bounding Box */}
                 <View
+                  pointerEvents="none"
                   style={[
                     styles.boundingBox,
                     styles.boxDetecting,
@@ -426,6 +581,7 @@ export default function FacultyScanningScreen() {
                 {face.landmarks && (
                   <>
                     <View
+                      pointerEvents="none"
                       style={[
                         styles.landmarkDot,
                         {
@@ -435,6 +591,7 @@ export default function FacultyScanningScreen() {
                       ]}
                     />
                     <View
+                      pointerEvents="none"
                       style={[
                         styles.landmarkDot,
                         {
@@ -444,6 +601,7 @@ export default function FacultyScanningScreen() {
                       ]}
                     />
                     <View
+                      pointerEvents="none"
                       style={[
                         styles.landmarkDot,
                         {
@@ -453,6 +611,7 @@ export default function FacultyScanningScreen() {
                       ]}
                     />
                     <View
+                      pointerEvents="none"
                       style={[
                         styles.landmarkDot,
                         {
@@ -462,6 +621,7 @@ export default function FacultyScanningScreen() {
                       ]}
                     />
                     <View
+                      pointerEvents="none"
                       style={[
                         styles.landmarkDot,
                         {
@@ -474,6 +634,90 @@ export default function FacultyScanningScreen() {
                 )}
               </React.Fragment>
             ))}
+
+            {/* Animated Focus Reticle */}
+            {focusPoint && (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.focusReticle,
+                  {
+                    left: focusPoint.x - 30,
+                    top: focusPoint.y - 30,
+                    opacity: focusReticleAnim,
+                    transform: [
+                      {
+                        scale: focusReticleAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [1.35, 1.0],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <View style={styles.focusReticleInner} />
+                <View style={styles.focusCornerTL} />
+                <View style={styles.focusCornerTR} />
+                <View style={styles.focusCornerBL} />
+                <View style={styles.focusCornerBR} />
+              </Animated.View>
+            )}
+
+            {/* Floating Camera Operator Controls Bar (Zoom & Focus) */}
+            <View style={styles.floatingControlsBar}>
+              {/* Zoom Presets */}
+              <View style={styles.zoomPillGroup}>
+                {zoomPresets.map((z) => {
+                  const isActive = Math.abs(zoom - z) < 0.1;
+                  return (
+                    <TouchableOpacity
+                      key={z}
+                      style={[styles.zoomPill, isActive && styles.zoomPillActive]}
+                      onPress={() => handleSetZoom(z)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.zoomPillText, isActive && styles.zoomPillTextActive]}>
+                        {z}×
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {zoom > neutralZoom && !zoomPresets.some((p) => Math.abs(p - zoom) < 0.1) && (
+                  <View style={[styles.zoomPill, styles.zoomPillActive]}>
+                    <Text style={[styles.zoomPillText, styles.zoomPillTextActive]}>
+                      {zoom.toFixed(1)}×
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Quick Action Chips: Reset Zoom or AutoFocus */}
+              <View style={styles.quickActionGroup}>
+                {Math.abs(zoom - neutralZoom) > 0.05 && (
+                  <TouchableOpacity
+                    style={styles.quickActionChip}
+                    onPress={handleResetZoom}
+                    activeOpacity={0.8}
+                  >
+                    <RotateCcw size={11} color="#f0a868" style={{ marginRight: 4 }} />
+                    <Text style={styles.quickActionText}>1× Reset</Text>
+                  </TouchableOpacity>
+                )}
+
+                {isManualFocus && (
+                  <TouchableOpacity
+                    style={styles.quickActionChip}
+                    onPress={handleResetAutoFocus}
+                    activeOpacity={0.8}
+                  >
+                    <Focus size={11} color="#7fd1ad" style={{ marginRight: 4 }} />
+                    <Text style={styles.quickActionText}>Auto Focus</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
           </>
         ) : (
           <View style={styles.fallbackContainer}>
@@ -739,13 +983,128 @@ export default function FacultyScanningScreen() {
                 </Text>
               </View>
 
-              {/* Live Detector Latency */}
+              {/* Zoom State */}
               <View style={styles.diagRow}>
-                <Text style={styles.diagLabel}>Inference Latency:</Text>
-                <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '600' }]}>
-                  {detectionLatencyMs > 0 ? `${detectionLatencyMs} ms` : 'Awaiting frame...'}
+                <Text style={styles.diagLabel}>Zoom Factor:</Text>
+                <Text style={[styles.diagVal, { color: '#f0a868', fontWeight: '700' }]}>
+                  {zoom.toFixed(1)}× (Range: {minZoom.toFixed(1)}× – {maxZoom.toFixed(1)}×)
                 </Text>
               </View>
+
+              {/* Focus State */}
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Focus Mode:</Text>
+                <Text
+                  style={[
+                    styles.diagVal,
+                    { color: isManualFocus ? '#f0a868' : '#7fd1ad', fontWeight: '600' },
+                  ]}
+                >
+                  {isManualFocus
+                    ? `Manual (${focusPoint ? `${focusPoint.x}, ${focusPoint.y}` : 'Locked'})`
+                    : 'Continuous Auto'}
+                </Text>
+              </View>
+
+              {/* Timing & Transport Breakdown Divider */}
+              <View style={styles.diagDivider} />
+              <Text style={styles.diagSectionTitle}>Perception Transport Breakdown</Text>
+
+              {/* Total End-to-End Latency */}
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Total End-to-End Latency:</Text>
+                <Text style={[styles.diagVal, { color: '#f0a868', fontWeight: '700' }]}>
+                  {detailedTimings?.totalEndToEndMs
+                    ? `${detailedTimings.totalEndToEndMs} ms`
+                    : `${detectionLatencyMs} ms`}
+                </Text>
+              </View>
+
+              {/* ONNX Inference Latency */}
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>ONNX Model Inference:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '700' }]}>
+                  {detailedTimings?.serverInferenceMs
+                    ? `${detailedTimings.serverInferenceMs} ms`
+                    : 'Awaiting...'}
+                </Text>
+              </View>
+
+              {/* Non-Inference Overhead */}
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Non-Inference Overhead:</Text>
+                <Text style={[styles.diagVal, { color: '#d65f57', fontWeight: '600' }]}>
+                  {detailedTimings?.overheadOutsideInferenceMs != null
+                    ? `${detailedTimings.overheadOutsideInferenceMs} ms`
+                    : 'Awaiting...'}
+                </Text>
+              </View>
+
+              {/* Detailed Sub-Stages */}
+              <View style={styles.diagRow}>
+                <Text style={styles.diagSubLabel}>↳ Frame Snap (GPU/Disk):</Text>
+                <Text style={styles.diagSubVal}>
+                  {detailedTimings?.frameAcquisitionMs != null
+                    ? `${detailedTimings.frameAcquisitionMs} ms`
+                    : 'N/A'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagSubLabel}>↳ Frame Conv (Blob/FormData):</Text>
+                <Text style={styles.diagSubVal}>
+                  {detailedTimings?.frameConversionMs != null
+                    ? `${detailedTimings.frameConversionMs} ms`
+                    : 'N/A'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagSubLabel}>↳ Bridge Transit (HTTP/Reverse):</Text>
+                <Text style={styles.diagSubVal}>
+                  {detailedTimings?.networkTransportMs != null
+                    ? `${detailedTimings.networkTransportMs} ms`
+                    : 'N/A'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagSubLabel}>↳ Server Read & Decode (PIL):</Text>
+                <Text style={styles.diagSubVal}>
+                  {detailedTimings?.serverDecodeImageMs != null
+                    ? `${Math.round((detailedTimings.serverPayloadReadMs + detailedTimings.serverDecodeImageMs) * 10) / 10} ms`
+                    : 'N/A'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagSubLabel}>↳ Server Preprocess (Resize/NP):</Text>
+                <Text style={styles.diagSubVal}>
+                  {detailedTimings?.serverPreprocessMs != null
+                    ? `${detailedTimings.serverPreprocessMs} ms`
+                    : 'N/A'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagSubLabel}>↳ Server Postprocess (NMS):</Text>
+                <Text style={styles.diagSubVal}>
+                  {detailedTimings?.serverPostprocessMs != null
+                    ? `${detailedTimings.serverPostprocessMs} ms`
+                    : 'N/A'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagSubLabel}>↳ Client Result Mapping:</Text>
+                <Text style={styles.diagSubVal}>
+                  {detailedTimings?.clientResultHandlingMs != null
+                    ? `${detailedTimings.clientResultHandlingMs} ms`
+                    : 'N/A'}
+                </Text>
+              </View>
+
+              <View style={styles.diagDivider} />
 
               {/* Live Detection Cadence */}
               <View style={styles.diagRow}>
@@ -1077,5 +1436,140 @@ const styles = StyleSheet.create({
   },
   diagPillTextActive: {
     color: '#ffffff',
+  },
+  floatingControlsBar: {
+    position: 'absolute',
+    bottom: 14,
+    left: 14,
+    right: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 25,
+  },
+  zoomPillGroup: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(26, 21, 35, 0.75)',
+    borderRadius: 20,
+    padding: 3,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  zoomPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  zoomPillActive: {
+    backgroundColor: '#f0a868',
+  },
+  zoomPillText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#b0a9bd',
+  },
+  zoomPillTextActive: {
+    color: '#1f1a29',
+    fontWeight: '700',
+  },
+  quickActionGroup: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  quickActionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(26, 21, 35, 0.85)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  quickActionText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  focusReticle: {
+    position: 'absolute',
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  focusReticleInner: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#f0a868',
+  },
+  focusCornerTL: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 12,
+    height: 12,
+    borderTopWidth: 2,
+    borderLeftWidth: 2,
+    borderColor: '#f0a868',
+  },
+  focusCornerTR: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 12,
+    height: 12,
+    borderTopWidth: 2,
+    borderRightWidth: 2,
+    borderColor: '#f0a868',
+  },
+  focusCornerBL: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    width: 12,
+    height: 12,
+    borderBottomWidth: 2,
+    borderLeftWidth: 2,
+    borderColor: '#f0a868',
+  },
+  focusCornerBR: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 12,
+    height: 12,
+    borderBottomWidth: 2,
+    borderRightWidth: 2,
+    borderColor: '#f0a868',
+  },
+  diagDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    marginVertical: 4,
+  },
+  diagSectionTitle: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#f0a868',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
+  diagSubLabel: {
+    color: '#8e869e',
+    fontSize: 11,
+    fontWeight: '500',
+    paddingLeft: 4,
+  },
+  diagSubVal: {
+    color: '#e2dded',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });
