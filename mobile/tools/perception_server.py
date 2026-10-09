@@ -25,16 +25,6 @@ import uvicorn
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("perception-worker")
 
-app = FastAPI(title="Attendly Face Perception Worker")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 import os
 from contextlib import asynccontextmanager
 
@@ -48,6 +38,14 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Attendly Face Perception Worker", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def init_sessions():
@@ -97,8 +95,13 @@ def detect_yunet(image: Image.Image, target_w: int, target_h: int, conf_thresh: 
     global sess_yunet
     t0 = time.perf_counter()
 
-    # Decouple resolution: resize in memory to target analysis resolution
-    resized = image.resize((target_w, target_h), Image.Resampling.BILINEAR)
+    # YuNet static graph constraint: yunet_2023mar.onnx requires exactly [1, 3, 640, 640]
+    # If target resolution differs (e.g. 320x320), downsample first then place on 640x640 canvas
+    if target_w != 640 or target_h != 640:
+        low_res = image.resize((target_w, target_h), Image.Resampling.BILINEAR)
+        resized = low_res.resize((640, 640), Image.Resampling.BILINEAR)
+    else:
+        resized = image.resize((640, 640), Image.Resampling.BILINEAR)
     arr = np.array(resized, dtype=np.float32)
     # HWC -> CHW -> NCHW
     arr = np.transpose(arr, (2, 0, 1))
@@ -106,6 +109,7 @@ def detect_yunet(image: Image.Image, target_w: int, target_h: int, conf_thresh: 
 
     # Run inference
     t_infer_0 = time.perf_counter()
+    preprocess_latency_ms = (t_infer_0 - t0) * 1000.0
     out = sess_yunet.run(None, {"input": arr})
     t_infer_1 = time.perf_counter()
     inference_latency_ms = (t_infer_1 - t_infer_0) * 1000.0
@@ -127,7 +131,7 @@ def detect_yunet(image: Image.Image, target_w: int, target_h: int, conf_thresh: 
         scores = np.sqrt(np.maximum(cls_map * obj_map, 0.0))
         valid_idx = np.where(scores[:, 0] >= conf_thresh)[0]
 
-        grid_w = target_w // stride
+        grid_w = 640 // stride
         for idx in valid_idx:
             c = idx % grid_w
             r = idx // grid_w
@@ -183,13 +187,17 @@ def detect_yunet(image: Image.Image, target_w: int, target_h: int, conf_thresh: 
                 },
             })
 
-    total_latency_ms = (time.perf_counter() - t0) * 1000.0
+    t_post_end = time.perf_counter()
+    postprocess_latency_ms = (t_post_end - t_infer_1) * 1000.0
+    total_latency_ms = (t_post_end - t0) * 1000.0
 
     return {
         "success": True,
         "detector": "YuNet",
         "modelVersion": "2023mar",
+        "preprocessLatencyMs": float(round(preprocess_latency_ms, 2)),
         "inferenceLatencyMs": float(round(inference_latency_ms, 2)),
+        "postprocessLatencyMs": float(round(postprocess_latency_ms, 2)),
         "totalLatencyMs": float(round(total_latency_ms, 2)),
         "analysisResolution": {"width": int(target_w), "height": int(target_h)},
         "facesCount": int(len(faces)),
@@ -212,6 +220,7 @@ def detect_scrfd(image: Image.Image, target_w: int, target_h: int, conf_thresh: 
 
     # Run inference
     t_infer_0 = time.perf_counter()
+    preprocess_latency_ms = (t_infer_0 - t0) * 1000.0
     out = sess_scrfd.run(None, {"input.1": arr})
     t_infer_1 = time.perf_counter()
     inference_latency_ms = (t_infer_1 - t_infer_0) * 1000.0
@@ -301,13 +310,17 @@ def detect_scrfd(image: Image.Image, target_w: int, target_h: int, conf_thresh: 
                 },
             })
 
-    total_latency_ms = (time.perf_counter() - t0) * 1000.0
+    t_post_end = time.perf_counter()
+    postprocess_latency_ms = (t_post_end - t_infer_1) * 1000.0
+    total_latency_ms = (t_post_end - t0) * 1000.0
 
     return {
         "success": True,
         "detector": "SCRFD-500M",
         "modelVersion": "500M",
+        "preprocessLatencyMs": float(round(preprocess_latency_ms, 2)),
         "inferenceLatencyMs": float(round(inference_latency_ms, 2)),
+        "postprocessLatencyMs": float(round(postprocess_latency_ms, 2)),
         "totalLatencyMs": float(round(total_latency_ms, 2)),
         "analysisResolution": {"width": int(target_w), "height": int(target_h)},
         "facesCount": int(len(faces)),
@@ -336,12 +349,18 @@ async def detect(
     analysisHeight: int = Form(640),
     confidenceThreshold: float = Form(0.4),
 ):
+    t_req_start = time.perf_counter()
     try:
         contents = await file.read()
+        t_after_read = time.perf_counter()
         image = Image.open(io.BytesIO(contents)).convert("RGB")
+        t_after_decode = time.perf_counter()
     except Exception as e:
         logger.error("Failed to decode uploaded image: %s", e)
         raise HTTPException(status_code=400, detail=f"Image decoding failed: {str(e)}")
+
+    read_bytes_ms = (t_after_read - t_req_start) * 1000.0
+    decode_img_ms = (t_after_decode - t_after_read) * 1000.0
 
     if detector == "YuNet":
         res = detect_yunet(image, analysisWidth, analysisHeight, confidenceThreshold)
@@ -350,15 +369,31 @@ async def detect(
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported detector candidate: {detector}")
 
-    if res["facesCount"] > 0:
-        logger.info(
-            "[%s] Res: %dx%d => Detected %d faces (Infer: %.1f ms)",
-            detector,
-            analysisWidth,
-            analysisHeight,
-            res["facesCount"],
-            res["inferenceLatencyMs"],
-        )
+    t_req_end = time.perf_counter()
+    total_server_ms = (t_req_end - t_req_start) * 1000.0
+
+    res["timings"] = {
+        "payloadReadMs": float(round(read_bytes_ms, 2)),
+        "decodeImageMs": float(round(decode_img_ms, 2)),
+        "preprocessMs": float(round(res.get("preprocessLatencyMs", 0.0), 2)),
+        "onnxInferenceMs": float(round(res.get("inferenceLatencyMs", 0.0), 2)),
+        "postprocessMs": float(round(res.get("postprocessLatencyMs", 0.0), 2)),
+        "totalServerMs": float(round(total_server_ms, 2)),
+    }
+
+    logger.info(
+        "[%s %dx%d] Read: %.1fms | Dec: %.1fms | Pre: %.1fms | Infer: %.1fms | Post: %.1fms | SrvTot: %.1fms | Faces: %d",
+        detector,
+        analysisWidth,
+        analysisHeight,
+        read_bytes_ms,
+        decode_img_ms,
+        res.get("preprocessLatencyMs", 0.0),
+        res.get("inferenceLatencyMs", 0.0),
+        res.get("postprocessLatencyMs", 0.0),
+        total_server_ms,
+        res["facesCount"],
+    )
     return res
 
 

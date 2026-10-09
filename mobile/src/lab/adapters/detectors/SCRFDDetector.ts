@@ -7,7 +7,7 @@
  */
 
 import { FaceDetectionResult, IFaceDetector, RawFrame } from '../../../perception/contracts';
-import { PerceptionClient } from '../../../perception/perceptionClient';
+import { PerceptionClient, DetailedPerceptionTimings } from '../../../perception/perceptionClient';
 
 export class SCRFDDetector implements IFaceDetector {
   readonly modelName = 'SCRFD-500M';
@@ -19,6 +19,7 @@ export class SCRFDDetector implements IFaceDetector {
   private nmsThreshold: number = 0.4;
   private targetWidth: number = 640;
   private targetHeight: number = 640;
+  private lastTimings: DetailedPerceptionTimings | null = null;
 
   constructor(
     confidenceThreshold: number = 0.35,
@@ -37,18 +38,45 @@ export class SCRFDDetector implements IFaceDetector {
     this.isInitialized = true;
   }
 
+  public getLastTimings(): DetailedPerceptionTimings | null {
+    return this.lastTimings;
+  }
+
   public async detectFaces(frame: RawFrame): Promise<FaceDetectionResult[]> {
     if (!this.isInitialized) {
       await this.initialize();
     }
-    const { results } = await PerceptionClient.detect(
+    const { results, timings } = await PerceptionClient.detect(
       frame,
       'SCRFD-500M',
       this.targetWidth,
       this.targetHeight,
       this.confidenceThreshold
     );
+    if (timings) {
+      this.lastTimings = timings;
+    }
     return results;
+  }
+
+  public async detectFacesDetailed(frame: RawFrame): Promise<{
+    results: FaceDetectionResult[];
+    timings?: DetailedPerceptionTimings;
+  }> {
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+    const resp = await PerceptionClient.detect(
+      frame,
+      'SCRFD-500M',
+      this.targetWidth,
+      this.targetHeight,
+      this.confidenceThreshold
+    );
+    if (resp.timings) {
+      this.lastTimings = resp.timings;
+    }
+    return resp;
   }
 
   public async dispose(): Promise<void> {

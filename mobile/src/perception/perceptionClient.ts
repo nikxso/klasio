@@ -8,12 +8,41 @@
 
 import { FaceDetectionResult, RawFrame } from './contracts';
 
+export interface ServerTimings {
+  payloadReadMs: number;
+  decodeImageMs: number;
+  preprocessMs: number;
+  onnxInferenceMs: number;
+  postprocessMs: number;
+  totalServerMs: number;
+}
+
+export interface DetailedPerceptionTimings {
+  frameAcquisitionMs?: number;      // Camera takeSnapshot (bitmap grab + jpeg encode + write to disk)
+  frameConversionMs: number;        // Reading snapshot file to Blob + building FormData
+  networkRoundtripMs: number;       // HTTP request send to response JSON received
+  networkTransportMs: number;       // networkRoundtripMs - serverTotalMs (transit over bridge)
+  serverPayloadReadMs: number;      // Server reading multipart bytes
+  serverDecodeImageMs: number;      // Server PIL JPEG decoding
+  serverPreprocessMs: number;       // Server resizing and numpy array preparation
+  serverInferenceMs: number;        // Server ONNX Runtime inference
+  serverPostprocessMs: number;      // Server NMS and bounding box normalization
+  serverTotalMs: number;            // Total execution on perception server
+  clientTotalMs: number;            // Total client roundtrip inside PerceptionClient
+  clientResultHandlingMs?: number;  // Parsing & mapping detections to UI state
+  totalEndToEndMs?: number;         // Total frame-to-UI update latency
+  overheadOutsideInferenceMs?: number; // totalEndToEndMs - serverInferenceMs
+}
+
 export interface DetectionResponse {
   success: boolean;
   detector: string;
   modelVersion: string;
+  preprocessLatencyMs?: number;
   inferenceLatencyMs: number;
+  postprocessLatencyMs?: number;
   totalLatencyMs: number;
+  timings?: ServerTimings;
   analysisResolution: { width: number; height: number };
   facesCount: number;
   faces: Array<{
@@ -47,10 +76,15 @@ export class PerceptionClient {
     analysisWidth: number = 640,
     analysisHeight: number = 640,
     confidenceThreshold: number = 0.4
-  ): Promise<{ results: FaceDetectionResult[]; latencyMs: number }> {
+  ): Promise<{
+    results: FaceDetectionResult[];
+    latencyMs: number;
+    timings?: DetailedPerceptionTimings;
+  }> {
     const t0 = performance.now();
 
     try {
+      const tConvStart = performance.now();
       let blob: Blob;
 
       if (frame.uri) {
@@ -71,7 +105,10 @@ export class PerceptionClient {
       formData.append('analysisWidth', String(analysisWidth));
       formData.append('analysisHeight', String(analysisHeight));
       formData.append('confidenceThreshold', String(confidenceThreshold));
+      const tConvEnd = performance.now();
+      const frameConversionMs = Math.round(tConvEnd - tConvStart);
 
+      const tNetStart = performance.now();
       const response = await fetch(`${this.endpoint}/detect`, {
         method: 'POST',
         body: formData,
@@ -82,7 +119,26 @@ export class PerceptionClient {
       }
 
       const data: DetectionResponse = await response.json();
-      const roundtripMs = Math.round(performance.now() - t0);
+      const tNetEnd = performance.now();
+      const networkRoundtripMs = Math.round(tNetEnd - tNetStart);
+      const clientTotalMs = Math.round(tNetEnd - t0);
+
+      const srv = data.timings;
+      const serverTotalMs = srv?.totalServerMs ?? data.totalLatencyMs ?? 0;
+      const networkTransportMs = Math.max(0, Math.round(networkRoundtripMs - serverTotalMs));
+
+      const detailedTimings: DetailedPerceptionTimings = {
+        frameConversionMs,
+        networkRoundtripMs,
+        networkTransportMs,
+        serverPayloadReadMs: srv?.payloadReadMs ?? 0,
+        serverDecodeImageMs: srv?.decodeImageMs ?? 0,
+        serverPreprocessMs: srv?.preprocessMs ?? data.preprocessLatencyMs ?? 0,
+        serverInferenceMs: srv?.onnxInferenceMs ?? data.inferenceLatencyMs ?? 0,
+        serverPostprocessMs: srv?.postprocessMs ?? data.postprocessLatencyMs ?? 0,
+        serverTotalMs,
+        clientTotalMs,
+      };
 
       const results: FaceDetectionResult[] = (data.faces || []).map((f) => ({
         boundingBox: {
@@ -106,7 +162,8 @@ export class PerceptionClient {
 
       return {
         results,
-        latencyMs: data.inferenceLatencyMs || roundtripMs,
+        latencyMs: data.inferenceLatencyMs || clientTotalMs,
+        timings: detailedTimings,
       };
     } catch (err: any) {
       console.warn(`[PerceptionClient] Detection failed (${detector}):`, err?.message);
