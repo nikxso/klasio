@@ -18,6 +18,14 @@ export interface ServerTimings {
 }
 
 export interface DetailedPerceptionTimings {
+  frameId?: string;
+  captureTimestampMs?: number;
+  clientSendTimestampMs?: number;
+  clientReceiveTimestampMs?: number;
+  captureToResultLatencyMs?: number;
+  resultAgeWhenRenderedMs?: number;
+  queueDepth?: number;
+  isStale?: boolean;
   frameAcquisitionMs?: number;      // Camera takeSnapshot (bitmap grab + jpeg encode + write to disk)
   frameConversionMs: number;        // Reading snapshot file to Blob + building FormData
   networkRoundtripMs: number;       // HTTP request send to response JSON received
@@ -38,6 +46,10 @@ export interface DetectionResponse {
   success: boolean;
   detector: string;
   modelVersion: string;
+  frameId?: string;
+  captureTimestamp?: number;
+  serverReceivedTimestampMs?: number;
+  serverCompletedTimestampMs?: number;
   preprocessLatencyMs?: number;
   inferenceLatencyMs: number;
   postprocessLatencyMs?: number;
@@ -105,6 +117,14 @@ export class PerceptionClient {
       formData.append('analysisWidth', String(analysisWidth));
       formData.append('analysisHeight', String(analysisHeight));
       formData.append('confidenceThreshold', String(confidenceThreshold));
+      if (frame.frameId) {
+        formData.append('frameId', frame.frameId);
+      }
+      const captureTime = frame.captureTimestampMs ?? frame.timestampMs;
+      if (captureTime) {
+        formData.append('captureTimestamp', String(captureTime));
+      }
+
       const tConvEnd = performance.now();
       const frameConversionMs = Math.round(tConvEnd - tConvStart);
 
@@ -122,12 +142,18 @@ export class PerceptionClient {
       const tNetEnd = performance.now();
       const networkRoundtripMs = Math.round(tNetEnd - tNetStart);
       const clientTotalMs = Math.round(tNetEnd - t0);
+      const captureToResultLatencyMs = Math.round(tNetEnd - captureTime);
 
       const srv = data.timings;
       const serverTotalMs = srv?.totalServerMs ?? data.totalLatencyMs ?? 0;
       const networkTransportMs = Math.max(0, Math.round(networkRoundtripMs - serverTotalMs));
 
       const detailedTimings: DetailedPerceptionTimings = {
+        frameId: data.frameId ?? frame.frameId,
+        captureTimestampMs: captureTime,
+        clientSendTimestampMs: Math.round(tNetStart),
+        clientReceiveTimestampMs: Math.round(tNetEnd),
+        captureToResultLatencyMs,
         frameConversionMs,
         networkRoundtripMs,
         networkTransportMs,
@@ -140,6 +166,7 @@ export class PerceptionClient {
         clientTotalMs,
       };
 
+      const resultTimestampMs = Date.now();
       const results: FaceDetectionResult[] = (data.faces || []).map((f) => ({
         boundingBox: {
           x: f.box.x,
@@ -158,6 +185,9 @@ export class PerceptionClient {
             }
           : undefined,
         latencyMs: data.inferenceLatencyMs,
+        frameId: data.frameId ?? frame.frameId,
+        captureTimestampMs: captureTime,
+        resultTimestampMs,
       }));
 
       return {

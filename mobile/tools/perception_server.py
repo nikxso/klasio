@@ -348,6 +348,8 @@ async def detect(
     analysisWidth: int = Form(640),
     analysisHeight: int = Form(640),
     confidenceThreshold: float = Form(0.4),
+    frameId: Optional[str] = Form(None),
+    captureTimestamp: Optional[float] = Form(None),
 ):
     t_req_start = time.perf_counter()
     try:
@@ -371,6 +373,11 @@ async def detect(
 
     t_req_end = time.perf_counter()
     total_server_ms = (t_req_end - t_req_start) * 1000.0
+
+    res["frameId"] = frameId
+    res["captureTimestamp"] = captureTimestamp
+    res["serverReceivedTimestampMs"] = float(round(time.time() * 1000.0, 2))
+    res["serverCompletedTimestampMs"] = float(round(time.time() * 1000.0, 2))
 
     res["timings"] = {
         "payloadReadMs": float(round(read_bytes_ms, 2)),

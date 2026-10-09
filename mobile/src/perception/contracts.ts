@@ -38,6 +38,8 @@ export interface RawFrame {
   data: Uint8Array | ArrayBuffer | string;
   rotationDegrees: 0 | 90 | 180 | 270;
   uri?: string;
+  frameId?: string;
+  captureTimestampMs?: number;
 }
 
 export interface FaceDetectionResult {
@@ -45,6 +47,9 @@ export interface FaceDetectionResult {
   confidence: number;
   landmarks?: FacialLandmarks;
   latencyMs?: number;
+  frameId?: string;
+  captureTimestampMs?: number;
+  resultTimestampMs?: number;
 }
 
 export interface TrackedFace {

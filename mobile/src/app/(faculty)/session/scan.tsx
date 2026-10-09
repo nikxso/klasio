@@ -50,6 +50,10 @@ import { YuNetDetector, SCRFDDetector } from '@/lab';
 
 interface DetectedFaceBox {
   id: string;
+  frameId?: string;
+  captureTimestampMs?: number;
+  resultAgeMs?: number;
+  isStale?: boolean;
   x: number; // percentage [0, 100]
   y: number;
   width: number;
@@ -97,6 +101,22 @@ export default function FacultyScanningScreen() {
   const [detectionCadenceFps, setDetectionCadenceFps] = useState<number>(0);
   const [totalFramesAnalyzed, setTotalFramesAnalyzed] = useState<number>(0);
   const [detailedTimings, setDetailedTimings] = useState<DetailedPerceptionTimings | null>(null);
+
+  // Frame sequence, queue, and latency state (Part A & C)
+  const frameSeqRef = useRef<number>(0);
+  const lastRenderedFrameSeqRef = useRef<number>(0);
+  const inFlightCountRef = useRef<number>(0);
+  const droppedFramesCountRef = useRef<number>(0);
+  const staleFramesCountRef = useRef<number>(0);
+  const staleClearTimerRef = useRef<any>(null);
+  const activeTimerRef = useRef<any>(null);
+
+  const [displayedFrameId, setDisplayedFrameId] = useState<string>('N/A');
+  const [resultAgeMs, setResultAgeMs] = useState<number>(0);
+  const [captureToResultMs, setCaptureToResultMs] = useState<number>(0);
+  const [queueDepth, setQueueDepth] = useState<number>(0);
+  const [droppedFramesCount, setDroppedFramesCount] = useState<number>(0);
+  const [staleFramesCount, setStaleFramesCount] = useState<number>(0);
 
   // Viewfinder layout metrics for coordinate mapping
   const [viewfinderLayout, setViewfinderLayout] = useState<{ width: number; height: number }>({
@@ -328,82 +348,117 @@ export default function FacultyScanningScreen() {
     }
 
     let isMounted = true;
-    let timerId: any = null;
 
     const runDetection = async () => {
-      if (!isMounted || !isCameraActive || isDetectingRef.current) {
-        if (isMounted && isCameraActive) {
-          timerId = setTimeout(runDetection, 100);
-        }
+      if (!isMounted || !isCameraActive) return;
+
+      // STRICT CONCURRENCY CONTROL: Prevent in-flight queue growth (max 1 in-flight)
+      if (isDetectingRef.current || inFlightCountRef.current > 0) {
+        droppedFramesCountRef.current += 1;
+        setDroppedFramesCount(droppedFramesCountRef.current);
         return;
       }
 
       isDetectingRef.current = true;
-      const cycleStart = performance.now();
+      inFlightCountRef.current = 1;
+      setQueueDepth(1);
+
+      const seq = ++frameSeqRef.current;
+      const currentFrameId = `frame_${seq}`;
+      const captureStart = performance.now();
+      const captureStartWall = Date.now();
 
       try {
         if (cameraRef.current) {
-          const snapStart = performance.now();
           const snap = await cameraRef.current.takeSnapshot({ quality: 80 });
-          const snapEnd = performance.now();
-          const acquisitionMs = Math.round(snapEnd - snapStart);
+          const captureEnd = performance.now();
+          const acquisitionMs = Math.round(captureEnd - captureStart);
 
-          if (snap?.path && isMounted) {
+          if (snap?.path && isMounted && isCameraActive) {
             const rawFrame: RawFrame = {
               width: snap.width,
               height: snap.height,
               format: 'jpeg',
-              timestampMs: Date.now(),
+              timestampMs: captureStartWall,
+              captureTimestampMs: captureStartWall,
               data: snap.path,
               uri: 'file://' + snap.path,
               rotationDegrees: 0,
+              frameId: currentFrameId,
             };
 
             const detector = activeDetector === 'YuNet' ? yunetDetector : scrfdDetector;
             const { results: detections, timings } = await detector.detectFacesDetailed(rawFrame);
 
+            // LATEST RESULT WINS: If a newer frame finished while this was in transit, drop it!
+            if (seq <= lastRenderedFrameSeqRef.current) {
+              staleFramesCountRef.current += 1;
+              setStaleFramesCount(staleFramesCountRef.current);
+              return;
+            }
+
+            const renderWallTime = Date.now();
+            const totalE2EMs = Math.round(performance.now() - captureStart);
+            const ageMs = Math.round(renderWallTime - captureStartWall);
+            const capToResult = timings?.captureToResultLatencyMs ?? totalE2EMs;
+            const isStale = ageMs > 500;
+
+            lastRenderedFrameSeqRef.current = seq;
+            setDisplayedFrameId(currentFrameId);
+            setResultAgeMs(ageMs);
+            setCaptureToResultMs(capToResult);
+            console.log(
+              `[PERCEPTION_FRAME] Frame: ${currentFrameId} | Age: ${ageMs}ms | Cap2Res: ${capToResult}ms | ` +
+              `E2E: ${totalE2EMs}ms | Queue: ${inFlightCountRef.current} | Dropped: ${droppedFramesCountRef.current} | Stale: ${staleFramesCountRef.current} | ` +
+              `Faces: ${detections.length}`
+            );
+
             if (isMounted) {
               const mapStart = performance.now();
-              const isFront = cameraPosition === 'front';
 
+              // DIRECT 1:1 COORDINATE MAPPING (Opposite-direction fix)
+              // On Android VisionCamera, takeSnapshot() captures previewView.bitmap.
+              // Front camera preview is already mirrored by CameraView; rear is unmirrored.
+              // Hence, b.x directly aligns with the preview surface on BOTH front and rear cameras!
               const mappedBoxes: DetectedFaceBox[] = detections.map((d, index) => {
                 const b = d.boundingBox;
-                // In front camera preview, preview viewport is mirrored horizontally
-                const xNorm = isFront ? Math.max(0, 1.0 - (b.x + b.width)) : b.x;
-                const xPct = xNorm * 100;
+                const xPct = b.x * 100;
                 const yPct = b.y * 100;
                 const wPct = b.width * 100;
                 const hPct = b.height * 100;
 
                 let mappedLandmarks: DetectedFaceBox['landmarks'] = undefined;
                 if (d.landmarks) {
-                  const mapLx = (lx: number) => (isFront ? Math.max(0, 1.0 - lx) : lx) * 100;
                   mappedLandmarks = {
                     leftEye: {
-                      x: mapLx(isFront ? d.landmarks.rightEye.x : d.landmarks.leftEye.x),
-                      y: (isFront ? d.landmarks.rightEye.y : d.landmarks.leftEye.y) * 100,
+                      x: d.landmarks.leftEye.x * 100,
+                      y: d.landmarks.leftEye.y * 100,
                     },
                     rightEye: {
-                      x: mapLx(isFront ? d.landmarks.leftEye.x : d.landmarks.rightEye.x),
-                      y: (isFront ? d.landmarks.leftEye.y : d.landmarks.rightEye.y) * 100,
+                      x: d.landmarks.rightEye.x * 100,
+                      y: d.landmarks.rightEye.y * 100,
                     },
                     noseTip: {
-                      x: mapLx(d.landmarks.noseTip.x),
+                      x: d.landmarks.noseTip.x * 100,
                       y: d.landmarks.noseTip.y * 100,
                     },
                     mouthLeft: {
-                      x: mapLx(isFront ? d.landmarks.mouthRight.x : d.landmarks.mouthLeft.x),
-                      y: (isFront ? d.landmarks.mouthRight.y : d.landmarks.mouthLeft.y) * 100,
+                      x: d.landmarks.mouthLeft.x * 100,
+                      y: d.landmarks.mouthLeft.y * 100,
                     },
                     mouthRight: {
-                      x: mapLx(isFront ? d.landmarks.mouthLeft.x : d.landmarks.mouthRight.x),
-                      y: (isFront ? d.landmarks.mouthLeft.y : d.landmarks.mouthRight.y) * 100,
+                      x: d.landmarks.mouthRight.x * 100,
+                      y: d.landmarks.mouthRight.y * 100,
                     },
                   };
                 }
 
                 return {
                   id: `face_${index}_${Math.round(b.x * 1000)}`,
+                  frameId: currentFrameId,
+                  captureTimestampMs: captureStartWall,
+                  resultAgeMs: ageMs,
+                  isStale,
                   x: Math.max(0, Math.min(100, xPct)),
                   y: Math.max(0, Math.min(100, yPct)),
                   width: Math.max(0, Math.min(100, wPct)),
@@ -415,7 +470,6 @@ export default function FacultyScanningScreen() {
 
               const mapEnd = performance.now();
               const clientMappingMs = Math.round(mapEnd - mapStart);
-              const totalE2EMs = Math.round(performance.now() - cycleStart);
               const inferMs = timings?.serverInferenceMs || (detections[0]?.latencyMs ?? 0);
               const overheadMs = Math.max(0, totalE2EMs - inferMs);
 
@@ -423,6 +477,14 @@ export default function FacultyScanningScreen() {
               setTotalFramesAnalyzed((prev) => prev + 1);
 
               const fullTimings: DetailedPerceptionTimings = {
+                frameId: currentFrameId,
+                captureTimestampMs: captureStartWall,
+                clientSendTimestampMs: timings?.clientSendTimestampMs,
+                clientReceiveTimestampMs: timings?.clientReceiveTimestampMs,
+                captureToResultLatencyMs: capToResult,
+                resultAgeWhenRenderedMs: ageMs,
+                queueDepth: 0,
+                isStale,
                 frameAcquisitionMs: acquisitionMs,
                 frameConversionMs: timings?.frameConversionMs ?? 0,
                 networkRoundtripMs: timings?.networkRoundtripMs ?? 0,
@@ -439,14 +501,6 @@ export default function FacultyScanningScreen() {
                 overheadOutsideInferenceMs: overheadMs,
               };
               setDetailedTimings(fullTimings);
-              console.log(
-                `[PERCEPTION_BREAKDOWN] Detector: ${activeDetector} | Size: ${analysisPreference} | ` +
-                `Acq: ${fullTimings.frameAcquisitionMs}ms | Conv: ${fullTimings.frameConversionMs}ms | ` +
-                `Net: ${fullTimings.networkTransportMs}ms | SrvDec: ${fullTimings.serverDecodeImageMs}ms | ` +
-                `SrvPre: ${fullTimings.serverPreprocessMs}ms | Infer: ${fullTimings.serverInferenceMs}ms | ` +
-                `SrvPost: ${fullTimings.serverPostprocessMs}ms | Map: ${fullTimings.clientResultHandlingMs}ms | ` +
-                `TotalE2E: ${fullTimings.totalEndToEndMs}ms | Overhead: ${fullTimings.overheadOutsideInferenceMs}ms`
-              );
 
               const now = Date.now();
               const deltaMs = now - lastFrameTimeRef.current;
@@ -459,6 +513,14 @@ export default function FacultyScanningScreen() {
               }
 
               setDetectedFaces(mappedBoxes);
+
+              // Auto-clear stale boxes after 900ms if no new detections arrive
+              if (staleClearTimerRef.current) clearTimeout(staleClearTimerRef.current);
+              staleClearTimerRef.current = setTimeout(() => {
+                if (isMounted) {
+                  setDetectedFaces([]);
+                }
+              }, 900);
             }
           }
         }
@@ -466,18 +528,21 @@ export default function FacultyScanningScreen() {
         console.warn('[Detection Loop Warning]:', err?.message);
       } finally {
         isDetectingRef.current = false;
+        inFlightCountRef.current = 0;
+        setQueueDepth(0);
         if (isMounted && isCameraActive) {
-          // Paced delay: ~4 to 6 FPS cadence
-          timerId = setTimeout(runDetection, 120);
+          // Paced single-timer trigger: 60ms delay ensures preview smoothness
+          activeTimerRef.current = setTimeout(runDetection, 60);
         }
       }
     };
 
-    timerId = setTimeout(runDetection, 400);
+    activeTimerRef.current = setTimeout(runDetection, 300);
 
     return () => {
       isMounted = false;
-      if (timerId) clearTimeout(timerId);
+      if (activeTimerRef.current) clearTimeout(activeTimerRef.current);
+      if (staleClearTimerRef.current) clearTimeout(staleClearTimerRef.current);
     };
   }, [isCameraActive, activeDetector, cameraPosition, yunetDetector, scrfdDetector]);
 
@@ -560,7 +625,7 @@ export default function FacultyScanningScreen() {
                   pointerEvents="none"
                   style={[
                     styles.boundingBox,
-                    styles.boxDetecting,
+                    face.isStale ? styles.boxStale : styles.boxDetecting,
                     {
                       left: `${face.x}%`,
                       top: `${face.y}%`,
@@ -569,10 +634,12 @@ export default function FacultyScanningScreen() {
                     },
                   ]}
                 >
-                  <View style={styles.confidenceTag}>
+                  <View style={[styles.confidenceTag, face.isStale && styles.confidenceTagStale]}>
                     <Text style={styles.confidenceText}>
                       {activeDetector === 'YuNet' ? 'YuNet' : 'SCRFD'}{' '}
                       {Math.round(face.confidence * 100)}%
+                      {face.resultAgeMs != null ? ` · ${face.resultAgeMs}ms` : ''}
+                      {face.isStale ? ' [STALE]' : ''}
                     </Text>
                   </View>
                 </View>
@@ -1006,6 +1073,67 @@ export default function FacultyScanningScreen() {
                 </Text>
               </View>
 
+              {/* Frame Sequencing & Real-Time Age Telemetry */}
+              <View style={styles.diagDivider} />
+              <Text style={styles.diagSectionTitle}>Frame Sequencing & Real-Time Age</Text>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Current Frame ID:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '700' }]}>
+                  {displayedFrameId}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Result Age when Rendered:</Text>
+                <Text
+                  style={[
+                    styles.diagVal,
+                    {
+                      color:
+                        resultAgeMs > 500
+                          ? '#d65f57'
+                          : resultAgeMs > 350
+                          ? '#f0a868'
+                          : '#7fd1ad',
+                      fontWeight: '700',
+                    },
+                  ]}
+                >
+                  {resultAgeMs > 0
+                    ? `${resultAgeMs} ms ${resultAgeMs > 500 ? '(STALE)' : '(FRESH)'}`
+                    : 'Awaiting...'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Capture-to-Result Latency:</Text>
+                <Text style={[styles.diagVal, { color: '#f0a868', fontWeight: '600' }]}>
+                  {captureToResultMs > 0 ? `${captureToResultMs} ms` : 'Awaiting...'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>In-Flight Queue Depth:</Text>
+                <Text style={[styles.diagVal, { color: queueDepth > 0 ? '#f0a868' : '#7fd1ad' }]}>
+                  {queueDepth} / 1 (Strictly Bounded)
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Dropped / Stale Frames:</Text>
+                <Text style={styles.diagVal}>
+                  {droppedFramesCount} dropped · {staleFramesCount} stale
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Coordinate Alignment:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '600' }]}>
+                  1:1 Surface Aligned (Direct)
+                </Text>
+              </View>
+
               {/* Timing & Transport Breakdown Divider */}
               <View style={styles.diagDivider} />
               <Text style={styles.diagSectionTitle}>Perception Transport Breakdown</Text>
@@ -1204,6 +1332,13 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: 'rgba(127, 209, 173, 0.14)',
   },
+  boxStale: {
+    borderColor: '#f0a868',
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(240, 168, 104, 0.08)',
+    opacity: 0.85,
+  },
   landmarkDot: {
     position: 'absolute',
     width: 8,
@@ -1224,6 +1359,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
+  },
+  confidenceTagStale: {
+    backgroundColor: 'rgba(240, 168, 104, 0.9)',
   },
   confidenceText: {
     color: '#ffffff',
