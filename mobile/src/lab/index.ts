@@ -11,7 +11,9 @@ export * from './adapters/matchers/CosineGalleryMatcher';
 export * from './adapters/trackers/CentroidIoUTracker';
 export * from './adapters/detectors/YuNetDetector';
 export * from './adapters/detectors/SCRFDDetector';
+export * from './adapters/detectors/DirectOnDeviceDetector';
 export * from './adapters/recognizers/MobileFaceNetRecognizer';
+
 export * from './adapters/recognizers/EdgeFaceXSRecognizer';
 export * from './registration/GuidedRegistrationSpike';
 export * from './pipeline/ClassroomRecognitionPipeline';

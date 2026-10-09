@@ -12,7 +12,9 @@ import {
   Animated,
   Dimensions,
   Platform,
+  findNodeHandle,
 } from 'react-native';
+
 import {
   Camera,
   useCameraDevice,
@@ -46,7 +48,8 @@ import {
 } from '@/perception/cameraFormatPolicy';
 import type { FaceDetectionResult, RawFrame } from '@/perception/contracts';
 import { DetailedPerceptionTimings } from '@/perception/perceptionClient';
-import { YuNetDetector, SCRFDDetector } from '@/lab';
+import { YuNetDetector, SCRFDDetector, DirectOnDeviceDetector } from '@/lab';
+
 
 interface DetectedFaceBox {
   id: string;
@@ -94,7 +97,8 @@ export default function FacultyScanningScreen() {
   const isCameraActive = isForeground && hasPermission && !isPaused && cameraError === null;
 
   // Perception / Detector state
-  const [activeDetector, setActiveDetector] = useState<'YuNet' | 'SCRFD-500M'>('YuNet');
+  const [activeDetector, setActiveDetector] = useState<'YuNet' | 'SCRFD-500M' | 'YuNet-InMemory'>('YuNet-InMemory');
+
   const [analysisPreference, setAnalysisPreference] = useState<'STANDARD_640' | 'LIGHTWEIGHT_320'>('STANDARD_640');
   const [detectedFaces, setDetectedFaces] = useState<DetectedFaceBox[]>([]);
   const [detectionLatencyMs, setDetectionLatencyMs] = useState<number>(0);
@@ -273,6 +277,12 @@ export default function FacultyScanningScreen() {
     [policyDecision]
   );
 
+  const directDetector = useMemo(
+    () => new DirectOnDeviceDetector(null, 0.35),
+    []
+  );
+
+
   // Scanline animation loop
   useEffect(() => {
     if (isPaused) return;
@@ -370,26 +380,59 @@ export default function FacultyScanningScreen() {
 
       try {
         if (cameraRef.current) {
-          const snap = await cameraRef.current.takeSnapshot({ quality: 80 });
-          const captureEnd = performance.now();
-          const acquisitionMs = Math.round(captureEnd - captureStart);
+          let detections: FaceDetectionResult[] = [];
+          let timings: DetailedPerceptionTimings | undefined;
+          let acquisitionMs = 0;
 
-          if (snap?.path && isMounted && isCameraActive) {
+          if (activeDetector === 'YuNet-InMemory') {
+            const nodeHandle = findNodeHandle(cameraRef.current);
+            if (nodeHandle) {
+              directDetector.setCameraTag(nodeHandle);
+            }
+
             const rawFrame: RawFrame = {
-              width: snap.width,
-              height: snap.height,
-              format: 'jpeg',
+              width: viewfinderLayout.width,
+              height: viewfinderLayout.height,
+              format: 'rgba',
               timestampMs: captureStartWall,
               captureTimestampMs: captureStartWall,
-              data: snap.path,
-              uri: 'file://' + snap.path,
+              data: '',
               rotationDegrees: 0,
               frameId: currentFrameId,
             };
 
-            const detector = activeDetector === 'YuNet' ? yunetDetector : scrfdDetector;
-            const { results: detections, timings } = await detector.detectFacesDetailed(rawFrame);
+            const directResult = await directDetector.detectFacesDetailed(rawFrame);
+            detections = directResult.results;
+            timings = directResult.timings;
+            acquisitionMs = timings?.frameAcquisitionMs ?? 0;
+          } else {
+            const snap = await cameraRef.current.takeSnapshot({ quality: 80 });
+            const captureEnd = performance.now();
+            acquisitionMs = Math.round(captureEnd - captureStart);
 
+            if (snap?.path && isMounted && isCameraActive) {
+              const rawFrame: RawFrame = {
+                width: snap.width,
+                height: snap.height,
+                format: 'jpeg',
+                timestampMs: captureStartWall,
+                captureTimestampMs: captureStartWall,
+                data: snap.path,
+                uri: 'file://' + snap.path,
+                rotationDegrees: 0,
+                frameId: currentFrameId,
+              };
+
+              const detector = activeDetector === 'YuNet' ? yunetDetector : scrfdDetector;
+              const res = await detector.detectFacesDetailed(rawFrame);
+              detections = res.results;
+              timings = res.timings;
+            } else {
+              return;
+            }
+          }
+
+          if (isMounted && isCameraActive) {
             // LATEST RESULT WINS: If a newer frame finished while this was in transit, drop it!
             if (seq <= lastRenderedFrameSeqRef.current) {
               staleFramesCountRef.current += 1;
@@ -408,7 +451,7 @@ export default function FacultyScanningScreen() {
             setResultAgeMs(ageMs);
             setCaptureToResultMs(capToResult);
             console.log(
-              `[PERCEPTION_FRAME] Frame: ${currentFrameId} | Age: ${ageMs}ms | Cap2Res: ${capToResult}ms | ` +
+              `[PERCEPTION_FRAME] Mode: ${activeDetector} | Frame: ${currentFrameId} | Age: ${ageMs}ms | Cap2Res: ${capToResult}ms | ` +
               `E2E: ${totalE2EMs}ms | Queue: ${inFlightCountRef.current} | Dropped: ${droppedFramesCountRef.current} | Stale: ${staleFramesCountRef.current} | ` +
               `Faces: ${detections.length}`
             );
@@ -429,26 +472,33 @@ export default function FacultyScanningScreen() {
 
                 let mappedLandmarks: DetectedFaceBox['landmarks'] = undefined;
                 if (d.landmarks) {
+                  const lm = d.landmarks as any;
+                  const leftEye = lm.leftEye || {};
+                  const rightEye = lm.rightEye || {};
+                  const noseTip = lm.noseTip || {};
+                  const mouthLeft = lm.mouthLeft || lm.leftMouth || {};
+                  const mouthRight = lm.mouthRight || lm.rightMouth || {};
+
                   mappedLandmarks = {
                     leftEye: {
-                      x: d.landmarks.leftEye.x * 100,
-                      y: d.landmarks.leftEye.y * 100,
+                      x: (leftEye.x ?? 0) * 100,
+                      y: (leftEye.y ?? 0) * 100,
                     },
                     rightEye: {
-                      x: d.landmarks.rightEye.x * 100,
-                      y: d.landmarks.rightEye.y * 100,
+                      x: (rightEye.x ?? 0) * 100,
+                      y: (rightEye.y ?? 0) * 100,
                     },
                     noseTip: {
-                      x: d.landmarks.noseTip.x * 100,
-                      y: d.landmarks.noseTip.y * 100,
+                      x: (noseTip.x ?? 0) * 100,
+                      y: (noseTip.y ?? 0) * 100,
                     },
                     mouthLeft: {
-                      x: d.landmarks.mouthLeft.x * 100,
-                      y: d.landmarks.mouthLeft.y * 100,
+                      x: (mouthLeft.x ?? 0) * 100,
+                      y: (mouthLeft.y ?? 0) * 100,
                     },
                     mouthRight: {
-                      x: d.landmarks.mouthRight.x * 100,
-                      y: d.landmarks.mouthRight.y * 100,
+                      x: (mouthRight.x ?? 0) * 100,
+                      y: (mouthRight.y ?? 0) * 100,
                     },
                   };
                 }
@@ -467,6 +517,14 @@ export default function FacultyScanningScreen() {
                   landmarks: mappedLandmarks,
                 };
               });
+
+              if (mappedBoxes.length > 0) {
+                console.log(
+                  `[FACE_BOX] X: ${mappedBoxes[0].x.toFixed(1)}% | Y: ${mappedBoxes[0].y.toFixed(1)}% | ` +
+                  `W: ${mappedBoxes[0].width.toFixed(1)}% | H: ${mappedBoxes[0].height.toFixed(1)}% | ` +
+                  `Conf: ${(mappedBoxes[0].confidence * 100).toFixed(1)}%`
+                );
+              }
 
               const mapEnd = performance.now();
               const clientMappingMs = Math.round(mapEnd - mapStart);
@@ -501,6 +559,11 @@ export default function FacultyScanningScreen() {
                 overheadOutsideInferenceMs: overheadMs,
               };
               setDetailedTimings(fullTimings);
+              console.log(
+                `[IN_MEMORY_BREAKDOWN] Detector: ${activeDetector} | Acq: ${fullTimings.frameAcquisitionMs}ms | Pre: ${fullTimings.serverPreprocessMs}ms | ` +
+                `Infer: ${fullTimings.serverInferenceMs}ms | Post: ${fullTimings.serverPostprocessMs}ms | Map: ${fullTimings.clientResultHandlingMs}ms | ` +
+                `E2E: ${fullTimings.totalEndToEndMs}ms | Age: ${fullTimings.resultAgeWhenRenderedMs}ms`
+              );
 
               const now = Date.now();
               const deltaMs = now - lastFrameTimeRef.current;
@@ -531,8 +594,9 @@ export default function FacultyScanningScreen() {
         inFlightCountRef.current = 0;
         setQueueDepth(0);
         if (isMounted && isCameraActive) {
-          // Paced single-timer trigger: 60ms delay ensures preview smoothness
-          activeTimerRef.current = setTimeout(runDetection, 60);
+          // Paced single-timer trigger: 25ms for in-memory on-device, 60ms for HTTP bridge
+          const delayMs = activeDetector === 'YuNet-InMemory' ? 25 : 60;
+          activeTimerRef.current = setTimeout(runDetection, delayMs);
         }
       }
     };
@@ -544,7 +608,7 @@ export default function FacultyScanningScreen() {
       if (activeTimerRef.current) clearTimeout(activeTimerRef.current);
       if (staleClearTimerRef.current) clearTimeout(staleClearTimerRef.current);
     };
-  }, [isCameraActive, activeDetector, cameraPosition, yunetDetector, scrfdDetector]);
+  }, [isCameraActive, activeDetector, cameraPosition, yunetDetector, scrfdDetector, directDetector, viewfinderLayout]);
 
   const handleDone = () => {
     router.replace({
@@ -956,7 +1020,7 @@ export default function FacultyScanningScreen() {
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Detector Candidate:</Text>
                 <View style={styles.pillGroup}>
-                  {(['YuNet', 'SCRFD-500M'] as const).map((det) => (
+                  {(['YuNet-InMemory', 'YuNet', 'SCRFD-500M'] as const).map((det) => (
                     <TouchableOpacity
                       key={det}
                       style={[
@@ -971,7 +1035,7 @@ export default function FacultyScanningScreen() {
                           activeDetector === det && styles.diagPillTextActive,
                         ]}
                       >
-                        {det}
+                        {det === 'YuNet-InMemory' ? 'YuNet (In-Mem)' : det === 'YuNet' ? 'YuNet (HTTP)' : 'SCRFD (HTTP)'}
                       </Text>
                     </TouchableOpacity>
                   ))}
