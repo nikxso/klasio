@@ -261,6 +261,76 @@ export interface IFaceQualityGate {
 }
 
 /**
+ * Face Crop Input for Embedding Generation (Step E)
+ * STRICT REQUIREMENT: box MUST be measured/tracked geometry, NEVER display box!
+ */
+export interface FaceCropInput {
+  frame: RawFrame;
+  box: FaceBoundingBox; // Measured / tracked bounding box [0, 1]
+  landmarks?: FacialLandmarks;
+}
+
+export type FaceAlignmentMode = 'NONE' | 'SIMILARITY_TRANSFORM_5PT';
+
+/**
+ * Model Manifest & Compatibility Configuration (Step E)
+ * Formalizes: Model V1 + Preprocessing V1 + Alignment V1 = Embedding Format V1
+ */
+export interface ModelManifest {
+  modelName: string;
+  modelVersion: string;
+  format: 'ONNX' | 'TFLite';
+  fileChecksumSha256?: string;
+  fileSizeBytes: number;
+  inputWidth: number;
+  inputHeight: number;
+  inputChannels: number;
+  inputColorOrder: 'RGB' | 'BGR';
+  normalization: 'MINUS_127_5_DIV_127_5' | 'MINUS_127_5_DIV_128_0' | 'IMAGENET';
+  embeddingDimension: number;
+  alignmentMode: FaceAlignmentMode;
+  manifestVersion: string; // e.g. "v1"
+}
+
+export interface FaceEmbeddingTimings {
+  cropAndAlignmentMs: number;
+  preprocessingMs: number;
+  inferenceMs: number;
+  normalizationMs: number;
+  totalMs: number;
+}
+
+/**
+ * Transient Face Embedding Result (Step E)
+ * strictly ephemeral; contains biometric vector and performance metadata.
+ */
+export interface FaceEmbeddingResult {
+  embedding: Float32Array; // 512-dimensional unit-normalized L2 vector
+  rawDimension: number;
+  isNormalized: boolean;
+  manifest: ModelManifest;
+  timings: FaceEmbeddingTimings;
+}
+
+/**
+ * Face Embedder Interface: Extracts identity embeddings from quality-approved face observations (Step E).
+ * Modular abstraction isolating model implementations (MobileFaceNet, EdgeFace-XS).
+ */
+export interface IFaceEmbedder {
+  readonly modelName: string;
+  readonly manifest: ModelManifest;
+  readonly embeddingDimension: number;
+
+  initialize(modelPath?: string): Promise<void>;
+  /**
+   * Extracts crop, performs optional 5-point alignment, preprocesses,
+   * runs inference, and returns unit-normalized L2 embedding.
+   */
+  embed(input: FaceCropInput, align?: boolean): Promise<FaceEmbeddingResult>;
+  dispose(): Promise<void>;
+}
+
+/**
  * Face Recognizer Interface: Extracts identity embeddings from aligned crops.
  * Candidate implementations: MobileFaceNet, EdgeFace-XS, FaceLiVT.
  */

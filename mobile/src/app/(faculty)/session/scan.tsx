@@ -1690,6 +1690,25 @@ export default function FacultyScanningScreen() {
                 </View>
               )}
 
+              {/* Step E: Embedding Layer Diagnostics (Transient Biometric Boundary) */}
+              <View style={styles.diagDivider} />
+              <Text style={styles.diagSectionTitle}>Step E: Embedding & Model Selection</Text>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Selected V1 Model:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad' }]}>EdgeFace-XS (512-dim, 6.94MB)</Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Embedding Pipeline:</Text>
+                <Text style={styles.diagVal}>5-Pt Aligned → L2 Unit Vector</Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Biometric Boundary:</Text>
+                <Text style={[styles.diagVal, { color: '#f0a868' }]}>Transient In-Memory Only</Text>
+              </View>
+
               {/* Permission & Lifecycle */}
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Camera State:</Text>

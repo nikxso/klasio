@@ -31,6 +31,16 @@ from contextlib import asynccontextmanager
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 YUNET_PATH = os.path.join(BASE_DIR, "src", "lab", "models", "yunet_2023mar.onnx")
 SCRFD_PATH = os.path.join(BASE_DIR, "src", "lab", "models", "det_500m.onnx")
+MBF_PATH = os.path.join(BASE_DIR, "src", "lab", "models", "w600k_mbf.onnx")
+EDGEFACE_PATH = os.path.join(BASE_DIR, "src", "lab", "models", "edgeface_xs.onnx")
+
+CANONICAL_5PT = np.array([
+    [38.2946, 51.6963],
+    [73.5318, 51.5014],
+    [56.0252, 71.7366],
+    [41.5493, 92.3655],
+    [70.7299, 92.2041],
+], dtype=np.float32)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,7 +59,7 @@ app.add_middleware(
 
 
 def init_sessions():
-    global sess_yunet, sess_scrfd
+    global sess_yunet, sess_scrfd, sess_mbf, sess_edgeface
     opts = ort.SessionOptions()
     opts.intra_op_num_threads = 4
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -59,7 +69,13 @@ def init_sessions():
 
     logger.info("Initializing SCRFD-500M session from %s", SCRFD_PATH)
     sess_scrfd = ort.InferenceSession(SCRFD_PATH, sess_options=opts, providers=["CPUExecutionProvider"])
-    logger.info("Perception sessions loaded successfully.")
+
+    logger.info("Initializing MobileFaceNet session from %s", MBF_PATH)
+    sess_mbf = ort.InferenceSession(MBF_PATH, sess_options=opts, providers=["CPUExecutionProvider"])
+
+    logger.info("Initializing EdgeFace-XS session from %s", EDGEFACE_PATH)
+    sess_edgeface = ort.InferenceSession(EDGEFACE_PATH, sess_options=opts, providers=["CPUExecutionProvider"])
+    logger.info("Perception & Embedding sessions loaded successfully.")
 
 
 def nms(boxes: np.ndarray, scores: np.ndarray, thresh: float = 0.4) -> List[int]:
@@ -402,6 +418,101 @@ async def detect(
         res["facesCount"],
     )
     return res
+
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "detectors": ["YuNet", "SCRFD-500M"],
+        "embedders": ["MobileFaceNet", "EdgeFace-XS"],
+        "timestamp": time.time(),
+    }
+
+
+@app.post("/embed")
+async def embed_endpoint(
+    file: UploadFile = File(...),
+    model: str = Form("EdgeFace-XS"),
+    align: bool = Form(True),
+    landmarksJson: Optional[str] = Form(None),
+):
+    t0 = time.perf_counter()
+    contents = await file.read()
+    image = Image.open(io.BytesIO(contents)).convert("RGB")
+    img_np = np.array(image)
+
+    align_mode = "NONE"
+    if align and landmarksJson:
+        try:
+            lms_dict = json.loads(landmarksJson)
+            src_pts = np.array([
+                [lms_dict["leftEye"]["x"], lms_dict["leftEye"]["y"]],
+                [lms_dict["rightEye"]["x"], lms_dict["rightEye"]["y"]],
+                [lms_dict["noseTip"]["x"], lms_dict["noseTip"]["y"]],
+                [lms_dict["mouthLeft"]["x"], lms_dict["mouthLeft"]["y"]],
+                [lms_dict["mouthRight"]["x"], lms_dict["mouthRight"]["y"]],
+            ], dtype=np.float32)
+            M, _ = cv2.estimateAffinePartial2D(src_pts, CANONICAL_5PT, method=cv2.LMEDS)
+            if M is not None:
+                crop_112 = cv2.warpAffine(img_np, M, (112, 112))
+                align_mode = "SIMILARITY_TRANSFORM_5PT"
+            else:
+                crop_112 = cv2.resize(img_np, (112, 112))
+        except Exception:
+            crop_112 = cv2.resize(img_np, (112, 112))
+    else:
+        crop_112 = cv2.resize(img_np, (112, 112))
+
+    t1 = time.perf_counter()
+    crop_ms = (t1 - t0) * 1000.0
+
+    if model == "MobileFaceNet":
+        normed = (crop_112.astype(np.float32) - 127.5) / 127.5
+        sess = sess_mbf
+        input_name = sess.get_inputs()[0].name
+        output_name = sess.get_outputs()[0].name
+        norm_mode = "MINUS_127_5_DIV_127_5"
+    elif model == "EdgeFace-XS":
+        normed = (crop_112.astype(np.float32) - 127.5) / 128.0
+        sess = sess_edgeface
+        input_name = sess.get_inputs()[0].name
+        output_name = sess.get_outputs()[0].name
+        norm_mode = "MINUS_127_5_DIV_128_0"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported model: {model}")
+
+    tensor = np.transpose(normed, (2, 0, 1))
+    tensor = np.expand_dims(tensor, axis=0)
+    t2 = time.perf_counter()
+    preproc_ms = (t2 - t1) * 1000.0
+
+    raw_vec = sess.run([output_name], {input_name: tensor})[0].flatten()
+    t3 = time.perf_counter()
+    infer_ms = (t3 - t2) * 1000.0
+
+    norm = float(np.linalg.norm(raw_vec))
+    unit_vec = (raw_vec / norm).tolist() if norm > 1e-12 else raw_vec.tolist()
+    t4 = time.perf_counter()
+    norm_ms = (t4 - t3) * 1000.0
+    total_ms = (t4 - t0) * 1000.0
+
+    return {
+        "success": True,
+        "model": model,
+        "embeddingDimension": len(unit_vec),
+        "alignmentMode": align_mode,
+        "normalization": norm_mode,
+        "isNormalized": True,
+        "timings": {
+            "cropMs": float(round(crop_ms, 2)),
+            "preprocessMs": float(round(preproc_ms, 2)),
+            "inferenceMs": float(round(infer_ms, 2)),
+            "normalizeMs": float(round(norm_ms, 2)),
+            "totalMs": float(round(total_ms, 2)),
+        },
+        "embedding": unit_vec,
+    }
 
 
 if __name__ == "__main__":
