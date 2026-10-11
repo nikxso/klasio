@@ -7,6 +7,7 @@
  */
 
 export * from './adapters/quality/HeuristicQualityGate';
+export * from './adapters/quality/FaceQualityGate';
 export * from './adapters/matchers/CosineGalleryMatcher';
 export * from './adapters/trackers/CentroidIoUTracker';
 export * from './adapters/trackers/TemporalCentroidTracker';

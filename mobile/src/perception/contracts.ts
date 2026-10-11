@@ -52,14 +52,69 @@ export interface FaceDetectionResult {
   resultTimestampMs?: number;
 }
 
+export type QualityState = 'UNKNOWN' | 'GOOD' | 'FAIR' | 'POOR';
+
+export type QualityReason =
+  | 'TOO_SMALL'
+  | 'LOW_SHARPNESS'
+  | 'EXCESSIVE_YAW'
+  | 'EXCESSIVE_PITCH'
+  | 'EXCESSIVE_ROLL'
+  | 'FRAME_CLIPPED'
+  | 'LOW_VISIBILITY'
+  | 'GEOMETRY_UNSTABLE'
+  | 'INSUFFICIENT_LANDMARKS';
+
+export interface QualitySignalMetrics {
+  // A. Face Size
+  normalizedWidth: number;
+  normalizedHeight: number;
+  normalizedArea: number;
+  estimatedPixelSizePx?: number;
+  sizeState: QualityState;
+
+  // B. Bounding-Box Geometry
+  aspectRatio: number; // width / height
+  aspectRatioState: QualityState;
+  isGeometryStable: boolean;
+  geometryState: QualityState;
+
+  // C. Visibility & Clipping
+  inFrameProportion: number; // [0, 1] proportion inside frame bounds
+  isClipped: boolean;
+  landmarksAvailable: boolean;
+  landmarkSpread?: number;
+  visibilityState: QualityState;
+
+  // D. Sharpness / Blur
+  sharpnessScore: number; // [0, 1] proxy metric
+  sharpnessState: QualityState;
+
+  // E. Head Pose / Orientation
+  yawDegrees: number;
+  pitchDegrees: number;
+  rollDegrees: number;
+  poseState: QualityState;
+}
+
+export interface QualityAssessment {
+  state: QualityState;
+  score: number; // [0.0, 1.0] composite quality score
+  primaryReason?: QualityReason;
+  metrics: QualitySignalMetrics;
+  assessedAtMs: number;
+}
+
 export interface TrackedFace {
   trackId: number;
-  boundingBox: FaceBoundingBox;
+  boundingBox: FaceBoundingBox; // Measured / tracked bounding box [0, 1]
+  displayBox?: FaceBoundingBox; // Display-stabilized bounding box [0, 1]
   landmarks?: FacialLandmarks;
   confidence: number;
   ageInFrames: number;
   timeSinceLastSeenMs: number;
   isConfirmed: boolean;
+  quality?: QualityAssessment;
 }
 
 export interface QualityGateResult {
@@ -146,6 +201,63 @@ export interface IFaceTracker {
    */
   update(detections: FaceDetectionResult[], timestampMs: number): TrackedFace[];
   reset(): void;
+}
+
+/**
+ * Face Quality & Visibility Gate Configuration (Step D)
+ * All thresholds are empirical candidates calibrated through physical evaluation.
+ */
+export interface QualityGateConfig {
+  // A. Face Size (normalized [0, 1] relative to analysis frame)
+  minNormalizedWidth: number; // Threshold below which size is POOR (default ~0.05)
+  minNormalizedHeight: number; // Threshold below which size is POOR (default ~0.06)
+  fairNormalizedWidth: number; // Threshold below which size is FAIR (default ~0.08)
+  fairNormalizedHeight: number; // Threshold below which size is FAIR (default ~0.10)
+
+  // B. Bounding-Box Geometry & Aspect Ratio (width / height)
+  minAspectRatio: number; // Lower bound (narrow/sliver box rejection, default ~0.50)
+  maxAspectRatio: number; // Upper bound (wide/pancake box rejection, default ~1.20)
+  fairMinAspectRatio: number; // FAIR lower bound (default ~0.60)
+  fairMaxAspectRatio: number; // FAIR upper bound (default ~1.05)
+  maxScaleJumpRatio: number; // Max allowable scale change across adjacent updates (default ~0.50)
+
+  // C. Visibility & Frame Boundary Containment
+  minInFrameProportion: number; // Proportion of box strictly inside [0, 1] frame (default ~0.80)
+  fairInFrameProportion: number; // FAIR in-frame proportion (default ~0.95)
+
+  // D. Image Sharpness / Blur Proxy
+  minSharpness: number; // Threshold below which observation is POOR (default ~0.20)
+  fairSharpness: number; // Threshold below which observation is FAIR (default ~0.35)
+
+  // E. Head Pose / Orientation (degrees from landmark geometry)
+  maxYawDegrees: number; // POOR yaw limit (default ~28.0°)
+  fairYawDegrees: number; // FAIR yaw limit (default ~16.0°)
+  maxPitchDegrees: number; // POOR pitch limit (default ~22.0°)
+  fairPitchDegrees: number; // FAIR pitch limit (default ~14.0°)
+  maxRollDegrees: number; // POOR roll/tilt limit (default ~20.0°)
+  fairRollDegrees: number; // FAIR roll/tilt limit (default ~12.0°)
+}
+
+/**
+ * Face Quality & Visibility Gate Interface (Step D)
+ * Evaluates tracked face observations to determine downstream recognition suitability.
+ */
+export interface IFaceQualityGate {
+  readonly gateName: string;
+
+  /**
+   * Evaluates face geometry, visibility, blur, and pose signals.
+   * Returns a complete QualityAssessment.
+   */
+  evaluate(
+    box: FaceBoundingBox,
+    landmarks?: FacialLandmarks,
+    confidence?: number,
+    previousBox?: FaceBoundingBox,
+    framePixels?: Uint8Array,
+    frameWidth?: number,
+    frameHeight?: number
+  ): QualityAssessment;
 }
 
 /**

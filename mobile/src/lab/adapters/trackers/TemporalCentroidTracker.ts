@@ -1,12 +1,15 @@
 /**
  * Temporal Centroid + IoU Face Tracker
- * Feature: 001-academic-roles-enrollment / Perception Step C (Live Face Tracking)
+ * Feature: 001-academic-roles-enrollment / Perception Step C & Step D
  *
  * Designed specifically for rate-decoupled operation on mobile hardware:
  * - Decouples sparse detector updates (~3.2–3.8 FPS) from smooth continuous rendering (~30–60 FPS)
  * - Two-tier association: IoU overlap (tier 1) + Centroid distance gating (tier 2)
  * - Motion extrapolation (coasting) during temporary detector gaps
- * - Exponential bounding-box smoothing to eliminate visual jitter
+ * - Decoupled position smoothing (alphaPos = 0.40) and dimension smoothing (alphaDim = 0.18)
+ * - Strict 4-way geometry separation: Raw vs Tracking vs Display vs Quality
+ * - Center-preserving display box aspect ratio stabilization
+ * - Quality gate integration with hard tracking continuity invariant (POOR quality never kills a track)
  * - Anonymous monotonic track IDs (Track #1, Track #2, etc.)
  * - Zero biometric or identity coupling
  */
@@ -15,8 +18,10 @@ import type {
   FaceBoundingBox,
   FaceDetectionResult,
   FacialLandmarks,
+  IFaceQualityGate,
   IFaceTracker,
   Point2D,
+  QualityAssessment,
   TrackedFace,
 } from '../../../perception/contracts';
 
@@ -25,8 +30,11 @@ export type TrackingState = 'tentative' | 'confirmed' | 'coasting' | 'retired';
 export interface InternalTemporalTrack {
   trackId: number;
   state: TrackingState;
-  box: FaceBoundingBox; // Current smoothed bounding box [0, 1]
-  targetBox: FaceBoundingBox; // Latest observed bounding box from detector
+  box: FaceBoundingBox; // Current smoothed tracking bounding box [0, 1]
+  targetBox: FaceBoundingBox; // Latest observed bounding box from detector [0, 1]
+  rawBox: FaceBoundingBox; // Raw detector bounding box from latest detection [0, 1]
+  displayBox: FaceBoundingBox; // Display-stabilized bounding box [0, 1]
+  previousBox?: FaceBoundingBox; // Previous frame tracking box for jump detection
   velocity: { vx: number; vy: number }; // Units per second in normalized coords
   confidence: number;
   hits: number; // Total detector frames matched
@@ -37,6 +45,7 @@ export interface InternalTemporalTrack {
   isConfirmed: boolean;
   landmarks?: FacialLandmarks;
   targetLandmarks?: FacialLandmarks;
+  quality?: QualityAssessment; // Quality assessment state
 }
 
 export interface TrackerConfig {
@@ -45,8 +54,10 @@ export interface TrackerConfig {
   sizeRatioThreshold: number; // Max relative box size disparity (default 0.40)
   minHitsToConfirm: number; // Detections needed to confirm track (default 2)
   maxCoastDurationMs: number; // Max time to coast without detector match (default 850ms)
-  smoothingAlpha: number; // Lerp smoothing factor per step [0, 1] (default 0.40)
+  smoothingAlpha: number; // Position lerp factor per step [0, 1] (default 0.40)
+  smoothingAlphaDimension: number; // Dimension/scale lerp factor per step [0, 1] (default 0.18)
   velocityDamping: number; // Velocity decay per step on coasting (default 0.92)
+  targetDisplayAspectRatio: number; // Target aspect ratio for display box (default 0.75)
 }
 
 export const DEFAULT_TRACKER_CONFIG: TrackerConfig = {
@@ -56,7 +67,9 @@ export const DEFAULT_TRACKER_CONFIG: TrackerConfig = {
   minHitsToConfirm: 2,
   maxCoastDurationMs: 850,
   smoothingAlpha: 0.40,
+  smoothingAlphaDimension: 0.18,
   velocityDamping: 0.92,
+  targetDisplayAspectRatio: 0.75,
 };
 
 export class TemporalCentroidTracker implements IFaceTracker {
@@ -66,6 +79,7 @@ export class TemporalCentroidTracker implements IFaceTracker {
   private tracks: InternalTemporalTrack[] = [];
   private readonly config: TrackerConfig;
   private lastStepTimestampMs: number = 0;
+  private qualityGate?: IFaceQualityGate;
 
   // Telemetry & Diagnostic counters
   private totalTracksCreated: number = 0;
@@ -74,8 +88,17 @@ export class TemporalCentroidTracker implements IFaceTracker {
   private totalMisses: number = 0;
   private lastStepDurationMs: number = 0;
 
-  constructor(config?: Partial<TrackerConfig>) {
+  constructor(config?: Partial<TrackerConfig>, qualityGate?: IFaceQualityGate) {
     this.config = { ...DEFAULT_TRACKER_CONFIG, ...(config || {}) };
+    this.qualityGate = qualityGate;
+  }
+
+  public setQualityGate(gate: IFaceQualityGate): void {
+    this.qualityGate = gate;
+  }
+
+  public getQualityGate(): IFaceQualityGate | undefined {
+    return this.qualityGate;
   }
 
   // ---------------------------------------------------------------------------
@@ -109,6 +132,41 @@ export class TemporalCentroidTracker implements IFaceTracker {
   public static computeSizeRatio(b1: FaceBoundingBox, b2: FaceBoundingBox): number {
     const maxDim = Math.max(b1.width, b2.width, 0.001);
     return Math.abs(b1.width - b2.width) / maxDim;
+  }
+
+  /**
+   * Derives a center-preserving display box with aspect-ratio stabilization.
+   * Preserves centroid and geometric area so that display normalization NEVER
+   * contaminates or artificially enlarges true quality measurements.
+   */
+  public static computeDisplayBox(
+    box: FaceBoundingBox,
+    targetAspectRatio: number = 0.75
+  ): FaceBoundingBox {
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const currentAspect = box.height > 0.0001 ? box.width / box.height : targetAspectRatio;
+
+    let dispW = box.width;
+    let dispH = box.height;
+
+    // If detector bounding box aspect ratio deviates significantly from typical bounds,
+    // gently stabilize display dimensions while keeping total area constant (W * H = area)
+    if (currentAspect < 0.60 || currentAspect > 1.05) {
+      const area = Math.max(0.0001, box.width * box.height);
+      dispH = Math.sqrt(area / targetAspectRatio);
+      dispW = targetAspectRatio * dispH;
+    }
+
+    const dispX = Math.max(0, Math.min(1 - dispW, cx - dispW / 2));
+    const dispY = Math.max(0, Math.min(1 - dispH, cy - dispH / 2));
+
+    return {
+      x: Math.round(dispX * 10000) / 10000,
+      y: Math.round(dispY * 10000) / 10000,
+      width: Math.round(Math.min(1, dispW) * 10000) / 10000,
+      height: Math.round(Math.min(1, dispH) * 10000) / 10000,
+    };
   }
 
   private lerpPoint(p1: Point2D, p2: Point2D, alpha: number): Point2D {
@@ -179,9 +237,16 @@ export class TemporalCentroidTracker implements IFaceTracker {
         const dist = TemporalCentroidTracker.computeCentroidDistance(track.box, detBox);
         const sizeRatio = TemporalCentroidTracker.computeSizeRatio(track.box, detBox);
 
+        // Scale ratio threshold: relaxed if centroid distance is very close
+        // (i.e. face is at almost the identical location, merely shrank or grew)
+        const allowedSizeRatio =
+          dist <= this.config.centroidDistanceThreshold * 0.5
+            ? Math.max(this.config.sizeRatioThreshold, 0.85)
+            : this.config.sizeRatioThreshold;
+
         if (
           dist <= this.config.centroidDistanceThreshold &&
-          sizeRatio <= this.config.sizeRatioThreshold &&
+          sizeRatio <= allowedSizeRatio &&
           dist < bestDist
         ) {
           bestDist = dist;
@@ -219,11 +284,19 @@ export class TemporalCentroidTracker implements IFaceTracker {
       if (!matchedDetections.has(dIdx)) {
         const det = detections[dIdx];
         const isImmediate = this.config.minHitsToConfirm <= 1;
+        const initBox = { ...det.boundingBox };
+        const initDisplayBox = TemporalCentroidTracker.computeDisplayBox(
+          initBox,
+          this.config.targetDisplayAspectRatio
+        );
+
         const newTrack: InternalTemporalTrack = {
           trackId: this.nextTrackId++,
           state: isImmediate ? 'confirmed' : 'tentative',
-          box: { ...det.boundingBox },
-          targetBox: { ...det.boundingBox },
+          box: { ...initBox },
+          targetBox: { ...initBox },
+          rawBox: { ...initBox },
+          displayBox: { ...initDisplayBox },
           velocity: { vx: 0, vy: 0 },
           confidence: det.confidence,
           hits: 1,
@@ -235,6 +308,15 @@ export class TemporalCentroidTracker implements IFaceTracker {
           landmarks: det.landmarks ? { ...det.landmarks } : undefined,
           targetLandmarks: det.landmarks ? { ...det.landmarks } : undefined,
         };
+
+        if (this.qualityGate) {
+          newTrack.quality = this.qualityGate.evaluate(
+            newTrack.box,
+            newTrack.landmarks,
+            newTrack.confidence,
+            undefined
+          );
+        }
 
         this.tracks.push(newTrack);
         this.totalTracksCreated++;
@@ -268,7 +350,10 @@ export class TemporalCentroidTracker implements IFaceTracker {
       vy: 0.5 * track.velocity.vy + 0.5 * clampedVy,
     };
 
+    track.previousBox = { ...track.box };
+    track.rawBox = { ...detBox };
     track.targetBox = { ...detBox };
+
     if (detection.landmarks) {
       track.targetLandmarks = { ...detection.landmarks };
       if (!track.landmarks) {
@@ -288,6 +373,16 @@ export class TemporalCentroidTracker implements IFaceTracker {
     } else {
       track.state = 'tentative';
     }
+
+    // Evaluate quality on updated detection (INVARIANT: POOR quality never retires track)
+    if (this.qualityGate) {
+      track.quality = this.qualityGate.evaluate(
+        track.targetBox,
+        track.targetLandmarks || track.landmarks,
+        track.confidence,
+        track.previousBox
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -297,19 +392,22 @@ export class TemporalCentroidTracker implements IFaceTracker {
   /**
    * Advances track positions smoothly between detector cycles.
    * Can be called on animation ticks (requestAnimationFrame / 16–33 ms).
-   * - Confirmed/Tentative tracks: Exponentially smooth position towards targetBox
+   * - Confirmed/Tentative tracks: Exponentially smooth position (alphaPos) & dimensions (alphaDim)
    * - Coasting tracks: Extrapolate position using damped velocity
+   * - Evaluates quality assessment continually
    */
   public step(timestampMs?: number): TrackedFace[] {
     const start = performance.now();
     const now = timestampMs || Date.now();
 
-    const dtSeconds = this.lastStepTimestampMs === 0
-      ? 0.033
-      : Math.max(0.001, Math.min(0.1, (now - this.lastStepTimestampMs) / 1000));
+    const dtSeconds =
+      this.lastStepTimestampMs === 0
+        ? 0.033
+        : Math.max(0.001, Math.min(0.1, (now - this.lastStepTimestampMs) / 1000));
     this.lastStepTimestampMs = now;
 
-    const alpha = this.config.smoothingAlpha;
+    const alphaPos = this.config.smoothingAlpha;
+    const alphaDim = this.config.smoothingAlphaDimension;
     const damping = this.config.velocityDamping;
 
     for (let i = 0; i < this.tracks.length; i++) {
@@ -327,6 +425,17 @@ export class TemporalCentroidTracker implements IFaceTracker {
         // Extrapolate box using damped velocity
         track.box.x = Math.max(0, Math.min(1 - track.box.width, track.box.x + track.velocity.vx * dtSeconds));
         track.box.y = Math.max(0, Math.min(1 - track.box.height, track.box.y + track.velocity.vy * dtSeconds));
+
+        // Display box follows extrapolated position
+        track.displayBox.x = Math.max(
+          0,
+          Math.min(1 - track.displayBox.width, track.displayBox.x + track.velocity.vx * dtSeconds)
+        );
+        track.displayBox.y = Math.max(
+          0,
+          Math.min(1 - track.displayBox.height, track.displayBox.y + track.velocity.vy * dtSeconds)
+        );
+
         track.velocity.vx *= damping;
         track.velocity.vy *= damping;
 
@@ -346,16 +455,39 @@ export class TemporalCentroidTracker implements IFaceTracker {
           track.landmarks.mouthRight.y += ldy;
         }
       } else {
-        // Active observation: Exponentially smooth position towards target
-        track.box.x += alpha * (track.targetBox.x - track.box.x);
-        track.box.y += alpha * (track.targetBox.y - track.box.y);
-        track.box.width += alpha * (track.targetBox.width - track.box.width);
-        track.box.height += alpha * (track.targetBox.height - track.box.height);
+        // Active observation:
+        // 1. Position smoothing (alphaPos = 0.40)
+        track.box.x += alphaPos * (track.targetBox.x - track.box.x);
+        track.box.y += alphaPos * (track.targetBox.y - track.box.y);
+
+        // 2. Separate dimension smoothing (alphaDim = 0.18) to damp small-face jitter
+        track.box.width += alphaDim * (track.targetBox.width - track.box.width);
+        track.box.height += alphaDim * (track.targetBox.height - track.box.height);
+
+        // 3. Display box derivation with aspect ratio stabilization
+        const targetDisplay = TemporalCentroidTracker.computeDisplayBox(
+          track.box,
+          this.config.targetDisplayAspectRatio
+        );
+        track.displayBox.x += alphaPos * (targetDisplay.x - track.displayBox.x);
+        track.displayBox.y += alphaPos * (targetDisplay.y - track.displayBox.y);
+        track.displayBox.width += alphaDim * (targetDisplay.width - track.displayBox.width);
+        track.displayBox.height += alphaDim * (targetDisplay.height - track.displayBox.height);
 
         // Smooth landmarks towards target
         if (track.landmarks && track.targetLandmarks) {
-          track.landmarks = this.lerpLandmarks(track.landmarks, track.targetLandmarks, alpha);
+          track.landmarks = this.lerpLandmarks(track.landmarks, track.targetLandmarks, alphaPos);
         }
+      }
+
+      // Continual quality assessment during tracking steps
+      if (this.qualityGate) {
+        track.quality = this.qualityGate.evaluate(
+          track.box,
+          track.landmarks,
+          track.confidence,
+          track.previousBox
+        );
       }
     }
 
@@ -374,11 +506,13 @@ export class TemporalCentroidTracker implements IFaceTracker {
     return this.tracks.map((t) => ({
       trackId: t.trackId,
       boundingBox: { ...t.box },
+      displayBox: { ...t.displayBox },
       landmarks: t.landmarks ? { ...t.landmarks } : undefined,
       confidence: t.confidence,
       ageInFrames: t.hits,
       timeSinceLastSeenMs: t.timeSinceLastSeenMs,
       isConfirmed: t.isConfirmed,
+      quality: t.quality ? { ...t.quality } : undefined,
     }));
   }
 
@@ -391,11 +525,34 @@ export class TemporalCentroidTracker implements IFaceTracker {
     const coastingCount = this.tracks.filter((t) => t.state === 'coasting').length;
     const tentativeCount = this.tracks.filter((t) => t.state === 'tentative').length;
 
+    const goodCount = this.tracks.filter((t) => t.quality?.state === 'GOOD').length;
+    const fairCount = this.tracks.filter((t) => t.quality?.state === 'FAIR').length;
+    const poorCount = this.tracks.filter((t) => t.quality?.state === 'POOR').length;
+    const unknownCount = this.tracks.length - (goodCount + fairCount + poorCount);
+
+    const primaryTrack = this.tracks[0];
+
     return {
       activeTracks: this.tracks.length,
       confirmedTracks: confirmedCount,
       coastingTracks: coastingCount,
       tentativeTracks: tentativeCount,
+      qualityCounts: {
+        good: goodCount,
+        fair: fairCount,
+        poor: poorCount,
+        unknown: unknownCount,
+      },
+      primaryTrackGeometry: primaryTrack
+        ? {
+            trackId: primaryTrack.trackId,
+            raw: primaryTrack.rawBox ? { ...primaryTrack.rawBox } : undefined,
+            tracked: { ...primaryTrack.box },
+            display: { ...primaryTrack.displayBox },
+            qualityState: primaryTrack.quality?.state,
+            primaryReason: primaryTrack.quality?.primaryReason,
+          }
+        : undefined,
       totalCreated: this.totalTracksCreated,
       totalRetired: this.totalTracksRetired,
       totalAssociations: this.totalAssociations,

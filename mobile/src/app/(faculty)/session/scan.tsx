@@ -50,13 +50,14 @@ import {
   ANALYSIS_RESOLUTIONS,
   FormattedCapability,
 } from '@/perception/cameraFormatPolicy';
-import type { FaceDetectionResult, RawFrame } from '@/perception/contracts';
+import type { FaceDetectionResult, RawFrame, QualityAssessment } from '@/perception/contracts';
 import { DetailedPerceptionTimings } from '@/perception/perceptionClient';
 import {
   YuNetDetector,
   SCRFDDetector,
   DirectOnDeviceDetector,
   TemporalCentroidTracker,
+  FaceQualityGate,
 } from '@/lab';
 
 interface DetectedFaceBox {
@@ -64,6 +65,9 @@ interface DetectedFaceBox {
   trackId?: number;
   trackingState?: 'tentative' | 'confirmed' | 'coasting';
   isConfirmed?: boolean;
+  quality?: QualityAssessment;
+  displayBox?: { x: number; y: number; width: number; height: number };
+  rawBox?: { x: number; y: number; width: number; height: number };
   frameId?: string;
   captureTimestampMs?: number;
   resultAgeMs?: number;
@@ -125,6 +129,20 @@ export default function FacultyScanningScreen() {
     confirmedTracks: number;
     coastingTracks: number;
     tentativeTracks: number;
+    qualityCounts?: {
+      good: number;
+      fair: number;
+      poor: number;
+      unknown: number;
+    };
+    primaryTrackGeometry?: {
+      trackId: number;
+      raw?: { x: number; y: number; width: number; height: number };
+      tracked: { x: number; y: number; width: number; height: number };
+      display: { x: number; y: number; width: number; height: number };
+      qualityState?: string;
+      primaryReason?: string;
+    };
     totalCreated: number;
     totalRetired: number;
     lastStepDurationMs: number;
@@ -314,19 +332,27 @@ export default function FacultyScanningScreen() {
     []
   );
 
-  // Temporal Face Tracker (Step C — Live Face Tracking)
+  // Face Quality & Visibility Gate (Step D)
+  const qualityGate = useMemo(() => new FaceQualityGate(), []);
+
+  // Temporal Face Tracker (Step C & Step D)
   const tracker = useMemo(
     () =>
-      new TemporalCentroidTracker({
-        iouThreshold: 0.30,
-        centroidDistanceThreshold: 0.18,
-        sizeRatioThreshold: 0.40,
-        minHitsToConfirm: 2,
-        maxCoastDurationMs: 850,
-        smoothingAlpha: 0.40,
-        velocityDamping: 0.92,
-      }),
-    []
+      new TemporalCentroidTracker(
+        {
+          iouThreshold: 0.30,
+          centroidDistanceThreshold: 0.18,
+          sizeRatioThreshold: 0.40,
+          minHitsToConfirm: 2,
+          maxCoastDurationMs: 850,
+          smoothingAlpha: 0.40,
+          smoothingAlphaDimension: 0.18,
+          velocityDamping: 0.92,
+          targetDisplayAspectRatio: 0.75,
+        },
+        qualityGate
+      ),
+    [qualityGate]
   );
 
 
@@ -427,6 +453,7 @@ export default function FacultyScanningScreen() {
 
       const mapped: DetectedFaceBox[] = activeTracks.map((t) => {
         const b = t.boundingBox;
+        const db = t.displayBox || t.boundingBox;
         const isCoasting = t.timeSinceLastSeenMs > 250;
         return {
           id: `track_${t.trackId}`,
@@ -434,10 +461,17 @@ export default function FacultyScanningScreen() {
           trackingState: isCoasting ? 'coasting' : t.isConfirmed ? 'confirmed' : 'tentative',
           isConfirmed: t.isConfirmed,
           confidence: t.confidence,
+          quality: t.quality,
           x: Math.max(0, Math.min(100, b.x * 100)),
           y: Math.max(0, Math.min(100, b.y * 100)),
           width: Math.max(0, Math.min(100, b.width * 100)),
           height: Math.max(0, Math.min(100, b.height * 100)),
+          displayBox: {
+            x: Math.max(0, Math.min(100, db.x * 100)),
+            y: Math.max(0, Math.min(100, db.y * 100)),
+            width: Math.max(0, Math.min(100, db.width * 100)),
+            height: Math.max(0, Math.min(100, db.height * 100)),
+          },
           landmarks: t.landmarks
             ? {
                 leftEye: { x: t.landmarks.leftEye.x * 100, y: t.landmarks.leftEye.y * 100 },
@@ -807,13 +841,19 @@ export default function FacultyScanningScreen() {
             {/* Detected Face Bounding Box & Facial Landmark Overlays (Step C: Temporal Tracks) */}
             {detectedFaces.map((face) => (
               <React.Fragment key={face.id}>
-                {/* Bounding Box */}
+                {/* Bounding Box (Step D: Display Geometry + Quality-State Styling) */}
                 <View
                   pointerEvents="none"
                   style={[
                     styles.boundingBox,
                     face.trackingState === 'coasting'
                       ? styles.boxCoasting
+                      : face.quality?.state === 'GOOD'
+                      ? styles.boxQualityGood
+                      : face.quality?.state === 'FAIR'
+                      ? styles.boxQualityFair
+                      : face.quality?.state === 'POOR'
+                      ? styles.boxQualityPoor
                       : face.isConfirmed
                       ? styles.boxConfirmed
                       : face.trackingState === 'tentative'
@@ -822,10 +862,10 @@ export default function FacultyScanningScreen() {
                       ? styles.boxStale
                       : styles.boxDetecting,
                     {
-                      left: `${face.x}%`,
-                      top: `${face.y}%`,
-                      width: `${face.width}%`,
-                      height: `${face.height}%`,
+                      left: `${face.displayBox ? face.displayBox.x : face.x}%`,
+                      top: `${face.displayBox ? face.displayBox.y : face.y}%`,
+                      width: `${face.displayBox ? face.displayBox.width : face.width}%`,
+                      height: `${face.displayBox ? face.displayBox.height : face.height}%`,
                     },
                   ]}
                 >
@@ -834,6 +874,12 @@ export default function FacultyScanningScreen() {
                       styles.confidenceTag,
                       face.trackingState === 'coasting'
                         ? styles.confidenceTagCoasting
+                        : face.quality?.state === 'GOOD'
+                        ? styles.confidenceTagGood
+                        : face.quality?.state === 'FAIR'
+                        ? styles.confidenceTagFair
+                        : face.quality?.state === 'POOR'
+                        ? styles.confidenceTagPoor
                         : face.isConfirmed
                         ? styles.confidenceTagConfirmed
                         : face.trackingState === 'tentative'
@@ -845,7 +891,7 @@ export default function FacultyScanningScreen() {
                   >
                     <Text style={styles.confidenceText} numberOfLines={1}>
                       {face.trackId != null
-                        ? `Track #${face.trackId}${face.trackingState === 'coasting' ? ' [Coast]' : face.isConfirmed ? ' [Conf]' : ' [Tent]'}`
+                        ? `Track #${face.trackId} [${face.quality?.state || (face.isConfirmed ? 'CONF' : 'TENT')}${face.quality?.primaryReason ? `: ${face.quality.primaryReason}` : ''}]`
                         : activeDetector === 'YuNet'
                         ? 'YuNet'
                         : 'SCRFD'}
@@ -1541,6 +1587,109 @@ export default function FacultyScanningScreen() {
                 <Text style={styles.diagVal}>{totalFramesAnalyzed} frames</Text>
               </View>
 
+              <View style={styles.diagDivider} />
+              <Text style={styles.diagSectionTitle}>Face Quality & Visibility Gate (Step D)</Text>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Gate Evaluation Engine:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad', fontWeight: '700' }]}>
+                  {qualityGate.gateName} (5-Dimension)
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Track Quality Distribution:</Text>
+                <Text style={styles.diagVal}>
+                  {`${trackerStats.qualityCounts?.good ?? 0} GOOD · ${trackerStats.qualityCounts?.fair ?? 0} FAIR · ${trackerStats.qualityCounts?.poor ?? 0} POOR`}
+                </Text>
+              </View>
+
+              {detectedFaces.length > 0 && detectedFaces[0].quality ? (
+                <>
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ Primary Track ID:</Text>
+                    <Text style={[styles.diagSubVal, { fontWeight: '700', color: '#ffffff' }]}>
+                      Track #{detectedFaces[0].trackId ?? 1}
+                    </Text>
+                  </View>
+
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ Quality State & Score:</Text>
+                    <Text
+                      style={[
+                        styles.diagSubVal,
+                        {
+                          fontWeight: '700',
+                          color:
+                            detectedFaces[0].quality.state === 'GOOD'
+                              ? '#7fd1ad'
+                              : detectedFaces[0].quality.state === 'FAIR'
+                              ? '#f0a868'
+                              : '#d65f57',
+                        },
+                      ]}
+                    >
+                      {detectedFaces[0].quality.state} ({Math.round(detectedFaces[0].quality.score * 100)}%)
+                    </Text>
+                  </View>
+
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ Primary Quality Reason:</Text>
+                    <Text style={[styles.diagSubVal, { color: detectedFaces[0].quality.primaryReason ? '#f0a868' : '#7fd1ad' }]}>
+                      {detectedFaces[0].quality.primaryReason || 'NONE (All checks pass)'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ Face Size (Norm / Est Px):</Text>
+                    <Text style={styles.diagSubVal}>
+                      {`${(detectedFaces[0].quality.metrics.normalizedWidth * 100).toFixed(1)}% × ${(detectedFaces[0].quality.metrics.normalizedHeight * 100).toFixed(1)}% (~${detectedFaces[0].quality.metrics.estimatedPixelSizePx ?? 0}px) [${detectedFaces[0].quality.metrics.sizeState}]`}
+                    </Text>
+                  </View>
+
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ Aspect Ratio & Stability:</Text>
+                    <Text style={styles.diagSubVal}>
+                      {`${detectedFaces[0].quality.metrics.aspectRatio.toFixed(2)} (${detectedFaces[0].quality.metrics.isGeometryStable ? 'Stable' : 'Unstable'}) [${detectedFaces[0].quality.metrics.geometryState}]`}
+                    </Text>
+                  </View>
+
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ In-Frame Visibility / Clip:</Text>
+                    <Text style={styles.diagSubVal}>
+                      {`${Math.round(detectedFaces[0].quality.metrics.inFrameProportion * 100)}% (${detectedFaces[0].quality.metrics.isClipped ? 'Clipped' : 'Clean'}) [${detectedFaces[0].quality.metrics.visibilityState}]`}
+                    </Text>
+                  </View>
+
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ Sharpness / Blur Proxy:</Text>
+                    <Text style={styles.diagSubVal}>
+                      {`${Math.round(detectedFaces[0].quality.metrics.sharpnessScore * 100)}% [${detectedFaces[0].quality.metrics.sharpnessState}]`}
+                    </Text>
+                  </View>
+
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ Head Pose (Yaw / Pitch / Roll):</Text>
+                    <Text style={styles.diagSubVal}>
+                      {`Y:${detectedFaces[0].quality.metrics.yawDegrees > 0 ? '+' : ''}${detectedFaces[0].quality.metrics.yawDegrees.toFixed(1)}° P:${detectedFaces[0].quality.metrics.pitchDegrees > 0 ? '+' : ''}${detectedFaces[0].quality.metrics.pitchDegrees.toFixed(1)}° R:${detectedFaces[0].quality.metrics.rollDegrees > 0 ? '+' : ''}${detectedFaces[0].quality.metrics.rollDegrees.toFixed(1)}° [${detectedFaces[0].quality.metrics.poseState}]`}
+                    </Text>
+                  </View>
+
+                  {/* Section 12: 4-Way Geometry Separation Audit */}
+                  <View style={styles.diagRow}>
+                    <Text style={styles.diagSubLabel}>↳ [Audit] Raw vs Track vs Disp:</Text>
+                    <Text style={[styles.diagSubVal, { fontSize: 10.5, color: '#b0a9bd' }]}>
+                      {`Raw: ${(trackerStats.primaryTrackGeometry?.raw?.width ? (trackerStats.primaryTrackGeometry.raw.width * 100).toFixed(1) : detectedFaces[0].width.toFixed(1))}% | Track: ${detectedFaces[0].width.toFixed(1)}% | Disp: ${(detectedFaces[0].displayBox?.width ?? detectedFaces[0].width).toFixed(1)}%`}
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.diagRow}>
+                  <Text style={styles.diagSubLabel}>↳ Active Face Observation:</Text>
+                  <Text style={styles.diagSubVal}>Awaiting tracked face...</Text>
+                </View>
+              )}
+
               {/* Permission & Lifecycle */}
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Camera State:</Text>
@@ -1626,6 +1775,22 @@ const styles = StyleSheet.create({
     borderWidth: 2.5,
     backgroundColor: 'rgba(127, 209, 173, 0.16)',
   },
+  boxQualityGood: {
+    borderColor: '#34d399',
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(52, 211, 153, 0.16)',
+  },
+  boxQualityFair: {
+    borderColor: '#fbbf24',
+    borderWidth: 2,
+    backgroundColor: 'rgba(251, 191, 36, 0.14)',
+  },
+  boxQualityPoor: {
+    borderColor: '#f87171',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(248, 113, 113, 0.08)',
+  },
   boxTentative: {
     borderColor: 'rgba(127, 209, 173, 0.75)',
     borderWidth: 1.5,
@@ -1673,6 +1838,15 @@ const styles = StyleSheet.create({
   },
   confidenceTagConfirmed: {
     backgroundColor: 'rgba(38, 92, 73, 0.94)',
+  },
+  confidenceTagGood: {
+    backgroundColor: 'rgba(5, 150, 105, 0.94)',
+  },
+  confidenceTagFair: {
+    backgroundColor: 'rgba(217, 119, 6, 0.94)',
+  },
+  confidenceTagPoor: {
+    backgroundColor: 'rgba(185, 28, 28, 0.90)',
   },
   confidenceTagTentative: {
     backgroundColor: 'rgba(64, 56, 79, 0.90)',
