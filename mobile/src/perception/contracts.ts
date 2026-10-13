@@ -231,6 +231,96 @@ export interface RecognitionObservation {
   observationTimestampMs: number;
 }
 
+/**
+ * Accumulated Recognition Candidate (Step G)
+ * Long-lived session accumulation entry deduplicated by studentUserId across progressive panning sweeps.
+ * STRICT INVARIANT: AccumulatedRecognitionCandidate is NOT an AttendanceRecord.
+ */
+export interface AccumulatedRecognitionCandidate {
+  studentUserId: string;
+  institutionalId: string;
+  studentName: string;
+  firstSeenAtMs: number;
+  lastSeenAtMs: number;
+  bestSimilarityScore: number;
+  bestQualityScore: number;
+  bestMargin: number | null;
+  totalObservations: number;
+  lastTrackId: number;
+  isConfirmed: boolean;
+}
+
+export type ScannerStabilityState = 'STABLE' | 'PANNING' | 'PAUSED';
+
+export interface ScannerMotionMetrics {
+  state: ScannerStabilityState;
+  meanDisplacement: number;
+  trackChurnRate: number;
+  stableDurationMs: number;
+  isAdmissionPermitted: boolean;
+}
+
+export interface ScannerMotionConfig {
+  displacementPanningThreshold?: number; // default ~0.08 normalized displacement
+  churnPanningThreshold?: number; // default ~0.40 track churn
+  stabilizationRequiredMs?: number; // default ~300 ms required stable duration before admission
+}
+
+export interface AccumulatorConfig {
+  scannerMotionConfig?: ScannerMotionConfig;
+  minConfirmationsForSessionAdmission?: number; // default 2
+}
+
+export interface AccumulatorStats {
+  totalAccumulated: number;
+  totalMatchesProcessed: number;
+  totalDuplicatesMerged: number;
+  totalRejections: number;
+  activeTrackCount: number;
+  scannerState: ScannerStabilityState;
+}
+
+/**
+ * Replaceable Progressive Recognition Accumulator (Step G)
+ * Accumulates recognized student candidates across panning sweeps, deduplicates by studentUserId,
+ * manages scanner motion stability gating, and preserves multi-track independence.
+ */
+export interface IProgressiveRecognitionAccumulator {
+  /**
+   * Processes a batch of recognition candidates and tracked faces from the current frame.
+   */
+  processFrameCandidates(
+    candidates: RecognitionCandidate[],
+    trackedFaces: TrackedFace[],
+    timestampMs: number
+  ): void;
+
+  /**
+   * Returns all accumulated candidates in the session, deduplicated by studentUserId.
+   */
+  getAccumulatedCandidates(): AccumulatedRecognitionCandidate[];
+
+  /**
+   * Retrieves a single accumulated candidate by studentUserId.
+   */
+  getCandidate(studentUserId: string): AccumulatedRecognitionCandidate | undefined;
+
+  /**
+   * Returns current scanner motion metrics.
+   */
+  getScannerMetrics(): ScannerMotionMetrics;
+
+  /**
+   * Returns current operational statistics.
+   */
+  getStats(): AccumulatorStats;
+
+  /**
+   * Resets all accumulated session state.
+   */
+  reset(): void;
+}
+
 // -------------------------------------------------------------------------
 // Component Contracts
 // -------------------------------------------------------------------------

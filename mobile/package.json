@@ -48,7 +48,8 @@
     "test:tracker": "node --test src/lab/__tests__/temporalTracker.test.mjs",
     "test:quality": "node --test src/lab/__tests__/qualityGate.test.mjs",
     "test:embedder": "node --test src/lab/__tests__/faceEmbedder.test.mjs",
-    "test:matcher": "node --test src/lab/__tests__/faceMatcher.test.mjs"
+    "test:matcher": "node --test src/lab/__tests__/faceMatcher.test.mjs",
+    "test:accumulator": "node --test src/lab/__tests__/progressiveAccumulator.test.mjs"
   },
   "private": true
 }

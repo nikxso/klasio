@@ -1745,6 +1745,31 @@ export default function FacultyScanningScreen() {
                 <Text style={[styles.diagVal, { color: '#f0a868' }]}>RecognitionCandidate Only (No Attendance)</Text>
               </View>
 
+              {/* Step G: Progressive Classroom Recognition Diagnostics */}
+              <View style={styles.diagDivider} />
+              <Text style={styles.diagSectionTitle}>Step G: Progressive Recognition Accumulation</Text>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Session Identity Storage:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad' }]}>
+                  Deduplicated by studentUserId (Multi-Region Sweep)
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Scanner Motion Heuristic:</Text>
+                <Text style={[styles.diagVal, { color: isPaused ? '#f0a868' : '#7fd1ad' }]}>
+                  {isPaused ? 'PAUSED' : 'STABLE (Δd ≤ 0.08, Churn ≤ 0.40)'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Accumulator Boundary:</Text>
+                <Text style={[styles.diagVal, { color: '#f0a868' }]}>
+                  AccumulatedRecognitionCandidate Only (STOP)
+                </Text>
+              </View>
+
               {/* Permission & Lifecycle */}
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Camera State:</Text>

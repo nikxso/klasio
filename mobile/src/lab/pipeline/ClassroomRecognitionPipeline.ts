@@ -14,6 +14,7 @@ import {
   IFaceMatcher,
   IFaceRecognizer,
   IFaceTracker,
+  IProgressiveRecognitionAccumulator,
   IRecognitionPipeline,
   PermittedStudentGallery,
   RawFrame,
@@ -37,6 +38,7 @@ export class ClassroomRecognitionPipeline implements IRecognitionPipeline {
   private matcher!: IFaceMatcher;
   private qualityGate: HeuristicQualityGate;
   private gallery: PermittedStudentGallery | null = null;
+  private accumulator: IProgressiveRecognitionAccumulator | null = null;
 
   private trackStates: Map<number, TrackPerceptionState> = new Map();
   private frameCount: number = 0;
@@ -79,6 +81,14 @@ export class ClassroomRecognitionPipeline implements IRecognitionPipeline {
 
   public setPermittedGallery(gallery: PermittedStudentGallery): void {
     this.gallery = gallery;
+  }
+
+  public setAccumulator(accumulator: IProgressiveRecognitionAccumulator | null): void {
+    this.accumulator = accumulator;
+  }
+
+  public getAccumulator(): IProgressiveRecognitionAccumulator | null {
+    return this.accumulator;
   }
 
   public async processFrame(frame: RawFrame): Promise<RecognitionCandidate[]> {
@@ -172,6 +182,10 @@ export class ClassroomRecognitionPipeline implements IRecognitionPipeline {
       }
     }
 
+    if (this.accumulator) {
+      this.accumulator.processFrameCandidates(currentCandidates, trackedFaces, frame.timestampMs);
+    }
+
     return currentCandidates;
   }
 
@@ -180,6 +194,7 @@ export class ClassroomRecognitionPipeline implements IRecognitionPipeline {
     this.frameCount = 0;
     this.lastDetections = [];
     this.tracker?.reset();
+    this.accumulator?.reset();
     this.totalFramesProcessed = 0;
     this.totalDetectionRuns = 0;
     this.totalRecognitionRuns = 0;
