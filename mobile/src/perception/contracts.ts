@@ -322,6 +322,72 @@ export interface IProgressiveRecognitionAccumulator {
 }
 
 // -------------------------------------------------------------------------
+// Step H — Guided Face Enrollment Contracts
+// -------------------------------------------------------------------------
+
+export type EnrollmentGuidanceState =
+  | 'NO_FACE'
+  | 'MULTIPLE_FACES'
+  | 'MOVE_CLOSER'
+  | 'MOVE_AWAY'
+  | 'CENTER_FACE'
+  | 'LOOK_AT_CAMERA'
+  | 'TURN_SLIGHTLY'
+  | 'IMPROVE_LIGHTING'
+  | 'HOLD_STILL'
+  | 'CAPTURING'
+  | 'SAMPLE_ACCEPTED'
+  | 'COMPLETED'
+  | 'VALIDATION_FAILED';
+
+export type EnrollmentSampleStep = 'FRONTAL' | 'SMILE_OR_EXPRESSION' | 'SLIGHT_ANGLE';
+
+export interface EnrollmentSampleResult {
+  step: EnrollmentSampleStep;
+  embedding: Float32Array;
+  quality: QualityAssessment;
+  capturedAtMs: number;
+}
+
+export interface StudentEnrollmentContext {
+  studentUserId: string;
+  institutionalId: string;
+  studentName: string;
+  academicTermId?: string;
+}
+
+export interface EnrollmentSessionState {
+  studentContext: StudentEnrollmentContext;
+  currentStep: EnrollmentSampleStep;
+  guidance: EnrollmentGuidanceState;
+  guidanceMessage: string;
+  samplesCaptured: EnrollmentSampleResult[];
+  targetSamples: number;
+  isStabilizing: boolean;
+  stableDurationMs: number;
+  isCompleted: boolean;
+  failureReason?: string;
+}
+
+export interface EnrollmentValidationResult {
+  isValid: boolean;
+  diagnosticReason?: string;
+  profile?: StudentReferenceProfile;
+}
+
+export interface IGuidedFaceEnrollmentController {
+  readonly state: EnrollmentSessionState | null;
+  startSession(context: StudentEnrollmentContext): void;
+  processFrame(
+    frame: RawFrame,
+    detections: FaceDetectionResult[],
+    timestampMs: number
+  ): Promise<EnrollmentGuidanceState>;
+  getCompletedProfile(): StudentReferenceProfile | null;
+  resetSession(): void;
+}
+
+// -------------------------------------------------------------------------
 // Component Contracts
 // -------------------------------------------------------------------------
 

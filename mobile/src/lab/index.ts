@@ -22,5 +22,6 @@ export * from './adapters/recognizers/MobileFaceNetEmbedder';
 export * from './adapters/recognizers/EdgeFaceEmbedder';
 export * from './adapters/aligners/FaceAligner';
 export * from './adapters/accumulator/ProgressiveRecognitionAccumulator';
+export * from './adapters/enrollment/GuidedFaceEnrollmentController';
 export * from './pipeline/ClassroomRecognitionPipeline';
 export * from './datasets/ClassroomSyntheticDataset';
