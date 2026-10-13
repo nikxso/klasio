@@ -601,3 +601,112 @@ export interface IRecognitionPipeline {
   resetSession(): void;
   dispose(): Promise<void>;
 }
+
+// -------------------------------------------------------------------------
+// STEP I: Faculty Attendance Review & Finalization Contracts
+// -------------------------------------------------------------------------
+
+export type AttendanceReviewSource = 'AI_VERIFIED' | 'MANUAL_MARK' | 'MANUAL_OVERRIDE';
+export type AttendanceReviewStatus = 'PRESENT' | 'ABSENT' | 'EXCUSED' | 'UNDECIDED';
+export type SessionApplicabilityStatus = 'COUNTED' | 'CANCELLED' | 'EXEMPT';
+export type SessionLifecycleStatus = 'DRAFT' | 'REVIEW' | 'FINALIZING' | 'FINALIZED' | 'SYNCED';
+
+export interface AttendanceSessionContext {
+  clientSessionUuid: string;
+  teachingAssignmentId: string;
+  sessionDate: string; // YYYY-MM-DD
+  periodSlotOrSequence: number;
+  applicabilityStatus: SessionApplicabilityStatus;
+  statusReason?: string | null;
+  regularFacultyUserId: string;
+  conductingFacultyUserId: string;
+  substituteDelegationId?: string | null;
+  subjectName?: string;
+  sectionName?: string;
+  roomName?: string;
+}
+
+export interface AttendanceReviewItem {
+  studentUserId: string;
+  institutionalId: string;
+  studentName: string;
+  faceRegistrationState: 'UNREGISTERED' | 'PENDING' | 'REGISTERED';
+  attendanceStatus: AttendanceReviewStatus;
+  markSource: AttendanceReviewSource | null;
+  candidateConfidence: number | null;
+  recognizedAtMs: number | null;
+  isRecognized: boolean;
+  isAmbiguous: boolean;
+  isManuallyAdded: boolean;
+  isCorrected: boolean;
+  originalStudentUserId?: string;
+  correctionReason?: string;
+  recordedAtMs: number;
+}
+
+export interface AttendanceIdentityCorrection {
+  fromStudentUserId: string;
+  toStudentUserId: string;
+  reason: string;
+  correctedAtMs: number;
+  correctedByUserId: string;
+}
+
+export interface AttendanceFinalizationRecord {
+  studentUserId: string;
+  attendanceStatus: 'PRESENT' | 'ABSENT' | 'EXCUSED';
+  markSource: 'AI_VERIFIED' | 'MANUAL_MARK' | 'MANUAL_OVERRIDE';
+  candidateConfidence: number | null;
+  recordedAt: string; // ISO-8601
+}
+
+export interface AttendanceFinalizationPayload {
+  clientSessionUuid: string;
+  teachingAssignmentId: string;
+  sessionDate: string;
+  periodSlotOrSequence: number;
+  applicabilityStatus: SessionApplicabilityStatus;
+  statusReason?: string | null;
+  regularFacultyUserId: string;
+  conductingFacultyUserId: string;
+  substituteDelegationId?: string | null;
+  finalizedAt: string;
+  records: AttendanceFinalizationRecord[];
+}
+
+export interface AttendanceFinalizationResult {
+  success: boolean;
+  clientSessionUuid: string;
+  recordsCount: number;
+  finalizedAt: string;
+  diagnosticReason?: string;
+}
+
+export interface IFacultyAttendanceReviewController {
+  readonly context: AttendanceSessionContext | null;
+  readonly lifecycleStatus: SessionLifecycleStatus;
+  readonly reviewItems: AttendanceReviewItem[];
+  
+  initialize(
+    context: AttendanceSessionContext,
+    roster: Array<{
+      studentUserId: string;
+      institutionalId: string;
+      studentName: string;
+      effectiveStartDate: string;
+      effectiveEndDate?: string | null;
+      faceRegistrationState: 'UNREGISTERED' | 'PENDING' | 'REGISTERED';
+    }>,
+    accumulatedCandidates?: AccumulatedRecognitionCandidate[]
+  ): void;
+
+  markStatus(studentUserId: string, status: 'PRESENT' | 'ABSENT' | 'EXCUSED'): void;
+  correctIdentity(fromStudentUserId: string, toStudentUserId: string, reason: string): void;
+  removeCandidate(studentUserId: string): void;
+  manualAddStudent(studentUserId: string, initialStatus?: 'PRESENT' | 'ABSENT' | 'EXCUSED'): void;
+  markRemainingUnreviewedAsAbsent(): void;
+  
+  validateFinalization(): { canFinalize: boolean; errors: string[] };
+  prepareFinalizationPayload(): AttendanceFinalizationPayload;
+}
+

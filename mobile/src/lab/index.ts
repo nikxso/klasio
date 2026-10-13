@@ -23,5 +23,6 @@ export * from './adapters/recognizers/EdgeFaceEmbedder';
 export * from './adapters/aligners/FaceAligner';
 export * from './adapters/accumulator/ProgressiveRecognitionAccumulator';
 export * from './adapters/enrollment/GuidedFaceEnrollmentController';
+export * from './adapters/review/FacultyAttendanceReviewController';
 export * from './pipeline/ClassroomRecognitionPipeline';
 export * from './datasets/ClassroomSyntheticDataset';
