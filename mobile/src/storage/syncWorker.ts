@@ -53,6 +53,14 @@ async function resolveDb(customDb?: any) {
   };
 }
 
+/**
+ * Outbound attendance synchronization worker.
+ * Manages dispatch of offline-finalized attendance sessions to the backend API.
+ * Ensures exactly-once logical persistence under retried synchronization.
+ * Preserves biometric privacy boundary: sync payloads transmit zero raw camera
+ * frames, face crops, or biometric embeddings, sending only attendance decisions
+ * and derived recognition metadata (e.g. candidateConfidence).
+ */
 export class AttendanceSyncWorker {
   /**
    * Calculate exponential backoff with jitter.
