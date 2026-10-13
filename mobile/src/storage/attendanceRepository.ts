@@ -1,8 +1,8 @@
-import { getDatabase } from './database';
-import {
+import { getDatabase } from './database.ts';
+import type {
   AttendanceFinalizationPayload,
   AttendanceFinalizationResult,
-} from '../perception/contracts';
+} from '../perception/contracts.ts';
 
 export interface LocalSessionRow {
   clientSessionUuid: string;
