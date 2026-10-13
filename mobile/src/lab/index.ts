@@ -8,7 +8,9 @@
 
 export * from './adapters/quality/HeuristicQualityGate';
 export * from './adapters/quality/FaceQualityGate';
+export * from './adapters/gallery/SessionScopedGallery';
 export * from './adapters/matchers/CosineGalleryMatcher';
+export * from './adapters/matchers/TemporalConfirmationBuffer';
 export * from './adapters/trackers/CentroidIoUTracker';
 export * from './adapters/trackers/TemporalCentroidTracker';
 export * from './adapters/detectors/YuNetDetector';

@@ -47,7 +47,8 @@
     "test:perception": "node --test src/perception/__tests__/cameraFormatPolicy.test.mjs",
     "test:tracker": "node --test src/lab/__tests__/temporalTracker.test.mjs",
     "test:quality": "node --test src/lab/__tests__/qualityGate.test.mjs",
-    "test:embedder": "node --test src/lab/__tests__/faceEmbedder.test.mjs"
+    "test:embedder": "node --test src/lab/__tests__/faceEmbedder.test.mjs",
+    "test:matcher": "node --test src/lab/__tests__/faceMatcher.test.mjs"
   },
   "private": true
 }

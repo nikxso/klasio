@@ -150,8 +150,11 @@ export class GuidedRegistrationSpike {
       studentUserId: context.studentUserId,
       institutionalId: context.institutionalId,
       studentName: context.studentName,
-      activeModelVersion: `${this.recognizer.modelName}-${this.recognizer.modelVersion}`,
+      modelName: this.recognizer.modelName,
+      activeModelVersion: this.recognizer.modelVersion,
       embeddingDimension: this.recognizer.embeddingDimension,
+      normalization: 'MINUS_127_5_DIV_128_0',
+      alignmentMode: 'SIMILARITY_TRANSFORM_5PT',
       embeddings: validObservations,
     };
 

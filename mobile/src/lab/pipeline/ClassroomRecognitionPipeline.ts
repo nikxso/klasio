@@ -156,6 +156,7 @@ export class ClassroomRecognitionPipeline implements IRecognitionPipeline {
             qualityScore: quality.score,
             detectedAtMs: frame.timestampMs,
             consecutiveConfirmations: 1,
+            isConfirmed: true,
           };
           this.totalCandidatesGenerated++;
           currentCandidates.push(state.bestCandidate);

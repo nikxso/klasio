@@ -126,13 +126,51 @@ export interface QualityGateResult {
   pitchDegrees: number;
 }
 
+export interface AttendanceSessionScope {
+  attendanceSessionId: string;
+  academicTermId: string;
+  courseOfferingId: string;
+  subject: string;
+  classId: string;
+  section: string;
+  sessionDate?: string;
+}
+
+export type MatchOutcomeState = 'MATCHED' | 'AMBIGUOUS' | 'UNMATCHED' | 'INVALID';
+
+export interface ModelCompatibilityResult {
+  isCompatible: boolean;
+  diagnosticReason?: string;
+  mismatchedField?: string;
+}
+
 export interface StudentReferenceProfile {
   studentUserId: string;
   institutionalId: string;
   studentName: string;
+  modelName: string;
   activeModelVersion: string;
   embeddingDimension: number;
-  embeddings: Float32Array[]; // Array of reference sample vectors
+  normalization: string;
+  alignmentMode: FaceAlignmentMode;
+  embeddings: Float32Array[]; // Array of reference sample vectors (1..K per student)
+}
+
+/**
+ * Replaceable Face Gallery Abstraction (Step F)
+ * Isolates session-scoped authorized reference embeddings and validates model compatibility.
+ */
+export interface IFaceGallery {
+  readonly sessionScope: AttendanceSessionScope | null;
+  readonly galleryVersion: number;
+  readonly size: number; // Total eligible students
+  readonly totalEmbeddings: number; // Total reference sample vectors across all students
+
+  initialize(sessionScope: AttendanceSessionScope, profiles: StudentReferenceProfile[], galleryVersion?: number): void;
+  validateCompatibility(manifest: ModelManifest): ModelCompatibilityResult;
+  getEligibleProfiles(): StudentReferenceProfile[];
+  getProfile(studentUserId: string): StudentReferenceProfile | undefined;
+  clear(): void;
 }
 
 export interface PermittedStudentGallery {
@@ -143,21 +181,54 @@ export interface PermittedStudentGallery {
   profiles: Map<string, StudentReferenceProfile>; // Key: studentUserId
 }
 
-export interface IdentityMatch {
+/**
+ * Aggregated Student Similarity Candidate (Step F)
+ * Max similarity score across all reference embeddings for a single student identity.
+ */
+export interface StudentSimilarityScore {
   studentUserId: string;
   institutionalId: string;
   studentName: string;
-  similarityScore: number; // Cosine similarity in [-1, 1]
-  top2Margin: number; // Margin between top-1 and top-2 candidate
-  isConfident: boolean;
+  maxSimilarity: number;
+  bestEmbeddingIndex: number;
 }
 
+export interface IdentityMatch {
+  studentUserId: string | null;
+  institutionalId: string | null;
+  studentName: string | null;
+  similarityScore: number; // Top-1 student max cosine similarity in [-1, 1]
+  top2StudentUserId?: string | null; // Top-2 DIFFERENT student
+  top2SimilarityScore?: number | null; // Top-2 different student score
+  top2Margin: number | null; // Margin (Top-1 - Top-2); null if only 1 student in gallery
+  matchState: MatchOutcomeState;
+  isConfident: boolean;
+  diagnosticReason?: string; // Reason when UNMATCHED or INVALID
+}
+
+/**
+ * Recognition Candidate (Step F)
+ * Identity-linked transient candidate generated after authorized session gallery matching.
+ * STRICT INVARIANT: RecognitionCandidate is NOT an AttendanceRecord.
+ */
 export interface RecognitionCandidate {
   trackId: number;
   match: IdentityMatch;
   qualityScore: number;
   detectedAtMs: number;
   consecutiveConfirmations: number;
+  isConfirmed: boolean;
+}
+
+/**
+ * Fresh Recognition Observation Event (Step F)
+ * Captured at the embedding/matching rate (not 30-FPS tracking rate).
+ */
+export interface RecognitionObservation {
+  trackId: number;
+  match: IdentityMatch;
+  quality: QualityAssessment;
+  observationTimestampMs: number;
 }
 
 // -------------------------------------------------------------------------
@@ -352,15 +423,15 @@ export interface IFaceRecognizer {
  */
 export interface IFaceMatcher {
   /**
-   * Matches candidate embedding against the permitted class section gallery.
-   * Uses cosine similarity and top-1 vs top-2 margin verification.
+   * Matches candidate embedding against the permitted session gallery.
+   * Uses cosine similarity, per-student aggregation, and Top-1 vs Top-2 different-student margin verification.
    */
   findMatch(
     candidateEmbedding: Float32Array,
-    gallery: PermittedStudentGallery,
-    similarityThreshold: number,
-    marginThreshold: number
-  ): IdentityMatch | null;
+    gallery: IFaceGallery | PermittedStudentGallery,
+    similarityThreshold?: number,
+    marginThreshold?: number
+  ): IdentityMatch;
 }
 
 /**
@@ -369,7 +440,7 @@ export interface IFaceMatcher {
  */
 export interface IRecognitionPipeline {
   initialize(detector: IFaceDetector, recognizer: IFaceRecognizer, tracker: IFaceTracker, matcher: IFaceMatcher): Promise<void>;
-  setPermittedGallery(gallery: PermittedStudentGallery): void;
+  setPermittedGallery(gallery: IFaceGallery | PermittedStudentGallery): void;
   processFrame(frame: RawFrame): Promise<RecognitionCandidate[]>;
   resetSession(): void;
   dispose(): Promise<void>;

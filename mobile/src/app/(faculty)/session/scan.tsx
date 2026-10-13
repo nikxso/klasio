@@ -1709,6 +1709,42 @@ export default function FacultyScanningScreen() {
                 <Text style={[styles.diagVal, { color: '#f0a868' }]}>Transient In-Memory Only</Text>
               </View>
 
+              {/* Step F: Session-Scoped Face Gallery Matching Diagnostics */}
+              <View style={styles.diagDivider} />
+              <Text style={styles.diagSectionTitle}>Step F: Session-Scoped Gallery Matching</Text>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Session Gallery Scope:</Text>
+                <Text style={[styles.diagVal, { color: '#7fd1ad' }]}>
+                  {params.section ? `${params.subject || 'CS301'} · Sec ${params.section}` : 'Development Active Scope'}
+                </Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Authorized Gallery:</Text>
+                <Text style={styles.diagVal}>30 reference profiles (EdgeFace-XS V1)</Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Candidate Matcher:</Text>
+                <Text style={styles.diagVal}>Cosine Dot Product + Top-2 Student Margin</Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Configured Thresholds:</Text>
+                <Text style={styles.diagVal}>τ ≥ 0.65 · Δ ≥ 0.10</Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Temporal Gating:</Text>
+                <Text style={styles.diagVal}>Observation-Rate Buffer (3 cons. obs)</Text>
+              </View>
+
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Domain Invariant:</Text>
+                <Text style={[styles.diagVal, { color: '#f0a868' }]}>RecognitionCandidate Only (No Attendance)</Text>
+              </View>
+
               {/* Permission & Lifecycle */}
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Camera State:</Text>
