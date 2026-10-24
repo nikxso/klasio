@@ -1,0 +1,6 @@
+Category,Model / Component,Resolution,Evidence Tag,Mean Inference (ms),Median (ms),P95 (ms),Throughput,Total E2E (ms),Decision Status
+Detector,YuNet (2023mar),640x640,[HOST-MEASURED],13.65,13.74,16.61,73.2 FPS,14.83,SELECTED
+Detector,YuNet (2023mar),320x320,[HOST-MEASURED],14.43,13.97,17.89,69.3 FPS,16.21,SELECTED
+Detector,SCRFD-500M,640x640,[HOST-MEASURED],19.76,19.78,23.62,50.6 FPS,22.75,KEEP AS FALLBACK
+Recognizer,MobileFaceNet,112x112,[HOST-MEASURED],10.23,10.0,12.14,97.7 crops/s,10.37,KEEP AS FALLBACK
+Recognizer,EdgeFace-XS,112x112,[HOST-MEASURED],4.59,4.47,5.72,218.0 crops/s,4.71,SELECTED
