@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS local_attendance_records (
 
 CREATE TABLE IF NOT EXISTS sync_queue (
     queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    client_session_uuid TEXT NOT NULL UNIQUE,
+    client_session_uuid TEXT NOT NULL,
+    operation_type TEXT NOT NULL DEFAULT 'SESSION_SYNC' CHECK(operation_type IN ('SESSION_SYNC', 'AMENDMENT_SYNC')),
+    client_amendment_id TEXT,
     endpoint_path TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     sync_status TEXT NOT NULL CHECK(sync_status IN ('PENDING', 'IN_FLIGHT', 'ACKNOWLEDGED', 'FAILED')),
@@ -69,6 +71,22 @@ CREATE TABLE IF NOT EXISTS sync_queue (
     next_retry_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sync_queue_session ON sync_queue(client_session_uuid) WHERE operation_type = 'SESSION_SYNC';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sync_queue_amendment ON sync_queue(client_amendment_id) WHERE operation_type = 'AMENDMENT_SYNC';
+
+CREATE TABLE IF NOT EXISTS local_amendment_audits (
+    audit_id TEXT PRIMARY KEY,
+    client_amendment_id TEXT UNIQUE,
+    client_session_uuid TEXT NOT NULL,
+    student_user_id TEXT NOT NULL,
+    previous_status TEXT NOT NULL CHECK(previous_status IN ('PRESENT', 'ABSENT', 'EXCUSED')),
+    new_status TEXT NOT NULL CHECK(new_status IN ('PRESENT', 'ABSENT', 'EXCUSED')),
+    amending_user_id TEXT NOT NULL,
+    amendment_role TEXT NOT NULL CHECK(amendment_role IN ('REGULAR_FACULTY', 'ADMIN')),
+    amendment_reason TEXT NOT NULL,
+    amended_at TEXT NOT NULL
 );
 `;
 

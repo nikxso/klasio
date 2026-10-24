@@ -50,7 +50,13 @@ import {
   ANALYSIS_RESOLUTIONS,
   FormattedCapability,
 } from '@/perception/cameraFormatPolicy';
-import type { FaceDetectionResult, RawFrame, QualityAssessment } from '@/perception/contracts';
+import type {
+  FaceDetectionResult,
+  RawFrame,
+  QualityAssessment,
+  AccumulatedRecognitionCandidate,
+  ScannerStabilityState,
+} from '@/perception/contracts';
 import { DetailedPerceptionTimings } from '@/perception/perceptionClient';
 import {
   YuNetDetector,
@@ -58,6 +64,7 @@ import {
   DirectOnDeviceDetector,
   TemporalCentroidTracker,
   FaceQualityGate,
+  ProgressiveRecognitionAccumulator,
 } from '@/lab';
 
 interface DetectedFaceBox {
@@ -93,10 +100,26 @@ export default function FacultyScanningScreen() {
     subject?: string;
     section?: string;
     room?: string;
+    slot?: string;
+    applicability?: string;
+    statusReason?: string;
   }>();
 
   const insets = useSafeAreaInsets();
   const { hasPermission, requestPermission } = useCameraPermission();
+
+  // Progressive Recognition Accumulator (Step G / Phase 8)
+  const accumulatorRef = useRef<ProgressiveRecognitionAccumulator>(
+    new ProgressiveRecognitionAccumulator({
+      scannerMotionConfig: {
+        displacementPanningThreshold: 0.08,
+        churnPanningThreshold: 0.40,
+        stabilizationRequiredMs: 300,
+      },
+    })
+  );
+  const [accumulatedCandidates, setAccumulatedCandidates] = useState<AccumulatedRecognitionCandidate[]>([]);
+  const [scannerMotionState, setScannerMotionState] = useState<ScannerStabilityState>('STABLE');
 
   // Camera and sensor state
   const cameraRef = useRef<Camera>(null);
@@ -725,6 +748,14 @@ export default function FacultyScanningScreen() {
                 tracker.update(detections, captureStartWall);
                 const currentStats = tracker.getDiagnostics();
                 setTrackerStats(currentStats);
+
+                // STEP G: Feed confirmed tracks to progressive recognition accumulator
+                const confirmedTracks = tracker.getConfirmedTracks();
+                accumulatorRef.current.processFrameCandidates([], confirmedTracks, captureStartWall);
+                const metrics = accumulatorRef.current.getScannerMetrics();
+                setScannerMotionState(metrics.state);
+                setAccumulatedCandidates(accumulatorRef.current.getAccumulatedCandidates());
+
                 console.log(
                   `[TRACKER_UPDATE] Mode: ${activeDetector} | Detections: ${detections.length} | ` +
                   `ActiveTracks: ${currentStats.activeTracks} (Conf: ${currentStats.confirmedTracks}, Coast: ${currentStats.coastingTracks}) | ` +
@@ -768,6 +799,7 @@ export default function FacultyScanningScreen() {
   }, [isCameraActive, activeDetector, cameraPosition, yunetDetector, scrfdDetector, directDetector, viewfinderLayout]);
 
   const handleDone = () => {
+    const candidates = accumulatorRef.current.getAccumulatedCandidates();
     router.replace({
       pathname: '/(faculty)/section/[id]',
       params: {
@@ -775,7 +807,11 @@ export default function FacultyScanningScreen() {
         subject: params.subject || 'Data Structures',
         section: params.section || 'CSE 3A',
         room: params.room || 'LH-204',
+        slot: params.slot || '1',
+        applicability: params.applicability || 'COUNTED',
+        statusReason: params.statusReason || '',
         initialMode: 'review',
+        accumulatedCandidatesJson: JSON.stringify(candidates),
       },
     });
   };
@@ -1127,9 +1163,11 @@ export default function FacultyScanningScreen() {
           <View style={styles.headerTitleContainer}>
             <Text style={styles.headerSubject} numberOfLines={1}>
               {params.subject || 'Data Structures'}
+              {params.slot ? ` · Period ${params.slot}` : ''}
             </Text>
             <Text style={styles.headerSection}>
               {params.section || 'CSE 3A'} · {params.room || 'LH-204'}
+              {params.applicability && params.applicability !== 'COUNTED' ? ` · ${params.applicability}` : ''}
             </Text>
           </View>
 
@@ -1167,14 +1205,16 @@ export default function FacultyScanningScreen() {
       >
         {/* Face Detection Counter Display */}
         <View style={styles.counterRow}>
-          <Text style={styles.counterBig}>{detectedFaces.length}</Text>
-          <Text style={styles.counterTotal}> faces localized</Text>
+          <Text style={styles.counterBig}>{accumulatedCandidates.length}</Text>
+          <Text style={styles.counterTotal}> recognized ({detectedFaces.length} in view)</Text>
         </View>
 
         {/* User Guidance Prompt */}
-        <Text style={styles.guidanceText}>
+        <Text style={[styles.guidanceText, scannerMotionState === 'PANNING' && { color: '#f0a868', fontWeight: '600' }]}>
           {isPaused
             ? 'Camera paused — tap play to resume'
+            : scannerMotionState === 'PANNING'
+            ? '⚠️ Camera moving too fast — slow down to capture faces'
             : detectedFaces.length > 0
             ? `${detectedFaces.length} student face${detectedFaces.length > 1 ? 's' : ''} tracked in viewfinder`
             : 'Slowly pan across the room to spot students…'}

@@ -1,6 +1,8 @@
 export interface SyncQueueRow {
   queueId: number;
   clientSessionUuid: string;
+  operationType: 'SESSION_SYNC' | 'AMENDMENT_SYNC';
+  clientAmendmentId?: string | null;
   endpointPath: string;
   payloadJson: string;
   syncStatus: 'PENDING' | 'IN_FLIGHT' | 'ACKNOWLEDGED' | 'FAILED';
@@ -84,7 +86,7 @@ export class AttendanceSyncWorker {
     const nowIso = new Date().toISOString();
 
     const rows = await db.getAll<any>(
-      `SELECT queue_id, client_session_uuid, endpoint_path, payload_json, sync_status,
+      `SELECT queue_id, client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status,
               retry_count, last_error, next_retry_at, created_at, updated_at
        FROM sync_queue
        WHERE sync_status = 'PENDING'
@@ -97,6 +99,8 @@ export class AttendanceSyncWorker {
     return rows.map((r) => ({
       queueId: r.queue_id,
       clientSessionUuid: r.client_session_uuid,
+      operationType: r.operation_type || 'SESSION_SYNC',
+      clientAmendmentId: r.client_amendment_id || null,
       endpointPath: r.endpoint_path,
       payloadJson: r.payload_json,
       syncStatus: r.sync_status,
@@ -117,7 +121,7 @@ export class AttendanceSyncWorker {
     transport: HttpTransportFn,
     authToken?: string,
     customDb?: any
-  ): Promise<{ success: boolean; status: string; errorMessage?: string }> {
+  ): Promise<{ success: boolean; status: string; isConflict?: boolean; errorMessage?: string }> {
     const db = await resolveDb(customDb);
     const nowIso = new Date().toISOString();
 
@@ -143,20 +147,32 @@ export class AttendanceSyncWorker {
 
       // Handle Success (200 / 201)
       if (response.statusCode === 200 || response.statusCode === 201) {
+        if (item.operationType === 'SESSION_SYNC') {
+          await db.run(
+            "UPDATE local_attendance_sessions SET session_status = 'SYNCED', updated_at = ? WHERE client_session_uuid = ?;",
+            [nowIso, item.clientSessionUuid]
+          );
+        }
         await db.run(
-          "UPDATE local_attendance_sessions SET session_status = 'SYNCED', updated_at = ? WHERE client_session_uuid = ?;",
-          [nowIso, item.clientSessionUuid]
-        );
-        await db.run(
-          "UPDATE sync_queue SET sync_status = 'ACKNOWLEDGED', updated_at = ? WHERE client_session_uuid = ?;",
-          [nowIso, item.clientSessionUuid]
+          "UPDATE sync_queue SET sync_status = 'ACKNOWLEDGED', updated_at = ? WHERE queue_id = ?;",
+          [nowIso, item.queueId]
         );
         return { success: true, status: 'ACKNOWLEDGED' };
       }
 
-      // Handle Unrecoverable Domain Rejections (400, 403, 409)
-      if ([400, 403, 409, 422].includes(response.statusCode)) {
-        const errorMsg = response.data?.message || `HTTP ${response.statusCode} rejection`;
+      // Handle Stale State Conflict (409)
+      if (response.statusCode === 409) {
+        const errorMsg = response.data?.detail || response.data?.message || 'Conflict: Stale attendance state';
+        await db.run(
+          "UPDATE sync_queue SET sync_status = 'FAILED', last_error = ?, updated_at = ? WHERE queue_id = ?;",
+          [errorMsg, nowIso, item.queueId]
+        );
+        return { success: false, status: 'FAILED', isConflict: true, errorMessage: errorMsg };
+      }
+
+      // Handle Unrecoverable Domain Rejections (400, 403, 422)
+      if ([400, 403, 422].includes(response.statusCode)) {
+        const errorMsg = response.data?.detail || response.data?.message || `HTTP ${response.statusCode} rejection`;
         await db.run(
           "UPDATE sync_queue SET sync_status = 'FAILED', last_error = ?, updated_at = ? WHERE queue_id = ?;",
           [errorMsg, nowIso, item.queueId]
@@ -216,6 +232,40 @@ export class AttendanceSyncWorker {
       succeeded,
       failed,
       retried,
+    };
+  }
+
+  /**
+   * Processes all currently pending queue items using the provided or default fetch transport.
+   */
+  static async processPendingQueue(
+    transport?: HttpTransportFn,
+    authToken?: string,
+    customDb?: any
+  ): Promise<{ processed: number; succeeded: number; failed: number }> {
+    const defaultTransport: HttpTransportFn = async (endpoint, payload, token) => {
+      try {
+        const res = await fetch(`http://localhost:8000${endpoint}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        return { statusCode: res.status, data };
+      } catch (err: any) {
+        throw new Error(`Network failure: ${err.message}`);
+      }
+    };
+
+    const activeTransport = transport || defaultTransport;
+    const res = await AttendanceSyncWorker.drainQueue(activeTransport, authToken, customDb);
+    return {
+      processed: res.processed,
+      succeeded: res.succeeded,
+      failed: res.failed + res.retried,
     };
   }
 }

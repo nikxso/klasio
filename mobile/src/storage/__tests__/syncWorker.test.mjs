@@ -280,4 +280,133 @@ describe('Step J: Mobile Attendance Sync Worker & Queue Invariants', () => {
     assert(!payloadStr.includes('face_image'), 'Payload must not contain face images');
     assert(!payloadStr.includes('frame_buffer'), 'Payload must not contain frame buffer');
   });
+
+  test('[11] AMENDMENT_SYNC dispatch: HTTP 201 marks item ACKNOWLEDGED', async () => {
+    const db = createInMemoryDb();
+    const nowIso = new Date().toISOString();
+    const clientUuid = 'uuid-amend-01';
+    const amendmentId = 'amend-uuid-1111';
+
+    db.prepare(`
+      INSERT INTO sync_queue (
+        client_session_uuid, operation_type, client_amendment_id,
+        endpoint_path, payload_json, sync_status, retry_count, created_at, updated_at
+      ) VALUES (?, 'AMENDMENT_SYNC', ?, '/api/v1/attendance/sessions/sync-amend', '{"student_user_id":"s1","new_status":"PRESENT"}', 'PENDING', 0, ?, ?);
+    `).run(clientUuid, amendmentId, nowIso, nowIso);
+
+    const items = await AttendanceSyncWorker.getPendingQueueItems(5, db);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].operationType, 'AMENDMENT_SYNC');
+    assert.equal(items[0].clientAmendmentId, amendmentId);
+
+    const mockTransport = async (path, payload) => {
+      assert.equal(path, '/api/v1/attendance/sessions/sync-amend');
+      assert.equal(payload.student_user_id, 's1');
+      return { statusCode: 201, data: { amendment_id: 'srv-amend-1' } };
+    };
+
+    const res = await AttendanceSyncWorker.processQueueItem(items[0], mockTransport, 'token', db);
+    assert.equal(res.success, true);
+    assert.equal(res.status, 'ACKNOWLEDGED');
+
+    const updated = db.prepare('SELECT sync_status FROM sync_queue WHERE queue_id = ?;').get(items[0].queueId);
+    assert.equal(updated.sync_status, 'ACKNOWLEDGED');
+  });
+
+  test('[12] AMENDMENT_SYNC idempotent duplicate: HTTP 200 marks item ACKNOWLEDGED', async () => {
+    const db = createInMemoryDb();
+    const nowIso = new Date().toISOString();
+    const clientUuid = 'uuid-amend-02';
+    const amendmentId = 'amend-uuid-2222';
+
+    db.prepare(`
+      INSERT INTO sync_queue (
+        client_session_uuid, operation_type, client_amendment_id,
+        endpoint_path, payload_json, sync_status, retry_count, created_at, updated_at
+      ) VALUES (?, 'AMENDMENT_SYNC', ?, '/api/v1/attendance/sessions/sync-amend', '{"student_user_id":"s1"}', 'PENDING', 0, ?, ?);
+    `).run(clientUuid, amendmentId, nowIso, nowIso);
+
+    const items = await AttendanceSyncWorker.getPendingQueueItems(5, db);
+    const mockTransport = async () => ({
+      statusCode: 200,
+      data: { is_already_synced: true, amendment_id: 'srv-amend-1' },
+    });
+
+    const res = await AttendanceSyncWorker.processQueueItem(items[0], mockTransport, 'token', db);
+    assert.equal(res.success, true);
+    assert.equal(res.status, 'ACKNOWLEDGED');
+  });
+
+  test('[13] AMENDMENT_SYNC concurrency conflict: HTTP 409 marks item FAILED with isConflict=true', async () => {
+    const db = createInMemoryDb();
+    const nowIso = new Date().toISOString();
+    const clientUuid = 'uuid-amend-03';
+    const amendmentId = 'amend-uuid-3333';
+
+    db.prepare(`
+      INSERT INTO sync_queue (
+        client_session_uuid, operation_type, client_amendment_id,
+        endpoint_path, payload_json, sync_status, retry_count, created_at, updated_at
+      ) VALUES (?, 'AMENDMENT_SYNC', ?, '/api/v1/attendance/sessions/sync-amend', '{"student_user_id":"s1"}', 'PENDING', 0, ?, ?);
+    `).run(clientUuid, amendmentId, nowIso, nowIso);
+
+    const items = await AttendanceSyncWorker.getPendingQueueItems(5, db);
+    const mockTransport = async () => ({
+      statusCode: 409,
+      data: { detail: 'Conflict: Stale attendance state: student s1 current status is EXCUSED, expected ABSENT' },
+    });
+
+    const res = await AttendanceSyncWorker.processQueueItem(items[0], mockTransport, 'token', db);
+    assert.equal(res.success, false);
+    assert.equal(res.status, 'FAILED');
+    assert.equal(res.isConflict, true);
+    assert.ok(res.errorMessage.includes('Stale attendance state'));
+
+    const updated = db.prepare('SELECT sync_status, last_error FROM sync_queue WHERE queue_id = ?;').get(items[0].queueId);
+    assert.equal(updated.sync_status, 'FAILED');
+    assert.ok(updated.last_error.includes('Stale attendance state'));
+  });
+
+  test('[14] Multi-operation queue: SESSION_SYNC and multiple AMENDMENT_SYNC processed independently by queue_id', async () => {
+    const db = createInMemoryDb();
+    const nowIso = new Date().toISOString();
+    const clientUuid = 'uuid-multi-op';
+
+    // 1. Session sync item
+    db.prepare(`
+      INSERT INTO sync_queue (
+        client_session_uuid, operation_type, endpoint_path, payload_json, sync_status, retry_count, created_at, updated_at
+      ) VALUES (?, 'SESSION_SYNC', '/api/v1/attendance/sessions/sync', '{"session":1}', 'PENDING', 0, ?, ?);
+    `).run(clientUuid, nowIso, nowIso);
+
+    // 2. Amendment 1
+    db.prepare(`
+      INSERT INTO sync_queue (
+        client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status, retry_count, created_at, updated_at
+      ) VALUES (?, 'AMENDMENT_SYNC', 'amend-001', '/api/v1/attendance/sessions/amend', '{"student":"s1"}', 'PENDING', 0, ?, ?);
+    `).run(clientUuid, nowIso, nowIso);
+
+    // 3. Amendment 2
+    db.prepare(`
+      INSERT INTO sync_queue (
+        client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status, retry_count, created_at, updated_at
+      ) VALUES (?, 'AMENDMENT_SYNC', 'amend-002', '/api/v1/attendance/sessions/amend', '{"student":"s2"}', 'PENDING', 0, ?, ?);
+    `).run(clientUuid, nowIso, nowIso);
+
+    const items = await AttendanceSyncWorker.getPendingQueueItems(10, db);
+    assert.equal(items.length, 3);
+
+    // Process only item 1 (session sync)
+    const mockTransport = async () => ({ statusCode: 201, data: { ok: true } });
+    await AttendanceSyncWorker.processQueueItem(items[0], mockTransport, 'token', db);
+
+    // Check states in DB: item 1 ACKNOWLEDGED, items 2 and 3 still PENDING
+    const q1 = db.prepare('SELECT sync_status FROM sync_queue WHERE queue_id = ?;').get(items[0].queueId);
+    const q2 = db.prepare('SELECT sync_status FROM sync_queue WHERE queue_id = ?;').get(items[1].queueId);
+    const q3 = db.prepare('SELECT sync_status FROM sync_queue WHERE queue_id = ?;').get(items[2].queueId);
+
+    assert.equal(q1.sync_status, 'ACKNOWLEDGED');
+    assert.equal(q2.sync_status, 'PENDING');
+    assert.equal(q3.sync_status, 'PENDING');
+  });
 });

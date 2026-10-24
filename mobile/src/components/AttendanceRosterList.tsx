@@ -10,14 +10,14 @@ export interface RosterStudentItemProps {
   institutionalId: string;
   studentName: string;
   faceRegistrationState: 'REGISTERED' | 'PENDING' | 'UNREGISTERED';
-  attendanceStatus?: 'PRESENT' | 'ABSENT' | null;
+  attendanceStatus?: 'PRESENT' | 'ABSENT' | 'EXCUSED' | null;
   attendancePercentage?: number;
 }
 
 interface AttendanceRosterListProps {
   students: RosterStudentItemProps[];
-  marks: Record<string, 'PRESENT' | 'ABSENT' | boolean>;
-  onToggleStatus: (studentUserId: string, newStatus: 'PRESENT' | 'ABSENT') => void;
+  marks: Record<string, 'PRESENT' | 'ABSENT' | 'EXCUSED' | boolean>;
+  onToggleStatus: (studentUserId: string, newStatus: 'PRESENT' | 'ABSENT' | 'EXCUSED') => void;
   readOnly?: boolean;
 }
 

@@ -34,6 +34,7 @@ const expectedTables = [
   'local_attendance_records',
   'local_attendance_sessions',
   'sync_queue',
+  'local_amendment_audits',
 ];
 
 for (const expected of expectedTables) {
@@ -74,4 +75,47 @@ assert.throws(() => {
   `).run();
 }, /unique/i, 'Inserting duplicate session for same assignment, date, and period slot must fail unique constraint');
 
+// 5. Test Phase 9.1 operation-aware sync_queue
+// A. Can insert SESSION_SYNC
+db.prepare(`
+  INSERT INTO sync_queue (
+    client_session_uuid, operation_type, endpoint_path, payload_json, sync_status, created_at, updated_at
+  ) VALUES ('session-uuid-1', 'SESSION_SYNC', '/api/v1/attendance/sessions/sync', '{}', 'PENDING', '2026-10-05T10:00:00Z', '2026-10-05T10:00:00Z');
+`).run();
+
+// B. Duplicate SESSION_SYNC fails uniqueness
+assert.throws(() => {
+  db.prepare(`
+    INSERT INTO sync_queue (
+      client_session_uuid, operation_type, endpoint_path, payload_json, sync_status, created_at, updated_at
+    ) VALUES ('session-uuid-1', 'SESSION_SYNC', '/api/v1/attendance/sessions/sync', '{}', 'PENDING', '2026-10-05T10:00:00Z', '2026-10-05T10:00:00Z');
+  `).run();
+}, /unique/i, 'Inserting duplicate SESSION_SYNC for same session should fail unique constraint');
+
+// C. Multiple AMENDMENT_SYNC for the SAME session can coexist
+db.prepare(`
+  INSERT INTO sync_queue (
+    client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status, created_at, updated_at
+  ) VALUES ('session-uuid-1', 'AMENDMENT_SYNC', 'amd-uuid-001', '/api/v1/attendance/sessions/session-uuid-1/amendments', '{"amd":1}', 'PENDING', '2026-10-05T10:00:00Z', '2026-10-05T10:00:00Z');
+`).run();
+
+db.prepare(`
+  INSERT INTO sync_queue (
+    client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status, created_at, updated_at
+  ) VALUES ('session-uuid-1', 'AMENDMENT_SYNC', 'amd-uuid-002', '/api/v1/attendance/sessions/session-uuid-1/amendments', '{"amd":2}', 'PENDING', '2026-10-05T10:00:00Z', '2026-10-05T10:00:00Z');
+`).run();
+
+const queueRows = db.prepare('SELECT * FROM sync_queue WHERE client_session_uuid = ?;').all('session-uuid-1');
+assert.equal(queueRows.length, 3, 'Must have 1 SESSION_SYNC and 2 AMENDMENT_SYNC rows for session-uuid-1');
+
+// D. Duplicate client_amendment_id fails uniqueness
+assert.throws(() => {
+  db.prepare(`
+    INSERT INTO sync_queue (
+      client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status, created_at, updated_at
+    ) VALUES ('session-uuid-1', 'AMENDMENT_SYNC', 'amd-uuid-001', '/api/v1/attendance/sessions/session-uuid-1/amendments', '{"amd":1}', 'PENDING', '2026-10-05T10:00:00Z', '2026-10-05T10:00:00Z');
+  `).run();
+}, /unique/i, 'Inserting duplicate client_amendment_id must fail unique constraint');
+
 console.log('All SQLite schema, PRAGMA, foreign key, and constraint assertions passed successfully!');
+

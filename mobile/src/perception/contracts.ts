@@ -609,7 +609,32 @@ export interface IRecognitionPipeline {
 export type AttendanceReviewSource = 'AI_VERIFIED' | 'MANUAL_MARK' | 'MANUAL_OVERRIDE';
 export type AttendanceReviewStatus = 'PRESENT' | 'ABSENT' | 'EXCUSED' | 'UNDECIDED';
 export type SessionApplicabilityStatus = 'COUNTED' | 'CANCELLED' | 'EXEMPT';
-export type SessionLifecycleStatus = 'DRAFT' | 'REVIEW' | 'FINALIZING' | 'FINALIZED' | 'SYNCED';
+export type ClassroomSessionLifecycleState =
+  | 'SCHEDULED'
+  | 'READY'
+  | 'SCANNING'
+  | 'REVIEW'
+  | 'FINALIZED'
+  | 'SYNCING'
+  | 'SYNCHRONIZED'
+  | 'CANCELLED'
+  | 'EXEMPT';
+
+export type ScannerInteractionState = 'ACTIVE' | 'PAUSED';
+
+export type SessionLifecycleStatus =
+  | 'DRAFT'
+  | 'SCHEDULED'
+  | 'READY'
+  | 'SCANNING'
+  | 'REVIEW'
+  | 'FINALIZING'
+  | 'FINALIZED'
+  | 'SYNCING'
+  | 'SYNCED'
+  | 'SYNCHRONIZED'
+  | 'CANCELLED'
+  | 'EXEMPT';
 
 export interface AttendanceSessionContext {
   clientSessionUuid: string;
@@ -708,5 +733,25 @@ export interface IFacultyAttendanceReviewController {
   
   validateFinalization(): { canFinalize: boolean; errors: string[] };
   prepareFinalizationPayload(): AttendanceFinalizationPayload;
+}
+
+export type AmendmentRole = 'REGULAR_FACULTY' | 'ADMIN';
+
+export interface AttendanceAmendmentRecord {
+  auditId: string;
+  sessionId: string;
+  studentUserId: string;
+  previousStatus: 'PRESENT' | 'ABSENT' | 'EXCUSED';
+  newStatus: 'PRESENT' | 'ABSENT' | 'EXCUSED';
+  amendingUserId: string;
+  amendmentRole: AmendmentRole;
+  amendmentReason: string;
+  amendedAt: string; // ISO-8601
+}
+
+export interface SubmitAmendmentPayload {
+  studentUserId: string;
+  newStatus: 'PRESENT' | 'ABSENT' | 'EXCUSED';
+  amendmentReason: string;
 }
 

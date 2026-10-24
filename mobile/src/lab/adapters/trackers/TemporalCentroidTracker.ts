@@ -516,6 +516,10 @@ export class TemporalCentroidTracker implements IFaceTracker {
     }));
   }
 
+  public getConfirmedTracks(): TrackedFace[] {
+    return this.getActiveTrackedFaces().filter((t) => t.isConfirmed);
+  }
+
   public getInternalTracks(): InternalTemporalTrack[] {
     return this.tracks.map((t) => ({ ...t }));
   }

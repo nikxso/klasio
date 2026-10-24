@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { FacultyAttendanceReviewController } from '../adapters/review/FacultyAttendanceReviewController.ts';
+import { AttendanceRepository } from '../../storage/attendanceRepository.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -731,5 +732,134 @@ describe('Step I: Faculty Attendance Review & Finalization Invariant Suite', () 
       /not an enrolled roster student/
     );
   });
+
+  test('[31] Post-finalization SQLite Amendment: Updates record to MANUAL_OVERRIDE and inserts audit row', async () => {
+    const db = createInMemoryDb();
+    const ctrl = new FacultyAttendanceReviewController();
+    ctrl.initialize(VALID_CONTEXT, SAMPLE_ROSTER, []);
+    ctrl.markRemainingUnreviewedAsAbsent();
+    const payload = ctrl.prepareFinalizationPayload();
+
+    await AttendanceRepository.finalizeSession(payload, db);
+
+    // Apply amendment: usr_001 from ABSENT to PRESENT
+    const res = await AttendanceRepository.applyAmendment(
+      payload.clientSessionUuid,
+      'usr_001',
+      'PRESENT',
+      'Medical certificate verified by department',
+      'fac_regular_001',
+      'REGULAR_FACULTY',
+      db
+    );
+
+    assert.equal(res.previousStatus, 'ABSENT');
+    assert.equal(res.newStatus, 'PRESENT');
+    assert.ok(res.clientAmendmentId);
+
+    // Verify record updated in DB
+    const updatedRecord = db.prepare(
+      'SELECT * FROM local_attendance_records WHERE client_session_uuid = ? AND student_user_id = ?;'
+    ).get(payload.clientSessionUuid, 'usr_001');
+    assert.equal(updatedRecord.attendance_status, 'PRESENT');
+    assert.equal(updatedRecord.mark_source, 'MANUAL_OVERRIDE');
+
+    // Verify audit entry in DB
+    const audits = await AttendanceRepository.listAmendmentsForSession(payload.clientSessionUuid, db);
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].student_user_id, 'usr_001');
+    assert.equal(audits[0].previous_status, 'ABSENT');
+    assert.equal(audits[0].new_status, 'PRESENT');
+    assert.equal(audits[0].amendment_role, 'REGULAR_FACULTY');
+    assert.equal(audits[0].amendment_reason, 'Medical certificate verified by department');
+    assert.equal(audits[0].client_amendment_id, res.clientAmendmentId);
+
+    // Verify sync_queue entry created atomically
+    const amendmentQueueRow = db.prepare(
+      'SELECT * FROM sync_queue WHERE client_amendment_id = ?;'
+    ).get(res.clientAmendmentId);
+    assert.ok(amendmentQueueRow);
+    assert.equal(amendmentQueueRow.operation_type, 'AMENDMENT_SYNC');
+    assert.equal(amendmentQueueRow.sync_status, 'PENDING');
+  });
+
+  test('[32] Offline Amendment: Survives app restart & enqueues AMENDMENT_SYNC operations', async () => {
+    const db = createInMemoryDb();
+    const ctrl = new FacultyAttendanceReviewController();
+    ctrl.initialize(VALID_CONTEXT, SAMPLE_ROSTER, []);
+    ctrl.markRemainingUnreviewedAsAbsent();
+    const payload = ctrl.prepareFinalizationPayload();
+
+    // 1. Initial offline session finalization
+    await AttendanceRepository.finalizeSession(payload, db);
+
+    // Initial sync queue contains the session sync payload
+    const initialQueue = db.prepare('SELECT * FROM sync_queue WHERE client_session_uuid = ?;').all(payload.clientSessionUuid);
+    assert.equal(initialQueue.length, 1);
+    assert.equal(initialQueue[0].endpoint_path, '/api/v1/attendance/sessions/sync');
+
+    // 2. Apply offline amendment: usr_001 from ABSENT to PRESENT
+    const res1 = await AttendanceRepository.applyAmendment(
+      payload.clientSessionUuid,
+      'usr_001',
+      'PRESENT',
+      'Medical certificate verified by department',
+      'fac_regular_001',
+      'REGULAR_FACULTY',
+      db
+    );
+
+    // 3. Sequential offline amendment on same session: usr_002 from ABSENT to EXCUSED
+    const res2 = await AttendanceRepository.applyAmendment(
+      payload.clientSessionUuid,
+      'usr_002',
+      'EXCUSED',
+      'Authorized sports representation certificate',
+      'fac_regular_001',
+      'REGULAR_FACULTY',
+      db
+    );
+
+    // 4. Simulate App Restart by querying the database state fresh
+    const restartedRecord1 = db.prepare(
+      'SELECT attendance_status, mark_source FROM local_attendance_records WHERE client_session_uuid = ? AND student_user_id = ?;'
+    ).get(payload.clientSessionUuid, 'usr_001');
+    assert.equal(restartedRecord1.attendance_status, 'PRESENT');
+    assert.equal(restartedRecord1.mark_source, 'MANUAL_OVERRIDE');
+
+    const restartedRecord2 = db.prepare(
+      'SELECT attendance_status, mark_source FROM local_attendance_records WHERE client_session_uuid = ? AND student_user_id = ?;'
+    ).get(payload.clientSessionUuid, 'usr_002');
+    assert.equal(restartedRecord2.attendance_status, 'EXCUSED');
+    assert.equal(restartedRecord2.mark_source, 'MANUAL_OVERRIDE');
+
+    // Audit logs preserved across simulated restart
+    const persistedAudits = await AttendanceRepository.listAmendmentsForSession(payload.clientSessionUuid, db);
+    assert.equal(persistedAudits.length, 2);
+    assert.equal(persistedAudits[0].student_user_id, 'usr_001');
+    assert.equal(persistedAudits[0].new_status, 'PRESENT');
+    assert.equal(persistedAudits[1].student_user_id, 'usr_002');
+    assert.equal(persistedAudits[1].new_status, 'EXCUSED');
+
+    // 5. VERIFY OFFLINE SYNC QUEUE ENQUEUING:
+    // sync_queue contains 1 SESSION_SYNC and 2 AMENDMENT_SYNC records
+    const postAmendmentQueue = db.prepare('SELECT * FROM sync_queue WHERE client_session_uuid = ? ORDER BY queue_id ASC;').all(payload.clientSessionUuid);
+    assert.equal(postAmendmentQueue.length, 3);
+    assert.equal(postAmendmentQueue[0].operation_type, 'SESSION_SYNC');
+    assert.equal(postAmendmentQueue[0].endpoint_path, '/api/v1/attendance/sessions/sync');
+
+    assert.equal(postAmendmentQueue[1].operation_type, 'AMENDMENT_SYNC');
+    assert.equal(postAmendmentQueue[1].client_amendment_id, res1.clientAmendmentId);
+    const payload1 = JSON.parse(postAmendmentQueue[1].payload_json);
+    assert.equal(payload1.new_status, 'PRESENT');
+    assert.equal(payload1.expected_previous_status, 'ABSENT');
+
+    assert.equal(postAmendmentQueue[2].operation_type, 'AMENDMENT_SYNC');
+    assert.equal(postAmendmentQueue[2].client_amendment_id, res2.clientAmendmentId);
+    const payload2 = JSON.parse(postAmendmentQueue[2].payload_json);
+    assert.equal(payload2.new_status, 'EXCUSED');
+    assert.equal(payload2.expected_previous_status, 'ABSENT');
+  });
 });
+
 

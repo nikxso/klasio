@@ -52,7 +52,8 @@
     "test:accumulator": "node --test src/lab/__tests__/progressiveAccumulator.test.mjs",
     "test:enrollment": "node --test src/lab/__tests__/faceEnrollment.test.mjs",
     "test:review": "node --test src/lab/__tests__/attendanceReview.test.mjs",
-    "test:sync": "node --test src/storage/__tests__/syncWorker.test.mjs"
+    "test:sync": "node --test src/storage/__tests__/syncWorker.test.mjs",
+    "test:session": "node --test src/lab/__tests__/classroomSessionIntegration.test.mjs"
   },
   "private": true
 }
