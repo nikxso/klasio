@@ -8,7 +8,7 @@
  * - Confirmed tracks bypass recognition, saving 80-90% of model compute during continuous classroom scanning.
  */
 
-import {
+import type {
   FaceDetectionResult,
   IFaceDetector,
   IFaceMatcher,
@@ -20,8 +20,8 @@ import {
   RawFrame,
   RecognitionCandidate,
   TrackedFace,
-} from '../../perception/contracts';
-import { HeuristicQualityGate } from '../adapters/quality/HeuristicQualityGate';
+} from '../../perception/contracts.ts';
+import { HeuristicQualityGate } from '../adapters/quality/HeuristicQualityGate.ts';
 
 interface TrackPerceptionState {
   trackId: number;

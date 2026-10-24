@@ -9,7 +9,7 @@
  * - Pose estimation check (yaw & pitch bounding)
  */
 
-import { FaceDetectionResult, QualityGateResult, RawFrame } from '../../../perception/contracts';
+import type { FaceDetectionResult, QualityGateResult, RawFrame } from '../../../perception/contracts.ts';
 
 export interface QualityGateConfig {
   minFaceSizePx: number; // e.g. 60px

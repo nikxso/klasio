@@ -18,7 +18,7 @@
  *   9. Students entering and leaving the field of view
  */
 
-import { FaceBoundingBox, FaceDetectionResult, RawFrame } from '../../perception/contracts';
+import type { FaceBoundingBox, FaceDetectionResult, RawFrame } from '../../perception/contracts.ts';
 
 export type DatasetClassification = 'SYNTHETIC_DEMO_DATA' | 'DEV_TEST_DATA' | 'REAL_STUDENT_DATA';
 
