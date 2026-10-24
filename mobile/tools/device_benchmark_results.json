@@ -1,0 +1,97 @@
+{
+  "evidence_classification": "[DEVICE-MEASURED]",
+  "metadata": {
+    "benchmark_run_id": "RUN-DEVICE-20261024-153141",
+    "timestamp_iso": "2026-10-24T15:31:41.002674+00:00",
+    "device_target": "moto g54 5G (cancunf, mt6855)",
+    "android_version": "15",
+    "android_api": 35,
+    "cpu_abi": "arm64-v8a",
+    "device_id": "ZD222G4RN9",
+    "execution_engine": "Android ART dalvikvm + native libonnxruntime.so (arm64-v8a)"
+  },
+  "detectors": {
+    "YuNet_2023mar": {
+      "evidence_tag": "[DEVICE-MEASURED]",
+      "model_size_kb": 227.14,
+      "input_resolution": "320x320",
+      "init_time_ms": 41.0,
+      "cold_latency_ms": 82.0,
+      "iterations": 30,
+      "mean_latency_ms": 77.09,
+      "throughput_fps": 13.0,
+      "median_latency_ms": 69.86,
+      "min_latency_ms": 59.22,
+      "max_latency_ms": 142.83,
+      "p95_latency_ms": 142.83,
+      "process_rss_mb": 174.89
+    },
+    "SCRFD_500M": {
+      "evidence_tag": "[DEVICE-MEASURED]",
+      "model_size_mb": 2.41,
+      "input_resolution": "640x640",
+      "init_time_ms": 24.0,
+      "cold_latency_ms": 103.0,
+      "iterations": 30,
+      "mean_latency_ms": 96.29,
+      "throughput_fps": 10.4,
+      "median_latency_ms": 95.94,
+      "min_latency_ms": 82.59,
+      "max_latency_ms": 109.83,
+      "p95_latency_ms": 109.83,
+      "process_rss_mb": 170.07
+    }
+  },
+  "recognizers": {
+    "MobileFaceNet": {
+      "evidence_tag": "[DEVICE-MEASURED]",
+      "model_size_mb": 12.99,
+      "input_resolution": "112x112",
+      "init_time_ms": 40.0,
+      "cold_latency_ms": 52.0,
+      "embedding_dim": 512,
+      "raw_l2_norm": 8.065,
+      "iterations": 50,
+      "mean_latency_ms": 47.28,
+      "throughput_fps": 21.2,
+      "median_latency_ms": 47.43,
+      "min_latency_ms": 40.11,
+      "max_latency_ms": 56.99,
+      "p95_latency_ms": 52.42,
+      "process_rss_mb": 134.41,
+      "batch_scaling": {
+        "5_faces_batch_ms": 233.11,
+        "5_faces_per_face_ms": 46.62,
+        "10_faces_batch_ms": 482.89,
+        "10_faces_per_face_ms": 48.29,
+        "20_faces_batch_ms": 932.62,
+        "20_faces_per_face_ms": 46.63
+      }
+    },
+    "EdgeFace_XS": {
+      "evidence_tag": "[DEVICE-MEASURED]",
+      "model_size_mb": 6.94,
+      "input_resolution": "112x112",
+      "init_time_ms": 225.0,
+      "cold_latency_ms": 14.0,
+      "embedding_dim": 512,
+      "raw_l2_norm": 0.2769,
+      "iterations": 50,
+      "mean_latency_ms": 20.21,
+      "throughput_fps": 49.5,
+      "median_latency_ms": 19.83,
+      "min_latency_ms": 17.83,
+      "max_latency_ms": 24.32,
+      "p95_latency_ms": 24.2,
+      "process_rss_mb": 145.82,
+      "batch_scaling": {
+        "5_faces_batch_ms": 98.17,
+        "5_faces_per_face_ms": 19.63,
+        "10_faces_batch_ms": 207.12,
+        "10_faces_per_face_ms": 20.71,
+        "20_faces_batch_ms": 428.3,
+        "20_faces_per_face_ms": 21.42
+      }
+    }
+  }
+}

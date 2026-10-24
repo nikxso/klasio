@@ -1,0 +1,84 @@
+=================================================================
+   ON-DEVICE EMPIRICAL ML BENCHMARK RUNNER (MOTOROLA MOTO G54 5G)
+=================================================================
+[INIT] OrtEnvironment initialized successfully.
+
+-----------------------------------------------------------------
+ PHASE 3: ON-DEVICE FACE DETECTION BENCHMARK
+-----------------------------------------------------------------
+
+>>> Benchmarking Detector: YuNet (2023mar)
+    Model size: 227.14 KB (232589 bytes)
+    Initialization time: 41 ms
+    Cold inference latency: 82 ms
+    -------------------------------------------------------------
+    Metric Summary for: YuNet (320x320)
+      Iterations:    30 runs
+      Mean Latency:  77.09 ms (Throughput: 13.0 FPS)
+      Median:        69.86 ms
+      Min / Max:     59.22 ms / 142.83 ms
+      P95 Latency:   142.83 ms
+      Process RSS:   179088 KB (174.89 MB)
+    -------------------------------------------------------------
+
+>>> Benchmarking Detector: SCRFD-500M
+    Model size: 2.41 MB (2524817 bytes)
+    Initialization time: 24 ms
+    Cold inference latency: 103 ms
+    -------------------------------------------------------------
+    Metric Summary for: SCRFD-500M (640x640)
+      Iterations:    30 runs
+      Mean Latency:  96.29 ms (Throughput: 10.4 FPS)
+      Median:        95.94 ms
+      Min / Max:     82.59 ms / 109.83 ms
+      P95 Latency:   109.83 ms
+      Process RSS:   174156 KB (170.07 MB)
+    -------------------------------------------------------------
+
+-----------------------------------------------------------------
+ PHASE 4: ON-DEVICE FACE RECOGNITION BENCHMARK
+-----------------------------------------------------------------
+
+>>> Benchmarking Recognizer: MobileFaceNet
+    Model size: 12.99 MB (13616099 bytes)
+    Initialization time: 40 ms
+    Cold inference latency: 52 ms
+    Verified embedding dimension: 512-dim
+    Raw vector L2 norm: 8.0650 (numerical stability: PASSED)
+    -------------------------------------------------------------
+    Metric Summary for: MobileFaceNet (1 face crop 112x112)
+      Iterations:    50 runs
+      Mean Latency:  47.28 ms (Throughput: 21.2 FPS)
+      Median:        47.43 ms
+      Min / Max:     40.11 ms / 56.99 ms
+      P95 Latency:   52.42 ms
+      Process RSS:   137640 KB (134.41 MB)
+    -------------------------------------------------------------
+
+    [Multi-Face Classroom Scaling Simulation]
+       5 faces sequential batch: 233.11 ms (46.62 ms/face, effective rate: 21.4 faces/sec)
+      10 faces sequential batch: 482.89 ms (48.29 ms/face, effective rate: 20.7 faces/sec)
+      20 faces sequential batch: 932.62 ms (46.63 ms/face, effective rate: 21.4 faces/sec)
+
+>>> Benchmarking Recognizer: EdgeFace-XS
+    Model size: 6.94 MB (7277264 bytes)
+    Initialization time: 225 ms
+    Cold inference latency: 14 ms
+    Verified embedding dimension: 512-dim
+    Raw vector L2 norm: 0.2769 (numerical stability: PASSED)
+    -------------------------------------------------------------
+    Metric Summary for: EdgeFace-XS (1 face crop 112x112)
+      Iterations:    50 runs
+      Mean Latency:  20.21 ms (Throughput: 49.5 FPS)
+      Median:        19.83 ms
+      Min / Max:     17.83 ms / 24.32 ms
+      P95 Latency:   24.20 ms
+      Process RSS:   149320 KB (145.82 MB)
+    -------------------------------------------------------------
+
+    [Multi-Face Classroom Scaling Simulation]
+       5 faces sequential batch: 98.17 ms (19.63 ms/face, effective rate: 50.9 faces/sec)
+      10 faces sequential batch: 207.12 ms (20.71 ms/face, effective rate: 48.3 faces/sec)
+      20 faces sequential batch: 428.30 ms (21.42 ms/face, effective rate: 46.7 faces/sec)
+
+[DONE] All on-device benchmarks finished successfully.
