@@ -79,7 +79,9 @@ export default function LoginScreen() {
     setTimeout(() => {
       setLoading(false);
       if (selectedRole === 'student') {
-        router.replace('/(student)/attendance');
+        router.replace('/(student)' as any);
+      } else if (selectedRole === 'admin') {
+        router.replace('/(admin)' as any);
       } else {
         router.replace('/(faculty)');
       }
