@@ -43,6 +43,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "test": "npm run test:storage && npm run test:perception && npm run test:tracker && npm run test:quality && npm run test:embedder && npm run test:matcher && npm run test:accumulator && npm run test:enrollment && npm run test:review && npm run test:sync && npm run test:session && npm run test:gallery && npm run test:student",
     "test:storage": "node src/storage/__tests__/database.test.mjs",
     "test:perception": "node --test src/perception/__tests__/cameraFormatPolicy.test.mjs",
     "test:tracker": "node --test src/lab/__tests__/temporalTracker.test.mjs",
