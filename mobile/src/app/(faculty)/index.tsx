@@ -16,6 +16,7 @@ import {
   ChevronRight,
   BookOpen,
   UserCheck,
+  BarChart3,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
@@ -85,6 +86,13 @@ export default function FacultyHomeScreen() {
       title="Dr. Lakshmi Iyer"
       right={
         <View style={styles.headerRightActions}>
+          <Pressable
+            onPress={() => router.push('/(faculty)/reports')}
+            style={styles.iconButton}
+            accessibilityLabel="Attendance Reports"
+          >
+            <BarChart3 size={19} color={Colors.ink} />
+          </Pressable>
           <Pressable
             onPress={() => router.push('/(faculty)/delegations')}
             style={styles.iconButton}

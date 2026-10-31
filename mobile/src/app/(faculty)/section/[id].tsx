@@ -702,7 +702,23 @@ export default function ClassDetailScreen() {
                   <Text style={styles.studentName} numberOfLines={1}>
                     {student.studentName}
                   </Text>
-                  <Chip tone={faceTone}>{faceLabel}</Chip>
+                  <TouchableOpacity
+                    onPress={() => {
+                      router.push({
+                        pathname: '/(faculty)/enrollment',
+                        params: {
+                          studentUserId: student.studentUserId,
+                          studentName: student.studentName,
+                          institutionalId: student.institutionalId,
+                          teachingAssignmentId: params.id || '',
+                          sectionCode: params.section || '',
+                        },
+                      });
+                    }}
+                    accessibilityLabel={`Biometric enrollment for ${student.studentName}`}
+                  >
+                    <Chip tone={faceTone}>{faceLabel}</Chip>
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.barContainer}>

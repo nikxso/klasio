@@ -88,6 +88,20 @@ CREATE TABLE IF NOT EXISTS local_amendment_audits (
     amendment_reason TEXT NOT NULL,
     amended_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS cached_student_attendance (
+    student_user_id TEXT PRIMARY KEY,
+    overall_attendance_percentage REAL NOT NULL,
+    payload_json TEXT NOT NULL,
+    cached_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cached_student_subject_history (
+    teaching_assignment_id TEXT PRIMARY KEY,
+    student_user_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    cached_at TEXT NOT NULL
+);
 `;
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;

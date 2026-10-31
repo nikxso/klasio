@@ -53,7 +53,9 @@
     "test:enrollment": "node --test src/lab/__tests__/faceEnrollment.test.mjs",
     "test:review": "node --test src/lab/__tests__/attendanceReview.test.mjs",
     "test:sync": "node --test src/storage/__tests__/syncWorker.test.mjs",
-    "test:session": "node --test src/lab/__tests__/classroomSessionIntegration.test.mjs"
+    "test:session": "node --test src/lab/__tests__/classroomSessionIntegration.test.mjs",
+    "test:gallery": "node --test src/storage/__tests__/gallerySync.test.mjs",
+    "test:student": "node --test src/storage/__tests__/studentRepository.test.mjs"
   },
   "private": true
 }

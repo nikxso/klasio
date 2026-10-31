@@ -24,6 +24,8 @@ export type HttpTransportFn = (
   token?: string
 ) => Promise<SyncHttpResponse>;
 
+import { getApiUrl } from '../config/api.ts';
+
 async function resolveDb(customDb?: any) {
   if (customDb) {
     return {
@@ -245,7 +247,7 @@ export class AttendanceSyncWorker {
   ): Promise<{ processed: number; succeeded: number; failed: number }> {
     const defaultTransport: HttpTransportFn = async (endpoint, payload, token) => {
       try {
-        const res = await fetch(`http://localhost:8000${endpoint}`, {
+        const res = await fetch(getApiUrl(endpoint), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

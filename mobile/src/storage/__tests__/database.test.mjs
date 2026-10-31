@@ -35,6 +35,8 @@ const expectedTables = [
   'local_attendance_sessions',
   'sync_queue',
   'local_amendment_audits',
+  'cached_student_attendance',
+  'cached_student_subject_history',
 ];
 
 for (const expected of expectedTables) {

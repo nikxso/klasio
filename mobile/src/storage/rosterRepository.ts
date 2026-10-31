@@ -1,4 +1,7 @@
-import { getDatabase } from '@/storage/database';
+async function resolveDb() {
+  const { getDatabase } = await import('./database.ts');
+  return await getDatabase();
+}
 
 export interface CachedStudent {
   teachingAssignmentId: string;
@@ -28,7 +31,7 @@ export class RosterRepository {
     teachingAssignmentId: string,
     students: Omit<CachedStudent, 'teachingAssignmentId' | 'cachedAt'>[]
   ): Promise<void> {
-    const db = await getDatabase();
+    const db = await resolveDb();
     const nowIso = new Date().toISOString();
 
     await db.withTransactionAsync(async () => {
@@ -66,7 +69,7 @@ export class RosterRepository {
     teachingAssignmentId: string,
     onDate?: string
   ): Promise<CachedStudent[]> {
-    const db = await getDatabase();
+    const db = await resolveDb();
     let query = `
       SELECT
         teaching_assignment_id,
@@ -106,7 +109,7 @@ export class RosterRepository {
    * Return count of cached students for an assignment.
    */
   static async getCachedCount(teachingAssignmentId: string): Promise<number> {
-    const db = await getDatabase();
+    const db = await resolveDb();
     const result = await db.getFirstAsync<{ count: number }>(
       'SELECT COUNT(*) as count FROM cached_rosters WHERE teaching_assignment_id = ?;',
       [teachingAssignmentId]
@@ -118,10 +121,51 @@ export class RosterRepository {
    * Delete cached roster for an assignment.
    */
   static async clearCachedRoster(teachingAssignmentId: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await resolveDb();
     await db.runAsync('DELETE FROM cached_rosters WHERE teaching_assignment_id = ?;', [
       teachingAssignmentId,
     ]);
+  }
+
+  /**
+   * Transactionally replace cached embeddings for an assignment's student population.
+   * Ensures that revoked, transferred, or deleted student templates are purged atomically
+   * and that partial failures rollback completely without leaving stale or partial state.
+   */
+  static async replaceAssignmentGallery(
+    freshEmbeddings: CachedEmbedding[],
+    affectedStudentIds: string[]
+  ): Promise<void> {
+    const db = await resolveDb();
+
+    await db.withTransactionAsync(async () => {
+      // 1. Purge previous embeddings for all students associated with this assignment
+      if (affectedStudentIds.length > 0) {
+        const placeholders = affectedStudentIds.map(() => '?').join(', ');
+        await db.runAsync(
+          `DELETE FROM cached_embeddings WHERE student_user_id IN (${placeholders});`,
+          affectedStudentIds
+        );
+      }
+
+      // 2. Insert fresh templates
+      for (const emb of freshEmbeddings) {
+        await db.runAsync(
+          `INSERT OR REPLACE INTO cached_embeddings (
+            student_user_id, model_version, embedding_dimension,
+            embedding_blob, sample_index, gallery_version
+          ) VALUES (?, ?, ?, ?, ?, ?);`,
+          [
+            emb.studentUserId,
+            emb.modelVersion,
+            emb.embeddingDimension,
+            emb.embeddingBlob,
+            emb.sampleIndex ?? 0,
+            emb.galleryVersion,
+          ]
+        );
+      }
+    });
   }
 
   /**
@@ -130,7 +174,7 @@ export class RosterRepository {
    */
   static async saveCachedEmbeddings(embeddings: CachedEmbedding[]): Promise<void> {
     if (!embeddings || embeddings.length === 0) return;
-    const db = await getDatabase();
+    const db = await resolveDb();
 
     await db.withTransactionAsync(async () => {
       for (const emb of embeddings) {
@@ -161,7 +205,7 @@ export class RosterRepository {
     modelVersion?: string
   ): Promise<CachedEmbedding[]> {
     if (!studentUserIds || studentUserIds.length === 0) return [];
-    const db = await getDatabase();
+    const db = await resolveDb();
 
     const placeholders = studentUserIds.map(() => '?').join(', ');
     let query = `
@@ -200,7 +244,7 @@ export class RosterRepository {
    */
   static async clearCachedEmbeddingsForStudents(studentUserIds: string[]): Promise<void> {
     if (!studentUserIds || studentUserIds.length === 0) return;
-    const db = await getDatabase();
+    const db = await resolveDb();
     const placeholders = studentUserIds.map(() => '?').join(', ');
     await db.runAsync(
       `DELETE FROM cached_embeddings WHERE student_user_id IN (${placeholders});`,
@@ -212,7 +256,7 @@ export class RosterRepository {
    * Return count of all cached embeddings on device.
    */
   static async getCachedEmbeddingCount(): Promise<number> {
-    const db = await getDatabase();
+    const db = await resolveDb();
     const result = await db.getFirstAsync<{ count: number }>(
       'SELECT COUNT(*) as count FROM cached_embeddings;'
     );

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
-import { BookOpen, ChevronRight, Users, Sparkles, AlertCircle, RefreshCw } from 'lucide-react-native';
+import { BookOpen, ChevronRight, Users, Sparkles, AlertCircle, RefreshCw, BarChart3 } from 'lucide-react-native';
 
 import { Screen, Card, Ring, Chip, Button, SectionTitle, IconBubble } from '@/components/ui/kit';
 import { Colors } from '@/theme/tokens';
@@ -95,13 +95,14 @@ export default function FacultyAssignmentsScreen() {
     <Screen
       title="My classes"
       subtitle="Only the classes assigned to you"
+      onBack={() => router.back()}
       right={
         <Pressable
-          onPress={() => setLoading((l) => !l)}
+          onPress={() => router.push('/(faculty)/reports')}
           hitSlop={10}
-          accessibilityLabel="Refresh assignments"
+          accessibilityLabel="View reports"
         >
-          <IconBubble icon={RefreshCw} tone="soft" size={38} iconSize={18} />
+          <IconBubble icon={BarChart3} tone="forest" size={38} iconSize={18} />
         </Pressable>
       }
     >
