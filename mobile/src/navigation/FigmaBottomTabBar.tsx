@@ -1,8 +1,114 @@
-import React from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, Pressable, StyleSheet, Platform, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors, Radii } from '@/theme/tokens';
+import { Colors } from '@/theme/tokens';
 import type { FigmaBottomTabBarProps } from './types';
+
+interface TabItemButtonProps {
+  route: any;
+  isFocused: boolean;
+  options: any;
+  labelText: string;
+  onPress: () => void;
+  onLongPress: () => void;
+}
+
+function TabItemButton({
+  route,
+  isFocused,
+  options,
+  labelText,
+  onPress,
+  onLongPress,
+}: TabItemButtonProps) {
+  const anim = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.spring(anim, {
+      toValue: isFocused ? 1 : 0,
+      useNativeDriver: true,
+      friction: 8,
+      tension: 60,
+    }).start();
+  }, [isFocused, anim]);
+
+  const Icon = options.tabBarIcon;
+
+  // Scale icon subtly: 1.0 -> 1.06
+  const iconScale = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1.0, 1.06],
+  });
+
+  // Icon opacity: 0.72 -> 1.0
+  const iconOpacity = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.72, 1.0],
+  });
+
+  // Indicator scaleX: 0.2 -> 1.0
+  const indicatorScaleX = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.2, 1.0],
+  });
+
+  return (
+    <Pressable
+      key={route.key}
+      accessibilityRole="button"
+      accessibilityState={isFocused ? { selected: true } : {}}
+      accessibilityLabel={options.tabBarAccessibilityLabel || labelText}
+      testID={options.tabBarButtonTestID}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={({ pressed }) => [
+        styles.tabItem,
+        pressed && styles.tabItemPressed,
+      ]}
+    >
+      <Animated.View
+        style={[
+          styles.iconWrapper,
+          {
+            transform: [{ scale: iconScale }],
+            opacity: iconOpacity,
+          },
+        ]}
+      >
+        {Icon ? (
+          Icon({
+            focused: isFocused,
+            color: isFocused ? Colors.forest : Colors.soft,
+            size: 20,
+          })
+        ) : (
+          <View style={styles.iconPlaceholder} />
+        )}
+      </Animated.View>
+
+      <Text
+        style={[
+          styles.tabLabel,
+          isFocused ? styles.tabLabelActive : styles.tabLabelInactive,
+        ]}
+        numberOfLines={1}
+      >
+        {labelText}
+      </Text>
+
+      {/* Subtle selection capsule indicator beneath tab */}
+      <Animated.View
+        style={[
+          styles.activeIndicator,
+          {
+            opacity: anim,
+            transform: [{ scaleX: indicatorScaleX }],
+          },
+        ]}
+      />
+    </Pressable>
+  );
+}
 
 export function FigmaBottomTabBar({
   state,
@@ -11,7 +117,7 @@ export function FigmaBottomTabBar({
   centerAction,
 }: FigmaBottomTabBarProps) {
   const insets = useSafeAreaInsets();
-  const bottomPadding = Math.max(insets.bottom, 12);
+  const bottomPadding = Math.max(insets.bottom, 10);
 
   const visibleRoutes = state.routes.filter((route) => {
     const { options } = descriptors[route.key];
@@ -51,45 +157,16 @@ export function FigmaBottomTabBar({
       });
     };
 
-    const Icon = options.tabBarIcon;
-
     return (
-      <Pressable
+      <TabItemButton
         key={route.key}
-        accessibilityRole="button"
-        accessibilityState={isFocused ? { selected: true } : {}}
-        accessibilityLabel={options.tabBarAccessibilityLabel || labelText}
-        testID={options.tabBarButtonTestID}
+        route={route}
+        isFocused={isFocused}
+        options={options}
+        labelText={labelText}
         onPress={onPress}
         onLongPress={onLongPress}
-        style={styles.tabItem}
-      >
-        <View
-          style={[
-            styles.iconWrapper,
-            isFocused && styles.iconWrapperActive,
-          ]}
-        >
-          {Icon ? (
-            Icon({
-              focused: isFocused,
-              color: isFocused ? Colors.forest : Colors.soft,
-              size: 20,
-            })
-          ) : (
-            <View style={styles.iconPlaceholder} />
-          )}
-        </View>
-        <Text
-          style={[
-            styles.tabLabel,
-            isFocused ? styles.tabLabelActive : styles.tabLabelInactive,
-          ]}
-          numberOfLines={1}
-        >
-          {labelText}
-        </Text>
-      </Pressable>
+      />
     );
   };
 
@@ -144,13 +221,13 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     ...Platform.select({
       ios: {
-        shadowColor: '#2a2338',
+        shadowColor: '#302630',
         shadowOffset: { width: 0, height: -2 },
         shadowOpacity: 0.05,
         shadowRadius: 8,
       },
       android: {
-        elevation: 8,
+        elevation: 6,
       },
     }),
   },
@@ -164,19 +241,18 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
-    minHeight: 48,
+    paddingTop: 4,
+    paddingBottom: 2,
+    minHeight: 50,
+  },
+  tabItemPressed: {
+    opacity: 0.75,
   },
   iconWrapper: {
-    height: 32,
-    paddingHorizontal: 16,
-    borderRadius: 16,
+    height: 26,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 2,
-  },
-  iconWrapperActive: {
-    backgroundColor: Colors.forest50,
   },
   iconPlaceholder: {
     width: 20,
@@ -185,14 +261,22 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontSize: 11,
     textAlign: 'center',
+    letterSpacing: -0.1,
   },
   tabLabelActive: {
-    color: Colors.ink,
+    color: Colors.forest,
     fontWeight: '600',
   },
   tabLabelInactive: {
     color: Colors.soft,
     fontWeight: '400',
+  },
+  activeIndicator: {
+    width: 14,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: Colors.forest,
+    marginTop: 3,
   },
   centerButtonWrapper: {
     flex: 1,
@@ -201,12 +285,12 @@ const styles = StyleSheet.create({
     marginTop: -22,
   },
   centerButtonPressed: {
-    transform: [{ scale: 0.95 }],
+    transform: [{ scale: 0.94 }],
   },
   centerButtonCircle: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: Colors.forest,
     alignItems: 'center',
     justifyContent: 'center',

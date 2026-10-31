@@ -25,6 +25,7 @@ import {
   SectionTitle,
 } from '@/components/ui/kit';
 import { Colors } from '@/theme/tokens';
+import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import {
   StudentRepository,
   StudentPersonalAttendanceResponse,
@@ -110,6 +111,7 @@ export default function StudentHomeScreen() {
 
   return (
     <Screen
+      left={<KlasioLogo variant="lockup" size={24} />}
       subtitle="Hi there 👋"
       title="Aarav Sharma"
       right={
@@ -179,13 +181,16 @@ export default function StudentHomeScreen() {
 
       <SectionTitle
         action={
-          <Pressable onPress={() => router.push('/(student)/attendance')}>
+          <Pressable onPress={() => router.push('/(student)/attendance' as any)}>
             <Text style={styles.seeAllText}>See all</Text>
           </Pressable>
         }
       >
-        Your subjects
+        Your attendance, at a glance
       </SectionTitle>
+      <Text style={styles.sectionSubtitle}>
+        See where you stand in every class.
+      </Text>
 
       <View style={styles.subjectsList}>
         {data.subjects.slice(0, 3).map((s) => (
@@ -333,6 +338,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: Colors.forest,
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    color: Colors.soft,
+    marginTop: -8,
+    marginBottom: 12,
   },
   subjectsList: {
     gap: 10,

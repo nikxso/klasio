@@ -58,6 +58,7 @@ import type {
   ScannerStabilityState,
 } from '@/perception/contracts';
 import { DetailedPerceptionTimings } from '@/perception/perceptionClient';
+import { Brand } from '@/constants/brand';
 import {
   YuNetDetector,
   SCRFDDetector,
@@ -1085,7 +1086,7 @@ export default function FacultyScanningScreen() {
                 <ShieldAlert size={44} color="#d65f57" style={{ marginBottom: 12 }} />
                 <Text style={styles.fallbackTitle}>Camera Permission Required</Text>
                 <Text style={styles.fallbackDescription}>
-                  Attendly needs camera access to perform on-device face perception during class attendance.
+                  {Brand.name} needs camera access to perform on-device face perception during class attendance.
                 </Text>
                 <TouchableOpacity
                   style={styles.actionButton}
@@ -1216,8 +1217,8 @@ export default function FacultyScanningScreen() {
             : scannerMotionState === 'PANNING'
             ? '⚠️ Camera moving too fast — slow down to capture faces'
             : detectedFaces.length > 0
-            ? `${detectedFaces.length} student face${detectedFaces.length > 1 ? 's' : ''} tracked in viewfinder`
-            : 'Slowly pan across the room to spot students…'}
+            ? 'Suggested matches are ready for your review.'
+            : 'Move across the room to find students.'}
         </Text>
 
         {/* Finish Scanning Button */}

@@ -24,6 +24,8 @@ import {
 import { Screen, Card, Chip, IconBubble, Avatar } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { AttendanceSyncWorker } from '@/storage/syncWorker';
+import { KlasioLogo } from '@/components/ui/KlasioLogo';
+import { Brand } from '@/constants/brand';
 
 export default function FacultyProfileScreen() {
   const router = useRouter();
@@ -100,8 +102,10 @@ export default function FacultyProfileScreen() {
           <View style={styles.infoCol}>
             <Text style={styles.infoTitle}>Offline Queue</Text>
             <Text style={styles.infoSubtitle}>
-              {pendingQueueCount === 0
-                ? 'All finalized attendance synced'
+              {syncing
+                ? 'Syncing your changes…'
+                : pendingQueueCount === 0
+                ? 'Everything is up to date.'
                 : `${pendingQueueCount} records waiting to sync`}
             </Text>
           </View>
@@ -131,7 +135,7 @@ export default function FacultyProfileScreen() {
         <View style={styles.divider} />
 
         <Pressable
-          onPress={() => router.push('/(faculty)/delegations')}
+          onPress={() => router.push('/(faculty)/delegations' as any)}
           style={({ pressed }) => [
             styles.actionRow,
             pressed && { opacity: 0.7 },
@@ -140,6 +144,22 @@ export default function FacultyProfileScreen() {
           <Text style={styles.actionRowText}>Manage Substitute Delegations</Text>
           <ChevronRight size={18} color={Colors.soft} />
         </Pressable>
+      </Card>
+
+      <Text style={styles.sectionHeader}>About {Brand.name}</Text>
+      <Card style={styles.cardGroup}>
+        <View style={{ marginBottom: 8 }}>
+          <KlasioLogo variant="lockup" size={20} />
+        </View>
+        <Text style={{ fontSize: 13, color: Colors.ink, fontWeight: '600', marginBottom: 2 }}>
+          {Brand.descriptor}
+        </Text>
+        <Text style={{ fontSize: 12, color: Colors.soft, lineHeight: 17, marginBottom: 8 }}>
+          {Brand.description}
+        </Text>
+        <Text style={{ fontSize: 11, color: Colors.soft }}>
+          {Brand.academicTitle}
+        </Text>
       </Card>
 
       <Pressable

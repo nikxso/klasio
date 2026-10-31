@@ -21,6 +21,7 @@ import {
 import { Screen, Card, Chip, IconBubble, SectionTitle, Avatar } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
+import { KlasioLogo } from '@/components/ui/KlasioLogo';
 
 interface AdminMetric {
   label: string;
@@ -97,8 +98,9 @@ export default function AdminHomeScreen() {
 
   return (
     <Screen
-      subtitle="Admin"
-      title="Good morning, Meera"
+      left={<KlasioLogo variant="lockup" size={24} />}
+      subtitle="Keep track of academic activity and attendance across your institution."
+      title="Your institution, at a glance"
       scrollable
     >
       {/* 2x2 Metric Grid */}

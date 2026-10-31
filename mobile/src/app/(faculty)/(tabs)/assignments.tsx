@@ -98,7 +98,7 @@ export default function FacultyAssignmentsScreen() {
       onBack={() => router.back()}
       right={
         <Pressable
-          onPress={() => router.push('/(faculty)/reports')}
+          onPress={() => router.push('/(faculty)/reports' as any)}
           hitSlop={10}
           accessibilityLabel="View reports"
         >
@@ -107,7 +107,12 @@ export default function FacultyAssignmentsScreen() {
       }
     >
       <View style={styles.listContainer}>
-        {assignments.map((item) => {
+        {assignments.length === 0 ? (
+          <Card style={styles.emptyCard}>
+            <Text style={styles.emptyText}>No classes to show yet.</Text>
+          </Card>
+        ) : (
+          assignments.map((item) => {
           const hasWarning = item.studentsBelowThresholdCount > 0;
           return (
             <Card
@@ -144,7 +149,7 @@ export default function FacultyAssignmentsScreen() {
               </View>
             </Card>
           );
-        })}
+        }))}
       </View>
     </Screen>
   );
@@ -181,5 +186,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
+  },
+  emptyCard: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: Colors.soft,
   },
 });

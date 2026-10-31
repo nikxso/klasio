@@ -165,7 +165,7 @@ export default function StudentAttendanceScreen() {
         <View style={styles.offlineBanner}>
           <WifiOff size={16} color={Colors.amber} />
           <Text style={styles.offlineBannerText}>
-            Showing locally cached attendance records
+            You're viewing saved data
           </Text>
         </View>
       )}

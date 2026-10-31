@@ -9,6 +9,13 @@ export default function AdminTabsLayout() {
       tabBar={(props) => <FigmaBottomTabBar {...props} />}
       screenOptions={{
         headerShown: false,
+        animation: 'fade',
+        transitionSpec: {
+          animation: 'timing',
+          config: {
+            duration: 200,
+          },
+        },
       }}
     >
       <Tabs.Screen

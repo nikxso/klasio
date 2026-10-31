@@ -18,6 +18,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as Device from 'expo-device';
+import { Brand } from '@/constants/brand';
 import {
   Camera as SwitchCamera,
   ArrowLeft,
@@ -183,7 +184,7 @@ export default function PerceptionLabScreen() {
                 <ShieldAlert size={48} color="#d65f57" />
                 <Text style={styles.fallbackTitle}>Camera Permission Required</Text>
                 <Text style={styles.fallbackText}>
-                  Attendly ML Lab requires camera access to validate the on-device perception pipeline.
+                  {Brand.name} ML Lab requires camera access to validate the on-device perception pipeline.
                 </Text>
                 <TouchableOpacity style={styles.primaryButton} onPress={handleRequestPermission}>
                   <Text style={styles.primaryButtonText}>Grant Permission</Text>

@@ -284,7 +284,7 @@ export default function FacultyReportsScreen() {
   return (
     <Screen
       title="Reports"
-      subtitle="How your classes are doing"
+      subtitle="A clearer view of every class"
       onBack={() => router.back()}
       right={
         <Pressable

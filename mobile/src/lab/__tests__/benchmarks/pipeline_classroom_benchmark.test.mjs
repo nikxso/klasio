@@ -1,5 +1,5 @@
 /**
- * Attendly Perception Benchmark Suite — Layer A
+ * Klasio Perception Benchmark Suite — Layer A
  * Micro-Harness: End-to-End Classroom Perception Pipeline Simulation
  *
  * Feature: Phase 10: Edge Perception Benchmarking (Level 3 Research & Evaluation)

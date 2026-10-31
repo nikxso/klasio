@@ -23,6 +23,8 @@ import {
 
 import { Colors, Radii } from '@/theme/tokens';
 import { Button } from '@/components/ui/kit';
+import { KlasioLogo } from '@/components/ui/KlasioLogo';
+import { Brand } from '@/constants/brand';
 
 export type RoleKey = 'student' | 'faculty' | 'admin';
 
@@ -83,7 +85,7 @@ export default function LoginScreen() {
       } else if (selectedRole === 'admin') {
         router.replace('/(admin)' as any);
       } else {
-        router.replace('/(faculty)');
+        router.replace('/(faculty)' as any);
       }
     }, 600);
   };
@@ -112,20 +114,22 @@ export default function LoginScreen() {
             <View style={styles.heroFloatWhite} />
 
             <View style={styles.heroSafeArea}>
-              {/* App Mark Box */}
-              <View style={styles.logoBox}>
-                <Text style={styles.logoText}>a</Text>
-              </View>
+              {/* Klasio Brand Mark */}
+              <KlasioLogo
+                variant="white-mark"
+                size={54}
+                containerStyle={styles.logoContainer}
+              />
 
               {/* Title Header */}
               <Text style={styles.heroTitle}>
                 Welcome to{'\n'}
-                <Text style={styles.heroTitleBrand}>Attendly</Text>
+                <Text style={styles.heroTitleBrand}>{Brand.name}</Text>
               </Text>
 
               {/* Subtitle */}
               <Text style={styles.heroSubtitle}>
-                Attendance, without the roll call.
+                {Brand.descriptor}
               </Text>
             </View>
           </View>
@@ -281,20 +285,8 @@ const styles = StyleSheet.create({
   heroSafeArea: {
     zIndex: 1,
   },
-  logoBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  logoText: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#ffffff',
-    marginTop: -2,
+  logoContainer: {
+    marginBottom: 16,
   },
   heroTitle: {
     fontSize: 38,

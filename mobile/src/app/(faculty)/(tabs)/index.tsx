@@ -21,6 +21,7 @@ import {
 
 import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
+import { KlasioLogo } from '@/components/ui/KlasioLogo';
 
 const TODAY_CLASSES = [
   {
@@ -82,26 +83,27 @@ export default function FacultyHomeScreen() {
 
   return (
     <Screen
+      left={<KlasioLogo variant="lockup" size={24} />}
       subtitle="Good morning"
       title="Dr. Lakshmi Iyer"
       right={
         <View style={styles.headerRightActions}>
           <Pressable
-            onPress={() => router.push('/(faculty)/reports')}
+            onPress={() => router.push('/(faculty)/reports' as any)}
             style={styles.iconButton}
             accessibilityLabel="Attendance Reports"
           >
             <BarChart3 size={19} color={Colors.ink} />
           </Pressable>
           <Pressable
-            onPress={() => router.push('/(faculty)/delegations')}
+            onPress={() => router.push('/(faculty)/delegations' as any)}
             style={styles.iconButton}
             accessibilityLabel="Substitute Delegations"
           >
             <UserCheck size={19} color={Colors.ink} />
           </Pressable>
           <Pressable
-            onPress={() => router.push('/(faculty)/assignments')}
+            onPress={() => router.push('/(faculty)/assignments' as any)}
             style={styles.iconButton}
             accessibilityLabel="All Classes"
           >
@@ -146,7 +148,7 @@ export default function FacultyHomeScreen() {
           onPress={() => handleOpenClass(nextClass)}
         >
           <ScanFace size={19} color={Colors.forest} />
-          <Text style={styles.takeAttendanceText}>Take attendance</Text>
+          <Text style={styles.takeAttendanceText}>Start attendance</Text>
         </Pressable>
       </View>
 
@@ -161,7 +163,7 @@ export default function FacultyHomeScreen() {
           <Text style={styles.syncBannerText}>
             {online
               ? `${waitingRecords} attendance ${waitingRecords > 1 ? 'records' : 'record'} waiting to upload`
-              : "You're offline — attendance is saved on your phone"}
+              : "You're viewing saved data"}
           </Text>
           <ChevronRight size={18} color={Colors.soft} />
         </View>
@@ -170,13 +172,16 @@ export default function FacultyHomeScreen() {
       {/* Today's Classes List */}
       <SectionTitle
         action={
-          <Pressable onPress={() => router.push('/(faculty)/assignments')}>
+          <Pressable onPress={() => router.push('/(faculty)/assignments' as any)}>
             <Text style={styles.seeAllText}>All classes</Text>
           </Pressable>
         }
       >
-        Today's classes
+        Your classes, at a glance
       </SectionTitle>
+      <Text style={styles.sectionSubtitle}>
+        Keep up with your classes and today's attendance.
+      </Text>
 
       <View style={styles.classesList}>
         {TODAY_CLASSES.map((item) => (
@@ -356,5 +361,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: Colors.forest,
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    color: Colors.soft,
+    marginTop: -8,
+    marginBottom: 12,
   },
 });

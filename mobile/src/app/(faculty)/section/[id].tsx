@@ -268,7 +268,7 @@ export default function ClassDetailScreen() {
       <Screen
         onBack={() => setMarkingMode(false)}
         subtitle={params.subject || 'Data Structures'}
-        title="Check attendance"
+        title="Review attendance"
       >
         {/* Figma Segmented Tab: Please check vs Recognised */}
         <View style={styles.segmentContainer}>
@@ -363,10 +363,10 @@ export default function ClassDetailScreen() {
           {applicabilityStatus === 'COUNTED'
             ? undecidedCount > 0
               ? `${undecidedCount} left to mark`
-              : 'Save attendance'
+              : 'Finalize attendance'
             : statusReason.trim().length === 0
             ? 'Reason required to save'
-            : `Save ${applicabilityStatus.toLowerCase()} session`}
+            : `Finalize ${applicabilityStatus.toLowerCase()} session`}
         </Button>
 
         <Sheet
@@ -454,7 +454,7 @@ export default function ClassDetailScreen() {
               setSavedSuccess(true);
             }}
           >
-            Yes, save it
+            Finalize attendance
           </Button>
         </Sheet>
       </Screen>

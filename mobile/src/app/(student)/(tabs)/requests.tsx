@@ -181,7 +181,12 @@ export default function StudentRequestsScreen() {
       <SectionTitle>Your requests</SectionTitle>
 
       <View style={styles.requestsList}>
-        {requests.map((r) => {
+        {requests.length === 0 ? (
+          <Card style={styles.emptyCard}>
+            <Text style={styles.emptyText}>You're all caught up.</Text>
+          </Card>
+        ) : (
+          requests.map((r) => {
           const stepIndex = getTimelineStepIndex(r.status);
           const tone = getStatusTone(r.status);
 
@@ -230,7 +235,7 @@ export default function StudentRequestsScreen() {
               </View>
             </Card>
           );
-        })}
+        }))}
       </View>
 
       <View style={styles.footerNote}>
@@ -463,5 +468,14 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: 20,
+  },
+  emptyCard: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: Colors.soft,
   },
 });

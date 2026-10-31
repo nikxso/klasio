@@ -1,18 +1,22 @@
 /**
- * Attendly Design Tokens
- * Source of truth: designs/guidelines/Guidelines.md & designs/src/index.css
+ * Klasio Design Tokens
+ * Source of truth: Klasio Brand Identity Showcase & guidelines
  */
 
 export const Colors = {
-  cream: '#fbf6ee', // background ground
+  cream: '#F8F2E7', // Klasio App Background
   card: '#ffffff',  // card surfaces
-  ink: '#2a2338',   // primary text & plum ink
-  soft: '#756d82',  // secondary text
-  line: '#efe7da',  // subtle borders & dividers
+  ink: '#302630',   // Klasio Primary Text
+  soft: '#706677',  // secondary text
+  line: '#EBE4D8',  // subtle borders & dividers
 
-  // Primary
-  forest: '#2e6b57',
-  forest50: '#e4f1ea',
+  // Primary Brand
+  forest: '#205442',   // Klasio Primary Brand / Buttons
+  forest50: '#E7EFEA', // Klasio soft mint surface
+
+  // Secondary Brand
+  secondary: '#7F8D64',   // Klasio Secondary Accents / Highlights
+  secondary50: '#F0F3EC', // Klasio secondary tint
 
   // Highlight
   apricot: '#f0a868',
@@ -40,14 +44,14 @@ export const Radii = {
 
 export const Shadows = {
   card: {
-    shadowColor: '#2a2338',
+    shadowColor: '#302630',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
     shadowRadius: 16,
     elevation: 3,
   },
   soft: {
-    shadowColor: '#2a2338',
+    shadowColor: '#302630',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
     shadowRadius: 8,
@@ -55,10 +59,11 @@ export const Shadows = {
   },
 } as const;
 
-export type Tone = 'forest' | 'rose' | 'amber' | 'lilac' | 'apricot' | 'soft';
+export type Tone = 'forest' | 'secondary' | 'rose' | 'amber' | 'lilac' | 'apricot' | 'soft';
 
 export const ToneColors: Record<Tone, { bg: string; text: string }> = {
   forest: { bg: Colors.forest50, text: Colors.forest },
+  secondary: { bg: Colors.secondary50, text: Colors.secondary },
   rose: { bg: Colors.rose50, text: Colors.rose },
   amber: { bg: Colors.amber50, text: Colors.amber },
   lilac: { bg: Colors.lilac50, text: Colors.lilac },

@@ -1,10 +1,10 @@
 /**
- * Centralized API & Networking Configuration for Attendly Mobile.
+ * Centralized API & Networking Configuration for Klasio Mobile.
  *
  * In staging/production on physical devices (e.g. Motorola Moto G54),
  * 127.0.0.1 refers to localhost on the phone itself.
  * Set EXPO_PUBLIC_API_URL in your environment or .env to point to the staging server
- * (e.g., http://192.168.1.100:8080 or https://attendly.staging.institution.edu).
+ * (e.g., http://192.168.1.100:8080 or https://klasio.staging.institution.edu).
  */
 
 const getApiBaseUrl = (): string => {

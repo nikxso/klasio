@@ -22,6 +22,8 @@ import {
 
 import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
+import { KlasioLogo } from '@/components/ui/KlasioLogo';
+import { Brand } from '@/constants/brand';
 
 const DEVICES = [
   { name: 'Dr. Lakshmi’s phone', ok: true, seen: '2 min ago' },
@@ -111,6 +113,22 @@ export default function AdminSettingsScreen() {
           </View>
           <Chip tone="forest">Active</Chip>
         </View>
+      </Card>
+
+      <Text style={styles.sectionHeader}>About {Brand.name}</Text>
+      <Card style={styles.cardGroup}>
+        <View style={{ marginBottom: 8 }}>
+          <KlasioLogo variant="lockup" size={20} />
+        </View>
+        <Text style={{ fontSize: 13, color: Colors.ink, fontWeight: '600', marginBottom: 2 }}>
+          {Brand.descriptor}
+        </Text>
+        <Text style={{ fontSize: 12, color: Colors.soft, lineHeight: 17, marginBottom: 8 }}>
+          {Brand.description}
+        </Text>
+        <Text style={{ fontSize: 11, color: Colors.soft }}>
+          {Brand.academicTitle}
+        </Text>
       </Card>
 
       <Pressable

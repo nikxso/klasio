@@ -21,6 +21,7 @@ interface ScreenProps {
   title?: ReactNode;
   subtitle?: ReactNode;
   onBack?: () => void;
+  left?: ReactNode;
   right?: ReactNode;
   hero?: ReactNode;
   scrollable?: boolean;
@@ -31,13 +32,14 @@ export function Screen({
   title,
   subtitle,
   onBack,
+  left,
   right,
   hero,
   scrollable = true,
 }: ScreenProps) {
   const content = (
     <View style={styles.screenInner}>
-      {(onBack || right) && (
+      {(onBack || right || left) && (
         <View style={styles.navRow}>
           {onBack ? (
             <Pressable
@@ -48,6 +50,8 @@ export function Screen({
             >
               <ChevronLeft size={24} color={Colors.ink} />
             </Pressable>
+          ) : left ? (
+            <View style={{ justifyContent: 'center' }}>{left}</View>
           ) : (
             <View style={{ width: 40 }} />
           )}
