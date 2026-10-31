@@ -340,15 +340,15 @@ test('Step H: Guided Face Enrollment & Biometric Validation Test Suite', async (
     await controller.processFrame(frame, [detection], 1000);
     let g = await controller.processFrame(frame, [detection], 1200);
     assert.equal(g, 'SAMPLE_ACCEPTED');
-    assert.equal(controller.state.currentStep, 'SMILE_OR_EXPRESSION');
+    assert.equal(controller.state.currentStep, 'SLIGHT_LEFT');
 
-    // Step 2: Smile / Expression
+    // Step 2: Slight Left
     await controller.processFrame(frame, [detection], 1500);
     g = await controller.processFrame(frame, [detection], 1700);
     assert.equal(g, 'SAMPLE_ACCEPTED');
-    assert.equal(controller.state.currentStep, 'SLIGHT_ANGLE');
+    assert.equal(controller.state.currentStep, 'SLIGHT_RIGHT');
 
-    // Step 3: Slight Angle
+    // Step 3: Slight Right
     await controller.processFrame(frame, [detection], 2000);
     g = await controller.processFrame(frame, [detection], 2200);
     assert.equal(g, 'COMPLETED');

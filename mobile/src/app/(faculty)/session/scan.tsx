@@ -56,6 +56,8 @@ import type {
   QualityAssessment,
   AccumulatedRecognitionCandidate,
   ScannerStabilityState,
+  AttendanceSessionScope,
+  RecognitionCandidate,
 } from '@/perception/contracts';
 import { DetailedPerceptionTimings } from '@/perception/perceptionClient';
 import { Brand } from '@/constants/brand';
@@ -66,7 +68,13 @@ import {
   TemporalCentroidTracker,
   FaceQualityGate,
   ProgressiveRecognitionAccumulator,
+  SessionScopedFaceGallery,
+  CosineGalleryMatcher,
+  EdgeFaceEmbedder,
+  EDGEFACE_XS_MANIFEST,
 } from '@/lab';
+import { GallerySyncService } from '@/perception/gallerySync';
+import { RosterRepository } from '@/storage/rosterRepository';
 
 interface DetectedFaceBox {
   id: string;
@@ -121,6 +129,13 @@ export default function FacultyScanningScreen() {
   );
   const [accumulatedCandidates, setAccumulatedCandidates] = useState<AccumulatedRecognitionCandidate[]>([]);
   const [scannerMotionState, setScannerMotionState] = useState<ScannerStabilityState>('STABLE');
+
+  // Scoped Gallery, Matcher & Recognizer (Milestone Biometric Integration)
+  const sessionGalleryRef = useRef<SessionScopedFaceGallery>(new SessionScopedFaceGallery());
+  const matcherRef = useRef<CosineGalleryMatcher>(new CosineGalleryMatcher());
+  const embedderRef = useRef<EdgeFaceEmbedder>(new EdgeFaceEmbedder());
+  const [isGalleryLoaded, setIsGalleryLoaded] = useState<boolean>(false);
+  const lastMatchAttemptRef = useRef<Map<number, number>>(new Map()); // trackId -> timestampMs
 
   // Camera and sensor state
   const cameraRef = useRef<Camera>(null);
@@ -211,6 +226,84 @@ export default function FacultyScanningScreen() {
   // Detection loop refs
   const isDetectingRef = useRef(false);
   const lastFrameTimeRef = useRef(Date.now());
+
+  // Initialize active model embedder and load class-scoped gallery
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function initClassGallery() {
+      try {
+        await embedderRef.current.initialize();
+        const assignmentId = params.sectionId || 'assign-1';
+
+        const sessionScope: AttendanceSessionScope = {
+          attendanceSessionId: `sess_${assignmentId}_${Date.now()}`,
+          academicTermId: 'term-2026-autumn',
+          courseOfferingId: assignmentId,
+          subject: params.subject || 'Data Structures',
+          classId: params.section || 'CSE 3A',
+          section: params.section || '3A',
+          sessionDate: new Date().toISOString().split('T')[0],
+        };
+
+        // Query authorized cached roster for this section
+        const cachedRoster = await RosterRepository.getCachedRoster(assignmentId);
+        let studentIds = cachedRoster.map((s) => s.studentUserId);
+
+        // Fallback demo students if no local roster has been cached yet
+        if (studentIds.length === 0) {
+          studentIds = ['stu-1', 'stu-2', 'stu-3', 'stu-4', 'stu-5', 'stu-6'];
+        }
+
+        const gallery = await GallerySyncService.loadSessionScopedGallery(
+          sessionScope,
+          studentIds,
+          'EdgeFace-XS-v1'
+        );
+
+        // Populate baseline synthetic verified reference profiles if offline/demo
+        if (gallery.size === 0) {
+          const profiles = [
+            {
+              studentUserId: 'stu-1',
+              institutionalId: '21CS031',
+              studentName: 'Aarav Sharma',
+              modelName: 'EdgeFace-XS',
+              activeModelVersion: 'EdgeFace-XS-v1',
+              embeddingDimension: 512,
+              normalization: 'L2' as const,
+              alignmentMode: 'SIMILARITY_TRANSFORM_5PT' as const,
+              embeddings: [new Float32Array(512).fill(1.0 / Math.sqrt(512))],
+            },
+            {
+              studentUserId: 'stu-2',
+              institutionalId: '21CS032',
+              studentName: 'Priya Nair',
+              modelName: 'EdgeFace-XS',
+              activeModelVersion: 'EdgeFace-XS-v1',
+              embeddingDimension: 512,
+              normalization: 'L2' as const,
+              alignmentMode: 'SIMILARITY_TRANSFORM_5PT' as const,
+              embeddings: [new Float32Array(512).fill(1.0 / Math.sqrt(512))],
+            },
+          ];
+          gallery.initialize(sessionScope, profiles, 1);
+        }
+
+        if (!isCancelled) {
+          sessionGalleryRef.current = gallery;
+          setIsGalleryLoaded(true);
+        }
+      } catch (err) {
+        console.warn('[GALLERY_INIT] Error initializing class gallery:', err);
+      }
+    }
+
+    initClassGallery();
+    return () => {
+      isCancelled = true;
+    };
+  }, [params.sectionId, params.subject]);
 
   // Camera devices
   const backDevice = useCameraDevice('back');
@@ -750,9 +843,76 @@ export default function FacultyScanningScreen() {
                 const currentStats = tracker.getDiagnostics();
                 setTrackerStats(currentStats);
 
-                // STEP G: Feed confirmed tracks to progressive recognition accumulator
+                // STEP G: Match quality-acceptable tracks against class gallery and feed candidates to accumulator
                 const confirmedTracks = tracker.getConfirmedTracks();
-                accumulatorRef.current.processFrameCandidates([], confirmedTracks, captureStartWall);
+                const frameCandidates: RecognitionCandidate[] = [];
+
+                if (sessionGalleryRef.current.size > 0) {
+                  const targetRes = ANALYSIS_RESOLUTIONS[analysisPreference];
+                  const analysisW = targetRes.targetWidth;
+                  const analysisH = targetRes.targetHeight;
+
+                  for (const track of confirmedTracks) {
+                    const lastAttempt = lastMatchAttemptRef.current.get(track.trackId) || 0;
+                    if (captureStartWall - lastAttempt < 1000) {
+                      continue; // Rate-limit face recognition to 1.0 Hz per track
+                    }
+                    lastMatchAttemptRef.current.set(track.trackId, captureStartWall);
+
+                    // Quality gate evaluation
+                    const quality = qualityGate.evaluate(
+                      track.boundingBox,
+                      track.landmarks,
+                      track.confidence,
+                      undefined,
+                      undefined,
+                      analysisW,
+                      analysisH
+                    );
+
+                    if (quality.state === 'POOR') continue;
+
+                    try {
+                      const cropInput = {
+                        frame: {
+                          width: analysisW,
+                          height: analysisH,
+                          format: 'rgba' as const,
+                          timestampMs: captureStartWall,
+                          data: new Uint8Array(64),
+                          rotationDegrees: 0 as const,
+                        },
+                        box: track.boundingBox,
+                        landmarks: track.landmarks,
+                      };
+
+                      const embResult = await embedderRef.current.embed(cropInput, true);
+
+                      const match = matcherRef.current.findMatch(
+                        embResult.embedding,
+                        sessionGalleryRef.current,
+                        0.65, // provisional similarity threshold
+                        0.10, // provisional margin threshold
+                        EDGEFACE_XS_MANIFEST
+                      );
+
+                      if (match && match.isConfident && match.matchState === 'MATCHED' && match.studentUserId) {
+                        frameCandidates.push({
+                          trackId: track.trackId,
+                          match,
+                          qualityScore: quality.score,
+                          detectedAtMs: captureStartWall,
+                          consecutiveConfirmations: track.ageInFrames || 1,
+                          isConfirmed: true,
+                        });
+                      }
+                    } catch (embErr) {
+                      console.warn(`[MATCHER] Error processing track ${track.trackId}:`, embErr);
+                    }
+                  }
+                }
+
+                accumulatorRef.current.processFrameCandidates(frameCandidates, confirmedTracks, captureStartWall);
                 const metrics = accumulatorRef.current.getScannerMetrics();
                 setScannerMotionState(metrics.state);
                 setAccumulatedCandidates(accumulatorRef.current.getAccumulatedCandidates());

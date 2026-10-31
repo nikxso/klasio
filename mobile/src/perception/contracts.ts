@@ -340,7 +340,12 @@ export type EnrollmentGuidanceState =
   | 'COMPLETED'
   | 'VALIDATION_FAILED';
 
-export type EnrollmentSampleStep = 'FRONTAL' | 'SMILE_OR_EXPRESSION' | 'SLIGHT_ANGLE';
+export type EnrollmentSampleStep =
+  | 'FRONTAL'
+  | 'SLIGHT_LEFT'
+  | 'SLIGHT_RIGHT'
+  | 'SMILE_OR_EXPRESSION'
+  | 'SLIGHT_ANGLE';
 
 export interface EnrollmentSampleResult {
   step: EnrollmentSampleStep;

@@ -63,7 +63,7 @@ export default function StudentProfileScreen() {
           <View style={styles.infoCol}>
             <Text style={styles.infoTitle}>Biometric Privacy Boundary</Text>
             <Text style={styles.infoSubtitle}>
-              No video ever leaves the classroom. Only encrypted 128D mathematical patterns are retained.
+              No video or raw photographs ever leave the device. Only mathematically verified feature embeddings (EdgeFace-XS 512D) are retained.
             </Text>
           </View>
         </View>

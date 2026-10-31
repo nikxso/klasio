@@ -36,9 +36,12 @@ import { EDGEFACE_XS_MANIFEST } from '../recognizers/EdgeFaceEmbedder.ts';
 export interface EnrollmentControllerConfig {
   targetSamples?: number;
   stabilizationRequiredMs?: number;
+  // Provisional threshold; calibrated during post-evaluation
   minPairwiseConsistency?: number;
   expectedManifest?: ModelManifest;
   maxCentroidJitter?: number;
+  steps?: EnrollmentSampleStep[];
+  enforcePoseAngles?: boolean;
 }
 
 interface Centroid {
@@ -52,13 +55,9 @@ export class GuidedFaceEnrollmentController implements IGuidedFaceEnrollmentCont
 
   private qualityGate: FaceQualityGate;
   private embedder: any;
-  private config: Required<EnrollmentControllerConfig>;
+  private config: Required<Omit<EnrollmentControllerConfig, 'steps'>> & { steps: EnrollmentSampleStep[] };
 
-  private readonly steps: EnrollmentSampleStep[] = [
-    'FRONTAL',
-    'SMILE_OR_EXPRESSION',
-    'SLIGHT_ANGLE',
-  ];
+  private readonly steps: EnrollmentSampleStep[];
   private stepIndex: number = 0;
 
   private lastCentroid: Centroid | null = null;
@@ -70,12 +69,19 @@ export class GuidedFaceEnrollmentController implements IGuidedFaceEnrollmentCont
   ) {
     this.embedder = embedder;
     this.qualityGate = new FaceQualityGate();
+    this.steps = config.steps ?? [
+      'FRONTAL',
+      'SLIGHT_LEFT',
+      'SLIGHT_RIGHT',
+    ];
     this.config = {
-      targetSamples: config.targetSamples ?? 3,
+      targetSamples: config.targetSamples ?? this.steps.length,
       stabilizationRequiredMs: config.stabilizationRequiredMs ?? 400,
       minPairwiseConsistency: config.minPairwiseConsistency ?? 0.60,
       expectedManifest: config.expectedManifest ?? EDGEFACE_XS_MANIFEST,
       maxCentroidJitter: config.maxCentroidJitter ?? 0.05,
+      steps: this.steps,
+      enforcePoseAngles: config.enforcePoseAngles ?? false,
     };
   }
 
@@ -194,8 +200,34 @@ export class GuidedFaceEnrollmentController implements IGuidedFaceEnrollmentCont
       if (Math.abs(quality.metrics.yawDegrees) > 15 || Math.abs(quality.metrics.pitchDegrees) > 12) {
         this.resetStabilization();
         this._state.guidance = 'LOOK_AT_CAMERA';
-        this._state.guidanceMessage = 'Look straight at the camera';
+        this._state.guidanceMessage = 'Look straight at the camera with a neutral expression';
         return 'LOOK_AT_CAMERA';
+      }
+    } else if (this.config.enforcePoseAngles && this._state.currentStep === 'SLIGHT_LEFT') {
+      if (quality.metrics.yawDegrees > -4) {
+        this.resetStabilization();
+        this._state.guidance = 'TURN_SLIGHTLY';
+        this._state.guidanceMessage = 'Turn your head slightly to your left';
+        return 'TURN_SLIGHTLY';
+      }
+      if (quality.metrics.yawDegrees < -35 || Math.abs(quality.metrics.pitchDegrees) > 15) {
+        this.resetStabilization();
+        this._state.guidance = 'TURN_SLIGHTLY';
+        this._state.guidanceMessage = 'Turn back slightly towards center';
+        return 'TURN_SLIGHTLY';
+      }
+    } else if (this.config.enforcePoseAngles && this._state.currentStep === 'SLIGHT_RIGHT') {
+      if (quality.metrics.yawDegrees < 4) {
+        this.resetStabilization();
+        this._state.guidance = 'TURN_SLIGHTLY';
+        this._state.guidanceMessage = 'Turn your head slightly to your right';
+        return 'TURN_SLIGHTLY';
+      }
+      if (quality.metrics.yawDegrees > 35 || Math.abs(quality.metrics.pitchDegrees) > 15) {
+        this.resetStabilization();
+        this._state.guidance = 'TURN_SLIGHTLY';
+        this._state.guidanceMessage = 'Turn back slightly towards center';
+        return 'TURN_SLIGHTLY';
       }
     }
 
@@ -343,7 +375,11 @@ export class GuidedFaceEnrollmentController implements IGuidedFaceEnrollmentCont
   private getStepInstruction(step: EnrollmentSampleStep): string {
     switch (step) {
       case 'FRONTAL':
-        return 'look straight at the camera';
+        return 'look straight at the camera with a neutral expression';
+      case 'SLIGHT_LEFT':
+        return 'turn your head slightly to your left';
+      case 'SLIGHT_RIGHT':
+        return 'turn your head slightly to your right';
       case 'SMILE_OR_EXPRESSION':
         return 'smile naturally';
       case 'SLIGHT_ANGLE':

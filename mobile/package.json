@@ -43,7 +43,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "npm run test:storage && npm run test:perception && npm run test:tracker && npm run test:quality && npm run test:embedder && npm run test:matcher && npm run test:accumulator && npm run test:enrollment && npm run test:review && npm run test:sync && npm run test:session && npm run test:gallery && npm run test:student && npm run test:requests && npm run test:nav",
+    "test": "npm run test:storage && npm run test:perception && npm run test:tracker && npm run test:quality && npm run test:embedder && npm run test:matcher && npm run test:accumulator && npm run test:enrollment && npm run test:review && npm run test:sync && npm run test:session && npm run test:gallery && npm run test:student && npm run test:requests && npm run test:nav && npm run test:workflow",
     "test:storage": "node src/storage/__tests__/database.test.mjs",
     "test:perception": "node --test src/perception/__tests__/cameraFormatPolicy.test.mjs",
     "test:tracker": "node --test src/lab/__tests__/temporalTracker.test.mjs",
@@ -58,7 +58,8 @@
     "test:gallery": "node --test src/storage/__tests__/gallerySync.test.mjs",
     "test:student": "node --test src/storage/__tests__/studentRepository.test.mjs",
     "test:requests": "node --test src/storage/__tests__/requestRepository.test.mjs",
-    "test:nav": "node --test src/navigation/__tests__/*.test.mjs"
+    "test:nav": "node --test src/navigation/__tests__/*.test.mjs",
+    "test:workflow": "node --test src/lab/__tests__/endToEndWorkflow.test.mjs"
   },
   "private": true
 }
