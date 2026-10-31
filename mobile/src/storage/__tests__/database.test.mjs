@@ -37,6 +37,7 @@ const expectedTables = [
   'local_amendment_audits',
   'cached_student_attendance',
   'cached_student_subject_history',
+  'cached_student_requests',
 ];
 
 for (const expected of expectedTables) {
