@@ -31,6 +31,7 @@ import { Screen, Button, IconBubble, Card } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { Brand } from '@/constants/brand';
 import { API_BASE_URL } from '@/config/api';
+import { SessionStore } from '@/storage/sessionStore';
 import {
   GuidedFaceEnrollmentController,
   EdgeFaceEmbedder,
@@ -66,11 +67,12 @@ export default function StudentEnrollmentScreen() {
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
 
   // Authenticated student context
+  const currentUser = SessionStore.getUser();
   const studentContext = useRef<StudentEnrollmentContext>({
-    studentUserId: 'usr_21cs037',
-    institutionalId: '21CS037',
-    studentName: 'Aarav Sharma',
-    academicTermId: 'term-2026-autumn',
+    studentUserId: currentUser?.id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94',
+    institutionalId: currentUser?.institutionalId || 'S3',
+    studentName: currentUser?.fullName || 'Student S3',
+    academicTermId: '2026-FALL-SEM5',
   }).current;
 
   // Perception controller and embedder
@@ -141,11 +143,13 @@ export default function StudentEnrollmentScreen() {
         quality_score: 0.88,
       };
 
+      const token = SessionStore.getToken();
       const res = await fetch(`${API_BASE_URL}/api/v1/biometrics/enrollment`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(payload),
       });

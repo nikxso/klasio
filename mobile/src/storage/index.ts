@@ -4,3 +4,4 @@ export * from './attendanceRepository';
 export * from './studentRepository';
 export * from './requestRepository';
 export * from './syncWorker';
+export * from './sessionStore';

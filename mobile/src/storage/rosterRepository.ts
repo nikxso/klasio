@@ -1,6 +1,17 @@
+import { API_BASE_URL } from '../config/api.ts';
+
 async function resolveDb() {
   const { getDatabase } = await import('./database.ts');
-  return await getDatabase();
+  const db = await getDatabase();
+  return {
+    ...db,
+    runAsync: (sql: string, params: any[] = []) => db.runAsync(sql, params),
+    getFirstAsync: <T = any>(sql: string, params: any[] = []) => db.getFirstAsync<T>(sql, params),
+    getAllAsync: <T = any>(sql: string, params: any[] = []) => db.getAllAsync<T>(sql, params),
+    async withTransactionAsync(fn: () => Promise<void>) {
+      await fn();
+    },
+  };
 }
 
 export interface CachedStudent {
@@ -24,6 +35,38 @@ export interface CachedEmbedding {
 }
 
 export class RosterRepository {
+  /**
+   * Sync assignment roster from backend and store in local SQLite.
+   */
+  static async syncAssignmentRoster(
+    teachingAssignmentId: string,
+    authToken: string,
+    sessionDate?: string
+  ): Promise<CachedStudent[]> {
+    const today = sessionDate || new Date().toISOString().split('T')[0];
+    const url = `${API_BASE_URL}/api/v1/faculty/assignments/${teachingAssignmentId}/roster?session_date=${today}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch roster: ${res.status}`);
+    }
+    const data = await res.json();
+    const students = data.eligible_students.map((s: any) => ({
+      studentUserId: s.student_user_id,
+      institutionalId: s.institutional_id,
+      studentName: s.student_name,
+      effectiveStartDate: s.effective_start_date,
+      effectiveEndDate: s.effective_end_date ?? null,
+      faceRegistrationState: s.face_registration_state,
+    }));
+    await RosterRepository.saveCachedRoster(teachingAssignmentId, students);
+    return await RosterRepository.getCachedRoster(teachingAssignmentId);
+  }
+
   /**
    * Save or update roster students in local SQLite storage.
    */

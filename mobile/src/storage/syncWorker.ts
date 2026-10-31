@@ -25,6 +25,7 @@ export type HttpTransportFn = (
 ) => Promise<SyncHttpResponse>;
 
 import { getApiUrl } from '../config/api.ts';
+import { SessionStore } from './sessionStore.ts';
 
 async function resolveDb(customDb?: any) {
   if (customDb) {
@@ -45,7 +46,7 @@ async function resolveDb(customDb?: any) {
   }
 
   // Fallback to Expo SQLite database in React Native environment
-  const { getDatabase } = await import('./database.ts');
+  const { getDatabase } = await import('./database');
   const db = await getDatabase();
   return {
     async getAll<T = any>(sql: string, params: any[] = []): Promise<T[]> {
@@ -83,20 +84,30 @@ export class AttendanceSyncWorker {
   /**
    * Retrieves pending sync queue items eligible for transmission.
    */
-  static async getPendingQueueItems(limit: number = 5, customDb?: any): Promise<SyncQueueRow[]> {
+  static async getPendingQueueItems(
+    limit: number = 5,
+    customDb?: any,
+    ignoreNextRetry: boolean = false
+  ): Promise<SyncQueueRow[]> {
     const db = await resolveDb(customDb);
     const nowIso = new Date().toISOString();
 
-    const rows = await db.getAll<any>(
-      `SELECT queue_id, client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status,
-              retry_count, last_error, next_retry_at, created_at, updated_at
-       FROM sync_queue
-       WHERE sync_status = 'PENDING'
-         AND (next_retry_at IS NULL OR next_retry_at <= ?)
-       ORDER BY queue_id ASC
-       LIMIT ?;`,
-      [nowIso, limit]
-    );
+    const query = ignoreNextRetry
+      ? `SELECT queue_id, client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status,
+                retry_count, last_error, next_retry_at, created_at, updated_at
+         FROM sync_queue
+         WHERE sync_status = 'PENDING'
+         ORDER BY queue_id ASC
+         LIMIT ?;`
+      : `SELECT queue_id, client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status,
+                retry_count, last_error, next_retry_at, created_at, updated_at
+         FROM sync_queue
+         WHERE sync_status = 'PENDING'
+           AND (next_retry_at IS NULL OR next_retry_at <= ?)
+         ORDER BY queue_id ASC
+         LIMIT ?;`;
+    const params = ignoreNextRetry ? [limit] : [nowIso, limit];
+    const rows = await db.getAll<any>(query, params);
 
     return rows.map((r) => ({
       queueId: r.queue_id,
@@ -164,7 +175,8 @@ export class AttendanceSyncWorker {
 
       // Handle Stale State Conflict (409)
       if (response.statusCode === 409) {
-        const errorMsg = response.data?.detail || response.data?.message || 'Conflict: Stale attendance state';
+        const rawErr = response.data?.detail || response.data?.message || 'Conflict: Stale attendance state';
+        const errorMsg = typeof rawErr === 'string' ? rawErr : JSON.stringify(rawErr);
         await db.run(
           "UPDATE sync_queue SET sync_status = 'FAILED', last_error = ?, updated_at = ? WHERE queue_id = ?;",
           [errorMsg, nowIso, item.queueId]
@@ -174,7 +186,8 @@ export class AttendanceSyncWorker {
 
       // Handle Unrecoverable Domain Rejections (400, 403, 422)
       if ([400, 403, 422].includes(response.statusCode)) {
-        const errorMsg = response.data?.detail || response.data?.message || `HTTP ${response.statusCode} rejection`;
+        const rawErr = response.data?.detail || response.data?.message || `HTTP ${response.statusCode} rejection`;
+        const errorMsg = typeof rawErr === 'string' ? rawErr : JSON.stringify(rawErr);
         await db.run(
           "UPDATE sync_queue SET sync_status = 'FAILED', last_error = ?, updated_at = ? WHERE queue_id = ?;",
           [errorMsg, nowIso, item.queueId]
@@ -215,9 +228,10 @@ export class AttendanceSyncWorker {
   static async drainQueue(
     transport: HttpTransportFn,
     authToken?: string,
-    customDb?: any
+    customDb?: any,
+    ignoreNextRetry: boolean = false
   ): Promise<{ processed: number; succeeded: number; failed: number; retried: number }> {
-    const items = await AttendanceSyncWorker.getPendingQueueItems(10, customDb);
+    const items = await AttendanceSyncWorker.getPendingQueueItems(10, customDb, ignoreNextRetry);
     let succeeded = 0;
     let failed = 0;
     let retried = 0;
@@ -263,7 +277,12 @@ export class AttendanceSyncWorker {
     };
 
     const activeTransport = transport || defaultTransport;
-    const res = await AttendanceSyncWorker.drainQueue(activeTransport, authToken, customDb);
+    let effectiveToken = authToken || SessionStore.getToken();
+    if (!effectiveToken) {
+      const stored = await SessionStore.initFromStorage();
+      effectiveToken = stored?.token;
+    }
+    const res = await AttendanceSyncWorker.drainQueue(activeTransport, effectiveToken || undefined, customDb, true);
     return {
       processed: res.processed,
       succeeded: res.succeeded,

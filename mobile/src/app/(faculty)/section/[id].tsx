@@ -13,6 +13,7 @@ import {
   LocalAmendmentAuditRow,
 } from '@/storage/attendanceRepository';
 import { AttendanceSyncWorker } from '@/storage/syncWorker';
+import { SessionStore } from '@/storage/sessionStore';
 import type {
   AccumulatedRecognitionCandidate,
   SessionApplicabilityStatus,
@@ -101,6 +102,12 @@ export default function ClassDetailScreen() {
   const [marks, setMarks] = useState<Record<string, 'PRESENT' | 'ABSENT' | 'EXCUSED'>>({});
   const [confirmSheetVisible, setConfirmSheetVisible] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  useEffect(() => {
+    if (params.initialMode === 'review') {
+      setMarkingMode(true);
+    }
+  }, [params.initialMode]);
 
   // Session context states (Phase 8: Multi-session slots and explicit applicability)
   const [selectedSlot, setSelectedSlot] = useState<number>(params.slot ? Number(params.slot) : 1);
@@ -240,20 +247,30 @@ export default function ClassDetailScreen() {
     return new Set<string>();
   }, [candidatesFromScan]);
 
-  const recognisedStudents = students.filter((s) => recognisedIds.has(s.studentUserId));
-  const toCheckStudents = students.filter((s) => !recognisedIds.has(s.studentUserId));
+  const recognisedStudents = useMemo(() => {
+    return students.filter((s) => recognisedIds.has(s.studentUserId));
+  }, [students, recognisedIds]);
+
+  const toCheckStudents = useMemo(() => {
+    return students.filter((s) => !recognisedIds.has(s.studentUserId));
+  }, [students, recognisedIds]);
+
+  const initializedMarksRef = React.useRef(false);
 
   // Initialize recognised candidates as suggested PRESENT on entering review mode
   useEffect(() => {
-    if (markingMode && Object.keys(marks).length === 0) {
+    if (markingMode && !initializedMarksRef.current) {
+      initializedMarksRef.current = true;
       const initialMarks: Record<string, 'PRESENT' | 'ABSENT' | 'EXCUSED'> = {};
       recognisedStudents.forEach((s) => {
         initialMarks[s.studentUserId] = 'PRESENT';
       });
       // Unobserved students strictly remain UNDECIDED (never default to ABSENT)
       setMarks(initialMarks);
+    } else if (!markingMode) {
+      initializedMarksRef.current = false;
     }
-  }, [markingMode, recognisedStudents]);
+  }, [markingMode]);
 
   const presentCount = Object.values(marks).filter((m) => m === 'PRESENT').length;
   const absentCount = Object.values(marks).filter((m) => m === 'ABSENT').length;
@@ -334,8 +351,9 @@ export default function ClassDetailScreen() {
         />
 
         {reviewTab === 'check' && undecidedInCheck > 0 && (
-          <Pressable
+          <TouchableOpacity
             style={styles.markRestButton}
+            activeOpacity={0.7}
             onPress={() => {
               const updated = { ...marks };
               for (const s of toCheckStudents) {
@@ -347,7 +365,7 @@ export default function ClassDetailScreen() {
             }}
           >
             <Text style={styles.markRestText}>Mark the rest as absent</Text>
-          </Pressable>
+          </TouchableOpacity>
         )}
 
         <Button
@@ -404,7 +422,14 @@ export default function ClassDetailScreen() {
               try {
                 const nowIso = new Date().toISOString();
                 const today = nowIso.slice(0, 10);
-                const clientUuid = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const clientUuid =
+                  typeof crypto !== 'undefined' && crypto.randomUUID
+                    ? crypto.randomUUID()
+                    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                        const r = (Math.random() * 16) | 0;
+                        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+                        return v.toString(16);
+                      });
                 const records = students.map((s) => {
                   let status = marks[s.studentUserId];
                   if (!status) {
@@ -420,15 +445,19 @@ export default function ClassDetailScreen() {
                   };
                 });
 
+                const currentUser = SessionStore.getUser();
+                const token = SessionStore.getToken();
+                const facultyId = currentUser?.id || '2215c8c4-d597-40fb-abfd-14c7dbf3dd58';
+
                 await AttendanceRepository.finalizeSession({
                   clientSessionUuid: clientUuid,
-                  teachingAssignmentId: params.id || 'assign-1',
+                  teachingAssignmentId: params.id || 'ac8bf5c4-851a-4206-acf5-c8b174b1ae04',
                   sessionDate: today,
                   periodSlotOrSequence: selectedSlot,
                   applicabilityStatus: applicabilityStatus,
                   statusReason: applicabilityStatus !== 'COUNTED' ? statusReason : null,
-                  regularFacultyUserId: 'fac-1',
-                  conductingFacultyUserId: 'fac-1',
+                  regularFacultyUserId: facultyId,
+                  conductingFacultyUserId: facultyId,
                   substituteDelegationId: isDelegated ? 'del-1' : null,
                   finalizedAt: nowIso,
                   records,
@@ -436,7 +465,7 @@ export default function ClassDetailScreen() {
 
                 setSyncStatus('SYNCING');
                 try {
-                  await AttendanceSyncWorker.processPendingQueue();
+                  await AttendanceSyncWorker.processPendingQueue(undefined, token);
                   const qStatus = await AttendanceRepository.getSyncStatus(clientUuid);
                   if (qStatus && qStatus.syncStatus === 'ACKNOWLEDGED') {
                     setSyncStatus('SYNCED');

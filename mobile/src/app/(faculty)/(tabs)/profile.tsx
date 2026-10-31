@@ -24,6 +24,7 @@ import {
 import { Screen, Card, Chip, IconBubble, Avatar } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { AttendanceSyncWorker } from '@/storage/syncWorker';
+import { SessionStore } from '@/storage/sessionStore';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
 
@@ -47,7 +48,8 @@ export default function FacultyProfileScreen() {
   const handleSyncNow = async () => {
     setSyncing(true);
     try {
-      await AttendanceSyncWorker.processPendingQueue();
+      const session = await SessionStore.initFromStorage();
+      await AttendanceSyncWorker.processPendingQueue(undefined, session?.token || SessionStore.getToken());
       const items = await AttendanceSyncWorker.getPendingQueueItems();
       setPendingQueueCount(items.length);
     } catch {

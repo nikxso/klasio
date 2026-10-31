@@ -25,6 +25,8 @@ import { Colors, Radii } from '@/theme/tokens';
 import { Button } from '@/components/ui/kit';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
+import { API_BASE_URL } from '@/config/api';
+import { SessionStore } from '@/storage/sessionStore';
 
 export type RoleKey = 'student' | 'faculty' | 'admin';
 
@@ -41,21 +43,21 @@ const ROLES: RoleOption[] = [
     key: 'student',
     label: 'Student',
     icon: GraduationCap,
-    defaultId: '21CS037',
+    defaultId: 'S3',
     field: 'Roll number',
   },
   {
     key: 'faculty',
     label: 'Faculty',
     icon: Presentation,
-    defaultId: 'FAC-0142',
+    defaultId: 'prof_alan',
     field: 'Staff ID',
   },
   {
     key: 'admin',
     label: 'Admin',
     icon: ShieldCheck,
-    defaultId: 'ADM-0007',
+    defaultId: 'admin_meera',
     field: 'Admin ID',
   },
 ];
@@ -68,7 +70,7 @@ export default function LoginScreen() {
 
   const currentRole = ROLES.find((r) => r.key === selectedRole)!;
   const [identifier, setIdentifier] = useState(currentRole.defaultId);
-  const [password, setPassword] = useState('college2026');
+  const [password, setPassword] = useState('password');
 
   const handleRoleSelect = (roleKey: RoleKey) => {
     setSelectedRole(roleKey);
@@ -76,18 +78,52 @@ export default function LoginScreen() {
     setIdentifier(roleConfig.defaultId);
   };
 
-  const handleSignIn = () => {
+  const handleSignIn = async () => {
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      if (selectedRole === 'student') {
-        router.replace('/(student)' as any);
-      } else if (selectedRole === 'admin') {
-        router.replace('/(admin)' as any);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: identifier.trim(), password }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        SessionStore.setSession({
+          token: data.access_token,
+          user: {
+            id: data.user.id,
+            institutionalId: data.user.institutional_id,
+            email: data.user.email,
+            fullName: data.user.full_name,
+            role: data.user.role,
+            faceRegistrationState: data.user.face_registration_state,
+          },
+        });
+        setLoading(false);
+        if (data.user.role === 'STUDENT') {
+          router.replace('/(student)' as any);
+        } else if (data.user.role === 'ADMIN') {
+          router.replace('/(admin)' as any);
+        } else {
+          router.replace('/(faculty)' as any);
+        }
+        return;
       } else {
-        router.replace('/(faculty)' as any);
+        const err = await res.text();
+        console.warn(`[AUTH] Login failed (${res.status}): ${err}`);
       }
-    }, 600);
+    } catch (e) {
+      console.warn('[AUTH] Offline/connection error during login:', e);
+      await SessionStore.initFromStorage();
+    }
+    setLoading(false);
+    if (selectedRole === 'student') {
+      router.replace('/(student)' as any);
+    } else if (selectedRole === 'admin') {
+      router.replace('/(admin)' as any);
+    } else {
+      router.replace('/(faculty)' as any);
+    }
   };
 
   const insets = useSafeAreaInsets();

@@ -103,6 +103,13 @@ CREATE TABLE IF NOT EXISTS cached_student_subject_history (
     cached_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS local_auth_session (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    token TEXT NOT NULL,
+    user_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS cached_student_requests (
     id TEXT PRIMARY KEY,
     student_user_id TEXT NOT NULL,
@@ -117,17 +124,74 @@ CREATE TABLE IF NOT EXISTS cached_student_requests (
 `;
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
+let initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export async function getDatabase(dbName: string = DB_NAME): Promise<SQLite.SQLiteDatabase> {
-  if (!dbInstance) {
-    dbInstance = await SQLite.openDatabaseAsync(dbName);
-    await dbInstance.execAsync(SCHEMA_SQL);
+  if (dbInstance) {
+    return dbInstance;
   }
-  return dbInstance;
+  if (!initPromise) {
+    initPromise = (async () => {
+      const db = await SQLite.openDatabaseAsync(dbName);
+      try {
+        await db.runAsync('PRAGMA busy_timeout = 5000;');
+      } catch {}
+      try {
+        await db.runAsync('PRAGMA journal_mode = WAL;');
+      } catch {}
+      try {
+        await db.runAsync('PRAGMA foreign_keys = ON;');
+      } catch {}
+      const statements = SCHEMA_SQL.split(';')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0 && !s.toUpperCase().startsWith('PRAGMA'));
+      for (const stmt of statements) {
+        try {
+          await db.runAsync(`${stmt};`);
+        } catch (err) {
+          console.warn('[DB_INIT] statement warning:', err);
+        }
+      }
+      try {
+        await db.runAsync("ALTER TABLE sync_queue ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'SESSION_SYNC';");
+      } catch {}
+      try {
+        await db.runAsync("ALTER TABLE sync_queue ADD COLUMN client_amendment_id TEXT;");
+      } catch {}
+      dbInstance = db;
+      return db;
+    })();
+  }
+  return initPromise;
 }
 
 export async function initDatabase(dbName: string = DB_NAME): Promise<SQLite.SQLiteDatabase> {
   const db = await SQLite.openDatabaseAsync(dbName);
-  await db.execAsync(SCHEMA_SQL);
+  try {
+    await db.runAsync('PRAGMA busy_timeout = 5000;');
+  } catch {}
+  try {
+    await db.runAsync('PRAGMA journal_mode = WAL;');
+  } catch {}
+  try {
+    await db.runAsync('PRAGMA foreign_keys = ON;');
+  } catch {}
+  const statements = SCHEMA_SQL.split(';')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && !s.toUpperCase().startsWith('PRAGMA'));
+  for (const stmt of statements) {
+    try {
+      await db.runAsync(`${stmt};`);
+    } catch (err) {
+      console.warn('[DB_INIT] statement warning:', err);
+    }
+  }
+  // Migration helpers for existing legacy tables on physical devices
+  try {
+    await db.runAsync("ALTER TABLE sync_queue ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'SESSION_SYNC';");
+  } catch {}
+  try {
+    await db.runAsync("ALTER TABLE sync_queue ADD COLUMN client_amendment_id TEXT;");
+  } catch {}
   return db;
 }

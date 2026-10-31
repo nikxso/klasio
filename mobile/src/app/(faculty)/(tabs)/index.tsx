@@ -25,7 +25,7 @@ import { KlasioLogo } from '@/components/ui/KlasioLogo';
 
 const TODAY_CLASSES = [
   {
-    id: 'a1',
+    id: 'ac8bf5c4-851a-4206-acf5-c8b174b1ae04',
     subject: 'Data Structures',
     section: 'CSE 3A',
     room: 'LH-204',
@@ -36,7 +36,7 @@ const TODAY_CLASSES = [
     avg: 88,
   },
   {
-    id: 'a2',
+    id: '428d32a5-2999-4206-ac52-d0a5cf20efcd',
     subject: 'Operating Systems',
     section: 'CSE 3B',
     room: 'LAB-2',
@@ -46,9 +46,9 @@ const TODAY_CLASSES = [
     avg: 81,
   },
   {
-    id: 'a3',
-    subject: 'Data Structures Lab',
-    section: 'CSE 3A · B1',
+    id: 'b7407716-9665-40fa-a177-b396a7f432cd',
+    subject: 'Operating Systems',
+    section: 'CSE 3A',
     room: 'LAB-4',
     time: '14:00',
     slotLabel: 'Afternoon',

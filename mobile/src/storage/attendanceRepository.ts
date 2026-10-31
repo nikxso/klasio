@@ -66,7 +66,7 @@ async function resolveRepoDb(customDb?: any): Promise<RepoDb> {
       await db.runAsync(sql, params);
     },
     async withTransactionAsync(fn: () => Promise<void>): Promise<void> {
-      return db.withTransactionAsync(fn);
+      await fn();
     },
   };
 }

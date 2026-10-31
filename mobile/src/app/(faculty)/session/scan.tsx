@@ -75,6 +75,7 @@ import {
 } from '@/lab';
 import { GallerySyncService } from '@/perception/gallerySync';
 import { RosterRepository } from '@/storage/rosterRepository';
+import { SessionStore } from '@/storage/sessionStore';
 
 interface DetectedFaceBox {
   id: string;
@@ -234,11 +235,21 @@ export default function FacultyScanningScreen() {
     async function initClassGallery() {
       try {
         await embedderRef.current.initialize();
-        const assignmentId = params.sectionId || 'assign-1';
+        const assignmentId = params.sectionId || 'ac8bf5c4-851a-4206-acf5-c8b174b1ae04';
+
+        const token = SessionStore.getToken();
+        if (token && assignmentId) {
+          try {
+            await RosterRepository.syncAssignmentRoster(assignmentId, token);
+            await GallerySyncService.syncAssignmentGallery(assignmentId, token);
+          } catch (syncErr) {
+            console.warn('[GALLERY_SYNC] Sync warning, falling back to local SQLite:', syncErr);
+          }
+        }
 
         const sessionScope: AttendanceSessionScope = {
           attendanceSessionId: `sess_${assignmentId}_${Date.now()}`,
-          academicTermId: 'term-2026-autumn',
+          academicTermId: '2026-FALL-SEM5',
           courseOfferingId: assignmentId,
           subject: params.subject || 'Data Structures',
           classId: params.section || 'CSE 3A',
