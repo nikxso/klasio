@@ -102,6 +102,18 @@ CREATE TABLE IF NOT EXISTS cached_student_subject_history (
     payload_json TEXT NOT NULL,
     cached_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS cached_student_requests (
+    id TEXT PRIMARY KEY,
+    student_user_id TEXT NOT NULL,
+    teaching_assignment_id TEXT NOT NULL,
+    subject_name TEXT NOT NULL,
+    session_date TEXT NOT NULL,
+    student_note TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('Sent', 'Being reviewed', 'Accepted', 'Not accepted')),
+    resolution_note TEXT,
+    created_at TEXT NOT NULL
+);
 `;
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
