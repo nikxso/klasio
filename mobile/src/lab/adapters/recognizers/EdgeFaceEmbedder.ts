@@ -4,7 +4,7 @@
  *
  * Implements IFaceEmbedder & IFaceRecognizer for EdgeFace-XS (edgeface_xs.onnx).
  * Hybrid CNN-Vision Transformer edge face network (6.94 MB ONNX).
- * Extracts 5-point landmark-aligned 112x112 face crop, applies RGB (x - 127.5)/128.0
+ * Extracts 5-point landmark-aligned 112x112 face crop, applies RGB (x - 127.5)/127.5
  * normalization, runs neural inference, and returns unit-normalized L2 embedding vector in R^512.
  */
 
@@ -19,6 +19,19 @@ import type {
 } from '../../../perception/contracts';
 import { FaceAligner } from '../aligners/FaceAligner.ts';
 
+function getDirectPerceptionModule(): any {
+  if (typeof (globalThis as any).NativeModules?.DirectPerception !== 'undefined') {
+    return (globalThis as any).NativeModules.DirectPerception;
+  }
+  try {
+    // Metro bundler resolves react-native; Node.js test runner will catch and return null
+    const rn = typeof require !== 'undefined' ? require('react-native') : null;
+    return rn?.NativeModules?.DirectPerception || null;
+  } catch {
+    return null;
+  }
+}
+
 export const EDGEFACE_XS_MANIFEST: ModelManifest = {
   modelName: 'EdgeFace-XS',
   modelVersion: 'gamma_0.6',
@@ -29,7 +42,7 @@ export const EDGEFACE_XS_MANIFEST: ModelManifest = {
   inputHeight: 112,
   inputChannels: 3,
   inputColorOrder: 'RGB',
-  normalization: 'MINUS_127_5_DIV_128_0',
+  normalization: 'MINUS_127_5_DIV_127_5',
   embeddingDimension: 512,
   alignmentMode: 'SIMILARITY_TRANSFORM_5PT',
   manifestVersion: 'v1',
@@ -60,6 +73,58 @@ export class EdgeFaceEmbedder implements IFaceEmbedder, IFaceRecognizer {
 
     const tStart = performance.now();
 
+    // Priority 1: Genuine on-device ONNX neural embedding precomputed during detection
+    if (input.embedding && input.embedding.length === this.embeddingDimension) {
+      const normalizedVector = EdgeFaceEmbedder.l2Normalize(input.embedding);
+      const totalMs = performance.now() - tStart;
+      return {
+        embedding: normalizedVector,
+        rawDimension: this.embeddingDimension,
+        isNormalized: true,
+        manifest: this.manifest,
+        timings: {
+          cropAndAlignmentMs: 0,
+          preprocessingMs: 0,
+          inferenceMs: 0,
+          normalizationMs: totalMs,
+          totalMs,
+        },
+      };
+    }
+
+    // Priority 2: Live on-device camera extraction via DirectPerception native module
+    const directPerception = getDirectPerceptionModule();
+    if (directPerception && input.cameraTag != null && typeof directPerception.computeEmbedding === 'function') {
+      try {
+        const res = await directPerception.computeEmbedding(
+          input.cameraTag,
+          input.box,
+          input.landmarks || null
+        );
+        if (res?.embedding && res.embedding.length === this.embeddingDimension) {
+          const arr = new Float32Array(res.embedding);
+          const normalizedVector = EdgeFaceEmbedder.l2Normalize(arr);
+          const totalMs = performance.now() - tStart;
+          return {
+            embedding: normalizedVector,
+            rawDimension: this.embeddingDimension,
+            isNormalized: true,
+            manifest: this.manifest,
+            timings: {
+              cropAndAlignmentMs: res.alignmentMs || 0,
+              preprocessingMs: res.preprocessMs || 0,
+              inferenceMs: res.inferenceMs || 0,
+              normalizationMs: 0,
+              totalMs,
+            },
+          };
+        }
+      } catch (nativeErr) {
+        console.warn('[EdgeFaceEmbedder] DirectPerception computeEmbedding failed, falling back:', nativeErr);
+      }
+    }
+
+    // Priority 3: Offline / Node.js test environment deterministic simulation
     // 1. Face Crop & 5-Point Alignment
     const tCropStart = performance.now();
     const frameW = input.frame.width;
@@ -75,11 +140,11 @@ export class EdgeFaceEmbedder implements IFaceEmbedder, IFaceRecognizer {
     );
     const cropAndAlignmentMs = performance.now() - tCropStart;
 
-    // 2. Preprocessing & Normalization: (x - 127.5) / 128.0
+    // 2. Preprocessing & Normalization: (x - 127.5) / 127.5 (Authoritative upstream ArcFace/EdgeFace contract)
     const tPreprocStart = performance.now();
     const normalizedInput = new Float32Array(aligned.pixels.length);
     for (let i = 0; i < aligned.pixels.length; i++) {
-      normalizedInput[i] = (aligned.pixels[i] - 127.5) / 128.0;
+      normalizedInput[i] = (aligned.pixels[i] - 127.5) / 127.5;
     }
     const preprocessingMs = performance.now() - tPreprocStart;
 

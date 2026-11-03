@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   Pressable,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -20,11 +21,27 @@ import { Colors, Radii } from '@/theme/tokens';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
 
+import { SessionStore } from '@/storage/sessionStore';
+
 export default function StudentProfileScreen() {
   const router = useRouter();
 
   const handleSignOut = () => {
-    router.replace('/');
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out of Klasio?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await SessionStore.clearSession(true);
+            router.replace('/');
+          },
+        },
+      ]
+    );
   };
 
   return (

@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
+  AlertCircle,
 } from 'lucide-react-native';
 
 import { Colors, Radii } from '@/theme/tokens';
@@ -67,6 +68,7 @@ export default function LoginScreen() {
   const [selectedRole, setSelectedRole] = useState<RoleKey>('faculty');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const currentRole = ROLES.find((r) => r.key === selectedRole)!;
   const [identifier, setIdentifier] = useState(currentRole.defaultId);
@@ -74,12 +76,15 @@ export default function LoginScreen() {
 
   const handleRoleSelect = (roleKey: RoleKey) => {
     setSelectedRole(roleKey);
+    setAuthError(null);
     const roleConfig = ROLES.find((r) => r.key === roleKey)!;
     setIdentifier(roleConfig.defaultId);
+    setPassword('password');
   };
 
   const handleSignIn = async () => {
     setLoading(true);
+    setAuthError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
         method: 'POST',
@@ -88,7 +93,7 @@ export default function LoginScreen() {
       });
       if (res.ok) {
         const data = await res.json();
-        SessionStore.setSession({
+        await SessionStore.setSession({
           token: data.access_token,
           user: {
             id: data.user.id,
@@ -109,20 +114,32 @@ export default function LoginScreen() {
         }
         return;
       } else {
-        const err = await res.text();
-        console.warn(`[AUTH] Login failed (${res.status}): ${err}`);
+        let errMsg = 'Invalid credentials. Please verify your ID and password.';
+        try {
+          const errJson = await res.json();
+          if (errJson?.detail) errMsg = errJson.detail;
+        } catch (_) {}
+        setAuthError(errMsg);
+        setLoading(false);
+        return;
       }
     } catch (e) {
       console.warn('[AUTH] Offline/connection error during login:', e);
-      await SessionStore.initFromStorage();
-    }
-    setLoading(false);
-    if (selectedRole === 'student') {
-      router.replace('/(student)' as any);
-    } else if (selectedRole === 'admin') {
-      router.replace('/(admin)' as any);
-    } else {
-      router.replace('/(faculty)' as any);
+      const cached = await SessionStore.initFromStorage();
+      if (cached?.user && cached.user.role.toLowerCase() === selectedRole.toLowerCase()) {
+        setLoading(false);
+        if (cached.user.role === 'STUDENT') {
+          router.replace('/(student)' as any);
+        } else if (cached.user.role === 'ADMIN') {
+          router.replace('/(admin)' as any);
+        } else {
+          router.replace('/(faculty)' as any);
+        }
+        return;
+      }
+      setAuthError('Cannot connect to authentication server and no active offline session exists.');
+      setLoading(false);
+      return;
     }
   };
 
@@ -205,6 +222,14 @@ export default function LoginScreen() {
                 );
               })}
             </View>
+
+            {/* Error Banner */}
+            {authError && (
+              <View style={styles.errorBanner}>
+                <AlertCircle size={18} color="#dc2626" />
+                <Text style={styles.errorBannerText}>{authError}</Text>
+              </View>
+            )}
 
             {/* Identifier Input */}
             <View style={styles.fieldContainer}>
@@ -423,5 +448,23 @@ const styles = StyleSheet.create({
   submitContainer: {
     marginTop: 'auto',
     paddingTop: 24,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: Radii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+    gap: 8,
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#b91c1c',
+    lineHeight: 18,
   },
 });

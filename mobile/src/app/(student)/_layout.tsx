@@ -6,10 +6,10 @@ export default function StudentStackLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-        animation: 'slide_from_right',
+        animation: 'none',
       }}
     >
-      <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'fade' }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="subject/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="enrollment" options={{ headerShown: false }} />
     </Stack>

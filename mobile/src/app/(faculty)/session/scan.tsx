@@ -15,6 +15,7 @@ import {
   findNodeHandle,
   LogBox,
   ScrollView,
+  Alert,
 } from 'react-native';
 
 LogBox.ignoreAllLogs(true);
@@ -220,9 +221,6 @@ export default function FacultyScanningScreen() {
 
   // Diagnostics panel visibility
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
-
-  // Scanline animation
-  const scanlineAnim = useRef(new Animated.Value(0)).current;
 
   // Detection loop refs
   const isDetectingRef = useRef(false);
@@ -483,29 +481,6 @@ export default function FacultyScanningScreen() {
     [qualityGate]
   );
 
-
-  // Scanline animation loop
-  useEffect(() => {
-    if (isPaused) return;
-
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(scanlineAnim, {
-          toValue: 1,
-          duration: 2400,
-          useNativeDriver: true,
-        }),
-        Animated.timing(scanlineAnim, {
-          toValue: 0,
-          duration: 2400,
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    anim.start();
-
-    return () => anim.stop();
-  }, [isPaused, scanlineAnim]);
 
   // Handle AppState (background / foreground)
   useEffect(() => {
@@ -895,6 +870,9 @@ export default function FacultyScanningScreen() {
                         },
                         box: track.boundingBox,
                         landmarks: track.landmarks,
+                        embedding: track.embedding,
+                        embeddingBase64: track.embeddingBase64,
+                        cameraTag: findNodeHandle(cameraRef.current),
                       };
 
                       const embResult = await embedderRef.current.embed(cropInput, true);
@@ -988,10 +966,33 @@ export default function FacultyScanningScreen() {
     });
   };
 
-  const scanlineTranslateY = scanlineAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [20, viewfinderLayout.height - 40],
-  });
+  const handleSafeExit = () => {
+    const candidates = accumulatorRef.current.getAccumulatedCandidates();
+    if (candidates.length === 0) {
+      router.back();
+      return;
+    }
+    Alert.alert(
+      'Leave Attendance Scanner?',
+      `${candidates.length} student(s) recognized in this session. Would you like to review and keep your attendance progress or discard?`,
+      [
+        {
+          text: 'Pause & Keep Progress',
+          onPress: () => {
+            handleDone();
+          },
+        },
+        {
+          text: 'Discard & Exit',
+          style: 'destructive',
+          onPress: () => {
+            router.back();
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -1033,18 +1034,13 @@ export default function FacultyScanningScreen() {
             <View style={styles.gradientTop} pointerEvents="none" />
             <View style={styles.gradientBottom} pointerEvents="none" />
 
-            {/* Glowing Scanline Animation */}
-            {!isPaused && (
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  styles.scanline,
-                  {
-                    transform: [{ translateY: scanlineTranslateY }],
-                  },
-                ]}
-              />
-            )}
+            {/* Viewfinder Framing Guides (Corner Brackets) */}
+            <View pointerEvents="none" style={styles.viewfinderFrame}>
+              <View style={[styles.cornerBracket, styles.cornerTL]} />
+              <View style={[styles.cornerBracket, styles.cornerTR]} />
+              <View style={[styles.cornerBracket, styles.cornerBL]} />
+              <View style={[styles.cornerBracket, styles.cornerBR]} />
+            </View>
 
             {/* Detected Face Bounding Box & Facial Landmark Overlays (Step C: Temporal Tracks) */}
             {detectedFaces.map((face) => (
@@ -1322,11 +1318,11 @@ export default function FacultyScanningScreen() {
             },
           ]}
         >
-          {/* Close Button */}
+          {/* Close / Pause & Keep Session Button */}
           <TouchableOpacity
             style={styles.circleIconButton}
-            onPress={() => router.back()}
-            accessibilityLabel="Close scanning"
+            onPress={handleSafeExit}
+            accessibilityLabel="Pause and exit scanning"
           >
             <X size={20} color="#ffffff" />
           </TouchableOpacity>
@@ -2037,18 +2033,44 @@ const styles = StyleSheet.create({
     height: 90,
     backgroundColor: 'rgba(31, 26, 41, 0.75)',
   },
-  scanline: {
+  viewfinderFrame: {
+    ...StyleSheet.absoluteFillObject,
+    margin: 20,
+    pointerEvents: 'none',
+  },
+  cornerBracket: {
     position: 'absolute',
-    left: 24,
-    right: 24,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: '#f0a868',
-    shadowColor: '#f0a868',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.85,
-    shadowRadius: 16,
-    elevation: 8,
+    width: 24,
+    height: 24,
+    borderColor: 'rgba(255, 255, 255, 0.45)',
+  },
+  cornerTL: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 2.5,
+    borderLeftWidth: 2.5,
+    borderTopLeftRadius: 6,
+  },
+  cornerTR: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 2.5,
+    borderRightWidth: 2.5,
+    borderTopRightRadius: 6,
+  },
+  cornerBL: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 2.5,
+    borderLeftWidth: 2.5,
+    borderBottomLeftRadius: 6,
+  },
+  cornerBR: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 2.5,
+    borderRightWidth: 2.5,
+    borderBottomRightRadius: 6,
   },
   boundingBox: {
     position: 'absolute',

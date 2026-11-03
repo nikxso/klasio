@@ -227,7 +227,7 @@ interface ChipProps {
 }
 
 export function Chip({ children, tone = 'soft', icon, style }: ChipProps) {
-  const { bg, text } = ToneColors[tone];
+  const { bg, text } = ToneColors[tone] || ToneColors.soft;
   return (
     <View style={[styles.chip, { backgroundColor: bg }, style]}>
       {icon && <View style={styles.chipIcon}>{icon}</View>}
@@ -256,7 +256,7 @@ export function IconBubble({
   size = 44,
   iconSize,
 }: IconBubbleProps) {
-  const { bg, text } = ToneColors[tone];
+  const { bg, text } = ToneColors[tone] || ToneColors.forest;
   const renderedIconSize = iconSize ?? size * 0.46;
   return (
     <View

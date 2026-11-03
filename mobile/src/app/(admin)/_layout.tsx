@@ -6,10 +6,10 @@ export default function AdminStackLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-        animation: 'slide_from_right',
+        animation: 'none',
       }}
     >
-      <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'fade' }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'none' }} />
     </Stack>
   );
 }

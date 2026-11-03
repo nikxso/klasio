@@ -1,6 +1,10 @@
 package com.attendly.mobile.perception
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.util.Base64
 import android.util.Log
 import com.facebook.react.bridge.*
 import com.facebook.react.uimanager.UIManagerHelper
@@ -12,6 +16,8 @@ import ai.onnxruntime.OrtSession
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import kotlin.math.exp
 import kotlin.math.max
@@ -28,7 +34,9 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
 
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
+    private var recognizerSession: OrtSession? = null
     private var currentModelName: String = "YuNet"
+    private var currentRecognizerName: String = "EdgeFace-XS"
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     override fun getName(): String = MODULE_NAME
@@ -89,6 +97,32 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
         }
     }
 
+    private fun ensureRecognizerInitialized(modelName: String = "EdgeFace-XS") {
+        if (ortEnv == null) {
+            ortEnv = OrtEnvironment.getEnvironment()
+        }
+
+        if (recognizerSession == null || currentRecognizerName != modelName) {
+            val fileName = when (modelName.lowercase()) {
+                "mobilefacenet", "w600k_mbf" -> "w600k_mbf.onnx"
+                else -> "edgeface_xs.onnx"
+            }
+            val modelFile = getModelFile(fileName)
+            if (!modelFile.exists()) {
+                throw IllegalStateException("Recognizer model file not found: ${modelFile.absolutePath}")
+            }
+
+            val opts = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(4)
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            }
+            recognizerSession?.close()
+            recognizerSession = ortEnv!!.createSession(modelFile.absolutePath, opts)
+            currentRecognizerName = modelName
+            Log.i(TAG, "Loaded ONNX recognizer '$modelName' from ${modelFile.absolutePath}")
+        }
+    }
+
     @ReactMethod
     fun initDetector(modelName: String, promise: Promise) {
         scope.launch {
@@ -97,6 +131,18 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
                 promise.resolve(true)
             } catch (e: Exception) {
                 promise.reject("INIT_ERROR", "Failed to initialize detector: ${e.message}", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun initRecognizer(modelName: String, promise: Promise) {
+        scope.launch {
+            try {
+                ensureRecognizerInitialized(modelName)
+                promise.resolve(true)
+            } catch (e: Exception) {
+                promise.reject("INIT_RECOGNIZER_ERROR", "Failed to initialize recognizer: ${e.message}", e)
             }
         }
     }
@@ -166,16 +212,223 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
         return keep
     }
 
+    /**
+     * Aligns a detected face using 5-point similarity transform to canonical ArcFace coordinates,
+     * normalizes to NCHW RGB [-1, 1], and runs genuine ONNX neural inference returning unit L2 vector.
+     */
+    private fun alignAndEmbedFace(
+        sourceBitmap: Bitmap,
+        box: FloatArray,
+        kps: FloatArray?
+    ): Pair<FloatArray, String> {
+        val targetDim = 112
+        val alignedBitmap = Bitmap.createBitmap(targetDim, targetDim, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(alignedBitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+        var alignedWithLandmarks = false
+        if (kps != null && kps.size >= 10) {
+            val dst = floatArrayOf(
+                38.2946f, 51.6963f, // right eye (image left)
+                73.5318f, 51.5014f, // left eye (image right)
+                56.0252f, 71.7366f, // nose tip
+                41.5493f, 92.3655f, // right mouth (image left)
+                70.7299f, 92.2041f  // left mouth (image right)
+            )
+
+            val mx = (kps[0] + kps[2] + kps[4] + kps[6] + kps[8]) / 5f
+            val my = (kps[1] + kps[3] + kps[5] + kps[7] + kps[9]) / 5f
+            val txm = (dst[0] + dst[2] + dst[4] + dst[6] + dst[8]) / 5f
+            val tym = (dst[1] + dst[3] + dst[5] + dst[7] + dst[9]) / 5f
+
+            var den = 0f
+            var numA = 0f
+            var numB = 0f
+            for (i in 0 until 5) {
+                val sx = kps[i * 2] - mx
+                val sy = kps[i * 2 + 1] - my
+                val dx = dst[i * 2] - txm
+                val dy = dst[i * 2 + 1] - tym
+                den += sx * sx + sy * sy
+                numA += sx * dx + sy * dy
+                numB += sx * dy - sy * dx
+            }
+
+            if (den > 1e-6f) {
+                val a = numA / den
+                val b = numB / den
+                val tx = txm - (a * mx - b * my)
+                val ty = tym - (b * mx + a * my)
+
+                val matrix = Matrix()
+                matrix.setValues(floatArrayOf(
+                    a, -b, tx,
+                    b,  a, ty,
+                    0f, 0f, 1f
+                ))
+                canvas.drawBitmap(sourceBitmap, matrix, paint)
+                alignedWithLandmarks = true
+            }
+        }
+
+        if (!alignedWithLandmarks) {
+            val padW = box[2] * 0.15f
+            val padH = box[3] * 0.15f
+            val cropX = max(0f, box[0] - padW).toInt()
+            val cropY = max(0f, box[1] - padH).toInt()
+            val cropW = min(sourceBitmap.width - cropX, (box[2] + 2 * padW).toInt())
+            val cropH = min(sourceBitmap.height - cropY, (box[3] + 2 * padH).toInt())
+            if (cropW > 0 && cropH > 0) {
+                val cropped = Bitmap.createBitmap(sourceBitmap, cropX, cropY, cropW, cropH)
+                val scaledCrop = Bitmap.createScaledBitmap(cropped, targetDim, targetDim, true)
+                canvas.drawBitmap(scaledCrop, 0f, 0f, paint)
+                if (cropped != scaledCrop) cropped.recycle()
+                scaledCrop.recycle()
+            }
+        }
+
+        val pixels = IntArray(targetDim * targetDim)
+        alignedBitmap.getPixels(pixels, 0, targetDim, 0, 0, targetDim, targetDim)
+        val floatBuffer = FloatBuffer.allocate(1 * 3 * targetDim * targetDim)
+        val numPixels = targetDim * targetDim
+
+        // Preprocessing: RGB NCHW layout, (val - 127.5f) / 127.5f (Authoritative upstream ArcFace/EdgeFace contract)
+        for (i in 0 until numPixels) {
+            val r = (pixels[i] shr 16) and 0xFF
+            floatBuffer.put((r - 127.5f) / 127.5f)
+        }
+        for (i in 0 until numPixels) {
+            val g = (pixels[i] shr 8) and 0xFF
+            floatBuffer.put((g - 127.5f) / 127.5f)
+        }
+        for (i in 0 until numPixels) {
+            val b = pixels[i] and 0xFF
+            floatBuffer.put((b - 127.5f) / 127.5f)
+        }
+        floatBuffer.rewind()
+
+        val tensor = OnnxTensor.createTensor(
+            ortEnv,
+            floatBuffer,
+            longArrayOf(1, 3, targetDim.toLong(), targetDim.toLong())
+        )
+
+        val inputName = recognizerSession!!.inputNames.iterator().next()
+        val outputs = recognizerSession!!.run(mapOf(inputName to tensor))
+        val outputTensor = outputs.get(0) as OnnxTensor
+        val embBuf = outputTensor.floatBuffer
+        val dim = embBuf.capacity()
+        val rawVector = FloatArray(dim)
+        embBuf.get(rawVector, 0, dim)
+
+        tensor.close()
+        outputs.close()
+        alignedBitmap.recycle()
+
+        // L2 Unit Normalization
+        var sumSq = 0.0
+        for (v in rawVector) {
+            sumSq += (v * v).toDouble()
+        }
+        val norm = sqrt(sumSq).toFloat()
+        val normalized = FloatArray(dim)
+        if (norm > 1e-12f) {
+            for (i in 0 until dim) {
+                normalized[i] = rawVector[i] / norm
+            }
+        }
+
+        // Little-Endian RFC 4648 Base64
+        val byteBuf = ByteBuffer.allocate(dim * 4).order(ByteOrder.LITTLE_ENDIAN)
+        for (v in normalized) {
+            byteBuf.putFloat(v)
+        }
+        val base64 = Base64.encodeToString(byteBuf.array(), Base64.NO_WRAP)
+
+        return Pair(normalized, base64)
+    }
+
+    @ReactMethod
+    fun computeEmbedding(viewTag: Int, boxMap: ReadableMap, landmarksMap: ReadableMap?, promise: Promise) {
+        val targetDim = 640
+        scope.launch {
+            try {
+                ensureRecognizerInitialized("EdgeFace-XS")
+                val (rawBitmap, _) = grabBitmapFromCamera(viewTag)
+                val origW = rawBitmap.width
+                val origH = rawBitmap.height
+                val scaled = if (origW == targetDim && origH == targetDim) {
+                    rawBitmap
+                } else {
+                    Bitmap.createScaledBitmap(rawBitmap, targetDim, targetDim, true)
+                }
+
+                val normX = boxMap.getDouble("x").toFloat()
+                val normY = boxMap.getDouble("y").toFloat()
+                val normW = boxMap.getDouble("width").toFloat()
+                val normH = boxMap.getDouble("height").toFloat()
+                val box = floatArrayOf(normX * targetDim, normY * targetDim, normW * targetDim, normH * targetDim)
+
+                val kps = if (landmarksMap != null &&
+                    landmarksMap.hasKey("rightEye") &&
+                    landmarksMap.hasKey("leftEye") &&
+                    landmarksMap.hasKey("noseTip") &&
+                    landmarksMap.hasKey("rightMouth") &&
+                    landmarksMap.hasKey("leftMouth")
+                ) {
+                    val rEye = landmarksMap.getMap("rightEye")!!
+                    val lEye = landmarksMap.getMap("leftEye")!!
+                    val nose = landmarksMap.getMap("noseTip")!!
+                    val rMouth = landmarksMap.getMap("rightMouth")!!
+                    val lMouth = landmarksMap.getMap("leftMouth")!!
+                    floatArrayOf(
+                        rEye.getDouble("x").toFloat() * targetDim, rEye.getDouble("y").toFloat() * targetDim,
+                        lEye.getDouble("x").toFloat() * targetDim, lEye.getDouble("y").toFloat() * targetDim,
+                        nose.getDouble("x").toFloat() * targetDim, nose.getDouble("y").toFloat() * targetDim,
+                        rMouth.getDouble("x").toFloat() * targetDim, rMouth.getDouble("y").toFloat() * targetDim,
+                        lMouth.getDouble("x").toFloat() * targetDim, lMouth.getDouble("y").toFloat() * targetDim
+                    )
+                } else null
+
+                val (emb, b64) = alignAndEmbedFace(scaled, box, kps)
+                if (scaled != rawBitmap) scaled.recycle()
+
+                val embArr = Arguments.createArray()
+                for (v in emb) embArr.pushDouble(v.toDouble())
+
+                val res = Arguments.createMap().apply {
+                    putBoolean("success", true)
+                    putArray("embedding", embArr)
+                    putString("embeddingBase64", b64)
+                    putInt("dimension", emb.size)
+                    putString("model", currentRecognizerName)
+                }
+                promise.resolve(res)
+            } catch (e: Exception) {
+                Log.e(TAG, "computeEmbedding failed", e)
+                promise.reject("EMBEDDING_FAILED", e.message, e)
+            }
+        }
+    }
+
     @ReactMethod
     fun detectFacesInMemory(viewTag: Int, options: ReadableMap?, promise: Promise) {
         val totalStart = System.nanoTime()
         val captureTimestampMs = System.currentTimeMillis()
         val confThresh = (options?.getDouble("confidenceThreshold") ?: 0.35).toFloat()
+        val computeEmbeddings = if (options?.hasKey("computeEmbeddings") == true) options.getBoolean("computeEmbeddings") else true
         val targetDim = 640
 
         scope.launch {
             try {
                 ensureOrtInitialized("YuNet")
+                if (computeEmbeddings) {
+                    try {
+                        ensureRecognizerInitialized("EdgeFace-XS")
+                    } catch (recErr: Exception) {
+                        Log.w(TAG, "Recognizer preload warning: ${recErr.message}")
+                    }
+                }
 
                 // Stage 1: IN-MEMORY FRAME ACQUISITION (ZERO DISK, ZERO JPEG)
                 val (rawBitmap, grabMs) = grabBitmapFromCamera(viewTag)
@@ -327,6 +580,21 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
                             })
                         }
                         putMap("landmarks", lmMap)
+
+                        // Stage 4B: GENUINE ONNX NEURAL EMBEDDING (512-D L2 Normalized)
+                        if (computeEmbeddings && recognizerSession != null) {
+                            try {
+                                val (emb, b64) = alignAndEmbedFace(scaled, box, kps)
+                                val embArr = Arguments.createArray()
+                                for (v in emb) {
+                                    embArr.pushDouble(v.toDouble())
+                                }
+                                putArray("embedding", embArr)
+                                putString("embeddingBase64", b64)
+                            } catch (embErr: Exception) {
+                                Log.w(TAG, "Embedding extraction failed for face $fIdx: ${embErr.message}")
+                            }
+                        }
                     }
                     facesArray.pushMap(faceMap)
                 }
@@ -346,6 +614,7 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
                 val result = Arguments.createMap().apply {
                     putBoolean("success", true)
                     putString("detector", "YuNet (Direct In-Memory)")
+                    putString("recognizer", if (computeEmbeddings && recognizerSession != null) currentRecognizerName else "None")
                     putString("modelVersion", "2023mar-ort-inmem")
                     putDouble("captureTimestamp", captureTimestampMs.toDouble())
                     putInt("facesCount", keep.size)
@@ -372,6 +641,7 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
     override fun invalidate() {
         super.invalidate()
         scope.cancel()
+        recognizerSession?.close()
         ortSession?.close()
         ortEnv?.close()
     }

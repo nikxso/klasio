@@ -325,7 +325,7 @@ test('Step H: Guided Face Enrollment & Biometric Validation Test Suite', async (
     assert.equal(profile.activeModelVersion, 'gamma_0.6');
     assert.equal(profile.embeddingDimension, 512);
     assert.equal(profile.alignmentMode, 'SIMILARITY_TRANSFORM_5PT');
-    assert.equal(profile.normalization, 'MINUS_127_5_DIV_128_0');
+    assert.equal(profile.normalization, 'MINUS_127_5_DIV_127_5');
   });
 
   await t.test('[11] Multi-Sample Diversity: Completes K=3 samples with intra-student consistency', async () => {

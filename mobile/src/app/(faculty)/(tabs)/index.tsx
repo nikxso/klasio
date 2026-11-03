@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,8 @@ import {
 import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
+import { SessionStore } from '@/storage/sessionStore';
+import { NotificationRepository } from '@/storage/notificationRepository';
 
 const TODAY_CLASSES = [
   {
@@ -61,6 +63,23 @@ export default function FacultyHomeScreen() {
   const router = useRouter();
   const [online] = useState(true);
   const [waitingRecords] = useState(0);
+  const [unreadCount, setUnreadCount] = useState<number>(1);
+
+  useEffect(() => {
+    let isCancelled = false;
+    async function checkUnread() {
+      const user = SessionStore.getUser();
+      const token = SessionStore.getToken();
+      if (user) {
+        const count = await NotificationRepository.getUnreadCount(user.id, token);
+        if (!isCancelled) setUnreadCount(count);
+      }
+    }
+    checkUnread();
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   const nextClass = TODAY_CLASSES[0];
 
@@ -77,6 +96,15 @@ export default function FacultyHomeScreen() {
         avg: String(item.avg),
         isDelegated: 'false',
         regularFaculty: '',
+      },
+    });
+  };
+
+  const handleStartAttendance = (item: typeof TODAY_CLASSES[0]) => {
+    router.push({
+      pathname: '/(faculty)/session/select-context' as any,
+      params: {
+        preselectId: item.id,
       },
     });
   };
@@ -112,10 +140,11 @@ export default function FacultyHomeScreen() {
           <View style={styles.bellButtonWrapper}>
             <Pressable
               style={styles.iconButton}
+              onPress={() => router.push('/notifications' as any)}
               accessibilityLabel="Notifications"
             >
               <Bell size={19} color={Colors.ink} />
-              <View style={styles.unreadDot} />
+              {unreadCount > 0 && <View style={styles.unreadDot} />}
             </Pressable>
           </View>
         </View>
@@ -145,7 +174,7 @@ export default function FacultyHomeScreen() {
             styles.takeAttendanceButton,
             pressed && styles.takeAttendanceButtonPressed,
           ]}
-          onPress={() => handleOpenClass(nextClass)}
+          onPress={() => handleStartAttendance(nextClass)}
         >
           <ScanFace size={19} color={Colors.forest} />
           <Text style={styles.takeAttendanceText}>Start attendance</Text>

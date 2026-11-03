@@ -275,6 +275,8 @@ export class GuidedFaceEnrollmentController implements IGuidedFaceEnrollmentCont
       frame,
       box,
       landmarks: detection.landmarks,
+      embedding: detection.embedding,
+      embeddingBase64: detection.embeddingBase64,
     };
 
     let embedding: Float32Array;

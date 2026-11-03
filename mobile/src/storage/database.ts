@@ -121,6 +121,21 @@ CREATE TABLE IF NOT EXISTS cached_student_requests (
     resolution_note TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS cached_notifications (
+    id TEXT PRIMARY KEY,
+    recipient_user_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    payload_json TEXT,
+    action_route TEXT,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cached_notifications_recipient ON cached_notifications(recipient_user_id, created_at DESC);
 `;
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;

@@ -6,11 +6,12 @@ export default function FacultyStackLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-        animation: 'slide_from_right',
+        animation: 'none',
       }}
     >
-      <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'fade' }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="section/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="session/select-context" options={{ headerShown: false }} />
       <Stack.Screen name="session/scan" options={{ headerShown: false }} />
       <Stack.Screen name="delegations" options={{ headerShown: false }} />
       <Stack.Screen name="enrollment" options={{ headerShown: false }} />

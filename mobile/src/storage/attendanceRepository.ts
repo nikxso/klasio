@@ -362,6 +362,39 @@ export class AttendanceRepository {
   }
 
   /**
+   * Finds an existing session (DRAFT, FINALIZED, or SYNCED) for a given assignment, date, and slot.
+   */
+  static async findExistingSession(
+    teachingAssignmentId: string,
+    sessionDate: string,
+    periodSlotOrSequence: number,
+    customDb?: any
+  ): Promise<LocalSessionRow | null> {
+    const db = await resolveRepoDb(customDb);
+    const r = await db.getFirstAsync<any>(
+      `SELECT * FROM local_attendance_sessions
+       WHERE teaching_assignment_id = ? AND session_date = ? AND period_slot_or_sequence = ?;`,
+      [teachingAssignmentId, sessionDate, periodSlotOrSequence]
+    );
+    if (!r) return null;
+    return {
+      clientSessionUuid: r.client_session_uuid,
+      teachingAssignmentId: r.teaching_assignment_id,
+      sessionDate: r.session_date,
+      periodSlotOrSequence: r.period_slot_or_sequence,
+      applicabilityStatus: r.applicability_status,
+      statusReason: r.status_reason,
+      regularFacultyUserId: r.regular_faculty_user_id,
+      conductingFacultyUserId: r.conducting_faculty_user_id,
+      substituteDelegationId: r.substitute_delegation_id,
+      sessionStatus: r.session_status,
+      finalizedAt: r.finalized_at,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  /**
    * Applies an authorized post-finalization amendment to a student's attendance record
    * and records an immutable audit row in local_amendment_audits as well as an AMENDMENT_SYNC
    * row in sync_queue inside ONE atomic SQLite transaction.

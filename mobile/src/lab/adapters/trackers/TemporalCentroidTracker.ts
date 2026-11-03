@@ -46,6 +46,8 @@ export interface InternalTemporalTrack {
   landmarks?: FacialLandmarks;
   targetLandmarks?: FacialLandmarks;
   quality?: QualityAssessment; // Quality assessment state
+  embedding?: Float32Array;
+  embeddingBase64?: string;
 }
 
 export interface TrackerConfig {
@@ -307,6 +309,8 @@ export class TemporalCentroidTracker implements IFaceTracker {
           isConfirmed: isImmediate,
           landmarks: det.landmarks ? { ...det.landmarks } : undefined,
           targetLandmarks: det.landmarks ? { ...det.landmarks } : undefined,
+          embedding: det.embedding,
+          embeddingBase64: det.embeddingBase64,
         };
 
         if (this.qualityGate) {
@@ -359,6 +363,11 @@ export class TemporalCentroidTracker implements IFaceTracker {
       if (!track.landmarks) {
         track.landmarks = { ...detection.landmarks };
       }
+    }
+
+    if (detection.embedding) {
+      track.embedding = detection.embedding;
+      track.embeddingBase64 = detection.embeddingBase64;
     }
 
     track.confidence = detection.confidence;
@@ -513,6 +522,8 @@ export class TemporalCentroidTracker implements IFaceTracker {
       timeSinceLastSeenMs: t.timeSinceLastSeenMs,
       isConfirmed: t.isConfirmed,
       quality: t.quality ? { ...t.quality } : undefined,
+      embedding: t.embedding,
+      embeddingBase64: t.embeddingBase64,
     }));
   }
 

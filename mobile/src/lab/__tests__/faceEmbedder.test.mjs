@@ -88,7 +88,7 @@ test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
     assert.equal(ef.embeddingDimension, 512);
     assert.equal(ef.manifest.inputWidth, 112);
     assert.equal(ef.manifest.inputHeight, 112);
-    assert.equal(ef.manifest.normalization, 'MINUS_127_5_DIV_128_0');
+    assert.equal(ef.manifest.normalization, 'MINUS_127_5_DIV_127_5');
   });
 
   await t.test('[3] Output Dimensions & L2 Normalization: Embeddings are strictly unit vectors in R^512', async () => {
@@ -243,5 +243,28 @@ test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
     assert.ok(res.timings.cropAndAlignmentMs >= 0);
     assert.ok(res.timings.preprocessingMs >= 0);
     await embedder.dispose();
+  });
+
+  await t.test('[11] Preprocessing Parity: Normalization uses exact /127.5 (not /128.0) boundary mapping', async () => {
+    const ef = new EdgeFaceEmbedder();
+    assert.equal(ef.manifest.normalization, 'MINUS_127_5_DIV_127_5');
+
+    // Mathematical parity test:
+    // Pixel 0 must map to exactly -1.0
+    // Pixel 127.5 must map to exactly 0.0
+    // Pixel 255 must map to exactly +1.0
+    const normMin = (0 - 127.5) / 127.5;
+    const normMid = (127.5 - 127.5) / 127.5;
+    const normMax = (255 - 127.5) / 127.5;
+
+    assert.equal(normMin, -1.0, 'Pixel 0 must normalize to exact -1.0 lower bound');
+    assert.equal(normMid, 0.0, 'Pixel 127.5 must normalize to exact 0.0 center');
+    assert.equal(normMax, 1.0, 'Pixel 255 must normalize to exact +1.0 upper bound');
+
+    // Reject incorrect /128.0 divisor
+    const legacyMin = (0 - 127.5) / 128.0;
+    const legacyMax = (255 - 127.5) / 128.0;
+    assert.notEqual(legacyMin, -1.0, 'Legacy /128.0 fails to reach -1.0 boundary');
+    assert.notEqual(legacyMax, 1.0, 'Legacy /128.0 fails to reach +1.0 boundary');
   });
 });

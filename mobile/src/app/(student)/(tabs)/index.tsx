@@ -31,6 +31,9 @@ import {
   StudentPersonalAttendanceResponse,
   StudentSubjectSummary,
 } from '@/storage/studentRepository';
+import { SessionStore } from '@/storage/sessionStore';
+import { NotificationRepository } from '@/storage/notificationRepository';
+import { AttendanceBarChart, AttendanceTrendLineChart } from '@/components/charts';
 
 const DEFAULT_SUMMARY: StudentPersonalAttendanceResponse = {
   student_id: 'stu-aarav-21cs037',
@@ -91,19 +94,31 @@ export default function StudentHomeScreen() {
   const router = useRouter();
   const [data, setData] = useState<StudentPersonalAttendanceResponse>(DEFAULT_SUMMARY);
   const [faceStatus, setFaceStatus] = useState<'none' | 'pending' | 'approved'>('approved');
+  const [unreadCount, setUnreadCount] = useState<number>(1);
 
   useEffect(() => {
+    let isCancelled = false;
     async function loadData() {
       try {
         const cached = await StudentRepository.getCachedAttendance(DEFAULT_SUMMARY.student_id);
-        if (cached && cached.data && cached.data.subjects.length > 0) {
+        if (cached && cached.data && cached.data.subjects.length > 0 && !isCancelled) {
           setData(cached.data);
         }
       } catch {
         // Fallback to initial local cache
       }
+
+      const user = SessionStore.getUser();
+      const token = SessionStore.getToken();
+      if (user) {
+        const count = await NotificationRepository.getUnreadCount(user.id, token);
+        if (!isCancelled) setUnreadCount(count);
+      }
     }
     loadData();
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
   const overall = Math.round(data.overall_attendance_percentage);
@@ -115,10 +130,14 @@ export default function StudentHomeScreen() {
       subtitle="Hi there 👋"
       title="Aarav Sharma"
       right={
-        <View style={styles.notificationWrapper}>
+        <Pressable
+          style={styles.notificationWrapper}
+          onPress={() => router.push('/notifications' as any)}
+          accessibilityLabel="Notifications"
+        >
           <Bell size={20} color={Colors.ink} />
-          <View style={styles.unreadDot} />
-        </View>
+          {unreadCount > 0 && <View style={styles.unreadDot} />}
+        </Pressable>
       }
       scrollable
     >
@@ -177,6 +196,19 @@ export default function StudentHomeScreen() {
             <Chip tone="amber">Pending</Chip>
           )}
         </Card>
+      )}
+
+      {/* Subject Attendance Comparison SVG Chart */}
+      {data.subjects.length > 0 && (
+        <AttendanceBarChart
+          data={data.subjects.map((s) => ({
+            label: s.subject_code,
+            value: s.attendance_percentage,
+            id: s.teaching_assignment_id,
+          }))}
+          threshold={75}
+          title="Course Attendance Overview"
+        />
       )}
 
       <SectionTitle

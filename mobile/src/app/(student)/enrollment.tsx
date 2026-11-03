@@ -6,6 +6,7 @@ import {
   Pressable,
   ActivityIndicator,
   Platform,
+  findNodeHandle,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -76,6 +77,7 @@ export default function StudentEnrollmentScreen() {
   }).current;
 
   // Perception controller and embedder
+  const cameraRef = useRef<Camera>(null);
   const embedderRef = useRef<EdgeFaceEmbedder>(new EdgeFaceEmbedder());
   const controllerRef = useRef<GuidedFaceEnrollmentController | null>(null);
   const detectorRef = useRef<DirectOnDeviceDetector>(new DirectOnDeviceDetector(null, 0.40));
@@ -177,41 +179,31 @@ export default function StudentEnrollmentScreen() {
       if (!controllerRef.current) return;
 
       const now = Date.now();
-      const currentStep = controllerRef.current.state?.currentStep || 'FRONTAL';
-
-      // Synthetic/live perception bridge: generate measurement geometry
-      let yawOffset = 0;
-      if (currentStep === 'SLIGHT_LEFT') {
-        yawOffset = -0.35; // Head turned slightly left
-      } else if (currentStep === 'SLIGHT_RIGHT') {
-        yawOffset = 0.35; // Head turned slightly right
+      const nodeHandle = findNodeHandle(cameraRef.current);
+      if (nodeHandle) {
+        detectorRef.current.setCameraTag(nodeHandle);
       }
-
-      const mockDetections: FaceDetectionResult[] = [
-        {
-          boundingBox: { x: 0.35, y: 0.22, width: 0.30, height: 0.42 },
-          confidence: 0.94,
-          landmarks: {
-            leftEye: { x: 0.44 + yawOffset * 0.05, y: 0.36 },
-            rightEye: { x: 0.56 + yawOffset * 0.05, y: 0.36 },
-            noseTip: { x: 0.50 + yawOffset * 0.08, y: 0.44 },
-            mouthLeft: { x: 0.45 + yawOffset * 0.04, y: 0.53 },
-            mouthRight: { x: 0.55 + yawOffset * 0.04, y: 0.53 },
-          },
-        },
-      ];
 
       const rawFrame: RawFrame = {
         width: 640,
         height: 640,
         format: 'rgba',
         timestampMs: now,
-        data: new Uint8Array(64), // Ephemeral zero-copy buffer; zero image storage
+        captureTimestampMs: now,
+        data: '',
         rotationDegrees: 0,
       };
 
+      let liveDetections: FaceDetectionResult[] = [];
       try {
-        const state = await controllerRef.current.processFrame(rawFrame, mockDetections, now);
+        const detResult = await detectorRef.current.detectFacesDetailed(rawFrame);
+        liveDetections = detResult.results || [];
+      } catch (detErr) {
+        // Fallback for simulation if camera preview isn't bound yet
+      }
+
+      try {
+        const state = await controllerRef.current.processFrame(rawFrame, liveDetections, now);
         setGuidanceState(state);
         setGuidanceText(controllerRef.current.state?.guidanceMessage || '');
 
@@ -225,7 +217,7 @@ export default function StudentEnrollmentScreen() {
       } catch (err: any) {
         console.error('Frame processing error:', err);
       }
-    }, 250);
+    }, 280);
 
     loopTimerRef.current = frameInterval;
     return () => clearInterval(frameInterval);
@@ -331,6 +323,7 @@ export default function StudentEnrollmentScreen() {
         <View style={styles.cameraOval}>
           {frontDevice && hasPermission && !enrollmentComplete ? (
             <Camera
+              ref={cameraRef}
               style={StyleSheet.absoluteFill}
               device={frontDevice}
               isActive={sessionActive && !enrollmentComplete}

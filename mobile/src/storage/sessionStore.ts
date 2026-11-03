@@ -20,20 +20,22 @@ export interface AuthSession {
 let activeSession: AuthSession | null = null;
 
 export const SessionStore = {
-  setSession(session: AuthSession | null): void {
+  async setSession(session: AuthSession | null): Promise<void> {
     activeSession = session;
-    import('./database').then(({ getDatabase }) => {
-      getDatabase().then((db) => {
-        if (session) {
-          db.runAsync(
-            `INSERT OR REPLACE INTO local_auth_session (id, token, user_json, updated_at) VALUES (1, ?, ?, ?);`,
-            [session.token, JSON.stringify(session.user), new Date().toISOString()]
-          ).catch(() => {});
-        } else {
-          db.runAsync('DELETE FROM local_auth_session WHERE id = 1;').catch(() => {});
-        }
-      }).catch(() => {});
-    }).catch(() => {});
+    try {
+      const { getDatabase } = await import('./database');
+      const db = await getDatabase();
+      if (session) {
+        await db.runAsync(
+          `INSERT OR REPLACE INTO local_auth_session (id, token, user_json, updated_at) VALUES (1, ?, ?, ?);`,
+          [session.token, JSON.stringify(session.user), new Date().toISOString()]
+        );
+      } else {
+        await db.runAsync('DELETE FROM local_auth_session WHERE id = 1;');
+      }
+    } catch (e: any) {
+      console.warn('[SessionStore] setSession storage warning:', e?.message || e);
+    }
   },
 
   async initFromStorage(): Promise<AuthSession | null> {
@@ -68,12 +70,35 @@ export const SessionStore = {
     return activeSession?.user ?? null;
   },
 
+  async hasPendingSync(userId?: string): Promise<number> {
+    try {
+      const { getDatabase } = await import('./database');
+      const db = await getDatabase();
+      const row = await db.getFirstAsync<{ count: number }>(
+        "SELECT COUNT(*) as count FROM sync_queue WHERE sync_status = 'PENDING';"
+      );
+      return row?.count ?? 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+
+  async clearSession(preservePendingSync: boolean = true): Promise<void> {
+    activeSession = null;
+    try {
+      const { getDatabase } = await import('./database');
+      const db = await getDatabase();
+      await db.runAsync('DELETE FROM local_auth_session WHERE id = 1;');
+      if (!preservePendingSync) {
+        await db.runAsync("DELETE FROM sync_queue WHERE sync_status = 'PENDING';");
+      }
+    } catch (e: any) {
+      console.warn('[SessionStore] clearSession storage warning:', e?.message || e);
+    }
+  },
+
   clear(): void {
     activeSession = null;
-    import('./database').then(({ getDatabase }) => {
-      getDatabase().then((db) => {
-        db.runAsync('DELETE FROM local_auth_session WHERE id = 1;').catch(() => {});
-      }).catch(() => {});
-    }).catch(() => {});
+    this.clearSession(true).catch(() => {});
   },
 };

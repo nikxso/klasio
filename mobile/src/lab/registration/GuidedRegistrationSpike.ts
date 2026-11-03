@@ -153,7 +153,7 @@ export class GuidedRegistrationSpike {
       modelName: this.recognizer.modelName,
       activeModelVersion: this.recognizer.modelVersion,
       embeddingDimension: this.recognizer.embeddingDimension,
-      normalization: 'MINUS_127_5_DIV_128_0',
+      normalization: 'MINUS_127_5_DIV_127_5',
       alignmentMode: 'SIMILARITY_TRANSFORM_5PT',
       embeddings: validObservations,
     };

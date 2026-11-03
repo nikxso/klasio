@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Pressable,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -59,8 +60,42 @@ export default function FacultyProfileScreen() {
     }
   };
 
-  const handleSignOut = () => {
-    router.replace('/');
+  const handleSignOut = async () => {
+    const pendingCount = await SessionStore.hasPendingSync();
+    if (pendingCount > 0) {
+      Alert.alert(
+        'Pending Offline Records',
+        `You have ${pendingCount} offline attendance record(s) queued for synchronization. Signing out now will preserve these records on this device, but they will not be visible on the portal until synchronized.\n\nDo you want to sign out now?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Sign Out & Preserve Records',
+            style: 'destructive',
+            onPress: async () => {
+              await SessionStore.clearSession(true);
+              router.replace('/');
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out of Klasio?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await SessionStore.clearSession(true);
+            router.replace('/');
+          },
+        },
+      ]
+    );
   };
 
   return (

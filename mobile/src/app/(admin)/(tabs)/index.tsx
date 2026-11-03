@@ -16,12 +16,15 @@ import {
   Link2,
   Check,
   ChevronRight,
+  Bell,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, IconBubble, SectionTitle, Avatar } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
+import { SessionStore } from '@/storage/sessionStore';
+import { NotificationRepository } from '@/storage/notificationRepository';
 
 interface AdminMetric {
   label: string;
@@ -47,14 +50,16 @@ export default function AdminHomeScreen() {
   const router = useRouter();
   const [metrics, setMetrics] = useState<AdminMetric[]>(INITIAL_METRICS);
   const [approvals, setApprovals] = useState(INITIAL_APPROVALS);
+  const [unreadCount, setUnreadCount] = useState<number>(1);
 
   useEffect(() => {
+    let isCancelled = false;
     async function loadOverview() {
       try {
         const res = await fetch(`${API_BASE_URL}/api/v1/analytics/overview`);
         if (res.ok) {
           const overview = await res.json();
-          if (overview) {
+          if (overview && !isCancelled) {
             setMetrics([
               {
                 label: 'Students',
@@ -88,8 +93,18 @@ export default function AdminHomeScreen() {
       } catch {
         // Fallback to initial institutional baselines
       }
+
+      const user = SessionStore.getUser();
+      const token = SessionStore.getToken();
+      if (user) {
+        const count = await NotificationRepository.getUnreadCount(user.id, token);
+        if (!isCancelled) setUnreadCount(count);
+      }
     }
     loadOverview();
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
   const handleApprove = (id: string) => {
@@ -101,6 +116,16 @@ export default function AdminHomeScreen() {
       left={<KlasioLogo variant="lockup" size={24} />}
       subtitle="Keep track of academic activity and attendance across your institution."
       title="Your institution, at a glance"
+      right={
+        <Pressable
+          style={styles.notificationWrapper}
+          onPress={() => router.push('/notifications' as any)}
+          accessibilityLabel="Notifications"
+        >
+          <Bell size={20} color={Colors.ink} />
+          {unreadCount > 0 && <View style={styles.unreadDot} />}
+        </Pressable>
+      }
       scrollable
     >
       {/* 2x2 Metric Grid */}
@@ -273,5 +298,25 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: Colors.line,
     marginVertical: 10,
+  },
+  notificationWrapper: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  unreadDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: Colors.forest,
   },
 });

@@ -68,6 +68,7 @@ export class DirectOnDeviceDetector implements IFaceDetector {
 
     const nativeRes = await DirectPerception.detectFacesInMemory(this.cameraTag, {
       confidenceThreshold: this.confidenceThreshold,
+      computeEmbeddings: true,
     });
 
     const clientEnd = performance.now();
@@ -98,6 +99,8 @@ export class DirectOnDeviceDetector implements IFaceDetector {
         frameId: frame.frameId,
         captureTimestampMs: captureTimestamp,
         resultTimestampMs: Date.now(),
+        embedding: f.embedding ? new Float32Array(f.embedding) : undefined,
+        embeddingBase64: f.embeddingBase64 || undefined,
       };
     });
 

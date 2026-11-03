@@ -16,15 +16,7 @@ export default function FacultyTabsLayout() {
             icon: ScanFace,
             label: 'Attendance',
             onPress: () => {
-              router.push({
-                pathname: '/(faculty)/session/scan',
-                params: {
-                  assignmentId: 'a1',
-                  subject: 'Data Structures',
-                  section: 'CSE 3A',
-                  room: 'LH-204',
-                },
-              });
+              router.push('/(faculty)/session/select-context' as any);
             },
             accessibilityLabel: 'Take Attendance Scanner',
           }}
@@ -32,13 +24,7 @@ export default function FacultyTabsLayout() {
       )}
       screenOptions={{
         headerShown: false,
-        animation: 'fade',
-        transitionSpec: {
-          animation: 'timing',
-          config: {
-            duration: 200,
-          },
-        },
+        animation: 'none',
       }}
     >
       <Tabs.Screen

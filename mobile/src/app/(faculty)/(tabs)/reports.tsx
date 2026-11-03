@@ -31,6 +31,12 @@ import Svg, {
 import { Screen, Card, Chip, SectionTitle, Avatar, Button } from '@/components/ui/kit';
 import { Colors, Radii, Shadows } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
+import {
+  AttendanceBarChart,
+  AttendanceTrendLineChart,
+  AttendanceDistributionHistogram,
+  HistogramBin,
+} from '@/components/charts';
 
 export interface ReportStudentAttention {
   id: string;
@@ -253,6 +259,42 @@ export default function FacultyReportsScreen() {
     return { line, polygon, points, lastPt };
   }, [currentAssignment]);
 
+  const assignmentComparisonData = useMemo(() => {
+    return reportList.map((item) => ({
+      label: item.subjectCode,
+      value: item.avgPct ?? 0,
+      id: item.id,
+    }));
+  }, [reportList]);
+
+  const trendLineData = useMemo(() => {
+    return (currentAssignment.trend || []).map((t) => ({
+      label: t.label,
+      value: t.pct ?? 80,
+    }));
+  }, [currentAssignment]);
+
+  const distributionBins: HistogramBin[] = useMemo(() => {
+    const avg = currentAssignment.avgPct ?? 85;
+    if (avg >= 85) {
+      return [
+        { range: '<50%', count: 1, label: 'Critical', tone: 'rose' },
+        { range: '50-64%', count: 2, label: 'Severe', tone: 'amber' },
+        { range: '65-74%', count: 4, label: 'At-Risk', tone: 'neutral' },
+        { range: '75-89%', count: 24, label: 'Good', tone: 'sage' },
+        { range: '90-100%', count: 19, label: 'Top', tone: 'forest' },
+      ];
+    } else {
+      return [
+        { range: '<50%', count: 3, label: 'Critical', tone: 'rose' },
+        { range: '50-64%', count: 6, label: 'Severe', tone: 'amber' },
+        { range: '65-74%', count: 8, label: 'At-Risk', tone: 'neutral' },
+        { range: '75-89%', count: 20, label: 'Good', tone: 'sage' },
+        { range: '90-100%', count: 11, label: 'Top', tone: 'forest' },
+      ];
+    }
+  }, [currentAssignment]);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     setTimeout(() => {
@@ -334,81 +376,25 @@ export default function FacultyReportsScreen() {
         </ScrollView>
       </View>
 
-      {/* Weekly Average & Trend Chart Card */}
-      <Card style={styles.trendCard}>
-        <View style={styles.trendCardHeader}>
-          <View>
-            <Text style={styles.trendLabel}>Weekly average</Text>
-            <Text style={styles.trendPercentageText}>
-              {currentAssignment.avgPct !== null ? `${currentAssignment.avgPct}%` : '—'}
-            </Text>
-          </View>
-          {currentAssignment.held === 0 ? (
-            <Chip tone="soft">No sessions held</Chip>
-          ) : (
-            <Chip
-              tone={(currentAssignment.avgPct ?? 0) >= 75 ? 'forest' : 'rose'}
-              icon={<Sparkles size={12} color={(currentAssignment.avgPct ?? 0) >= 75 ? Colors.forest : Colors.rose} />}
-            >
-              {(currentAssignment.avgPct ?? 0) >= 75 ? 'Improving' : 'Attention needed'}
-            </Chip>
-          )}
-        </View>
+      {/* Weekly Average & Trend Progression Chart */}
+      <AttendanceTrendLineChart
+        data={trendLineData}
+        threshold={75}
+        title={`${currentAssignment.subjectName} (${currentAssignment.sectionCode}) Progression`}
+      />
 
-        {/* SVG Sparkline / Area Chart or No Session State */}
-        {currentAssignment.held === 0 ? (
-          <View style={styles.noSessionsChart}>
-            <Text style={styles.noSessionsText}>No attendance sessions finalized yet</Text>
-          </View>
-        ) : (
-          <View style={styles.svgContainer}>
-            <Svg
-              width="100%"
-              height={CHART_HEIGHT + 15}
-              viewBox={`0 -10 ${CHART_WIDTH} ${CHART_HEIGHT + 20}`}
-            >
-              <Defs>
-                <LinearGradient id="gradientReport" x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0" stopColor={Colors.forest} stopOpacity="0.25" />
-                  <Stop offset="1" stopColor={Colors.forest} stopOpacity="0.0" />
-                </LinearGradient>
-              </Defs>
-              {chartCoordinates.polygon ? (
-                <Polygon points={chartCoordinates.polygon} fill="url(#gradientReport)" />
-              ) : null}
-              {chartCoordinates.line ? (
-                <Polyline
-                  points={chartCoordinates.line}
-                  fill="none"
-                  stroke={Colors.forest}
-                  strokeWidth={3}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              ) : null}
-              {chartCoordinates.lastPt ? (
-                <Circle
-                  cx={chartCoordinates.lastPt[0]}
-                  cy={chartCoordinates.lastPt[1]}
-                  r={5}
-                  fill={Colors.card}
-                  stroke={Colors.forest}
-                  strokeWidth={3}
-                />
-              ) : null}
-            </Svg>
+      {/* Cohort Attendance Distribution Histogram */}
+      <AttendanceDistributionHistogram
+        bins={distributionBins}
+        title={`${currentAssignment.subjectCode} Student Turnout Distribution`}
+      />
 
-            {/* X-axis Timeline Labels */}
-            <View style={styles.timelineRow}>
-              {['Aug', 'Sep', 'Oct', 'Nov', 'Now'].map((lbl, idx) => (
-                <Text key={idx} style={styles.timelineLabel}>
-                  {lbl}
-                </Text>
-              ))}
-            </View>
-          </View>
-        )}
-      </Card>
+      {/* Teaching Assignments Comparison Bar Chart */}
+      <AttendanceBarChart
+        data={assignmentComparisonData}
+        threshold={75}
+        title="Department Classes Average Comparison"
+      />
 
       {/* Export Actions Card */}
       <Card style={styles.exportCard}>

@@ -50,6 +50,8 @@ export interface FaceDetectionResult {
   frameId?: string;
   captureTimestampMs?: number;
   resultTimestampMs?: number;
+  embedding?: Float32Array;
+  embeddingBase64?: string;
 }
 
 export type QualityState = 'UNKNOWN' | 'GOOD' | 'FAIR' | 'POOR';
@@ -115,6 +117,8 @@ export interface TrackedFace {
   timeSinceLastSeenMs: number;
   isConfirmed: boolean;
   quality?: QualityAssessment;
+  embedding?: Float32Array;
+  embeddingBase64?: string;
 }
 
 export interface QualityGateResult {
@@ -500,6 +504,9 @@ export interface FaceCropInput {
   frame: RawFrame;
   box: FaceBoundingBox; // Measured / tracked bounding box [0, 1]
   landmarks?: FacialLandmarks;
+  embedding?: Float32Array;
+  embeddingBase64?: string;
+  cameraTag?: number | null;
 }
 
 export type FaceAlignmentMode = 'NONE' | 'SIMILARITY_TRANSFORM_5PT';

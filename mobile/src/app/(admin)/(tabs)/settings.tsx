@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Pressable,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -24,6 +25,7 @@ import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button } from '@/compone
 import { Colors, Radii } from '@/theme/tokens';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
+import { SessionStore } from '@/storage/sessionStore';
 
 const DEVICES = [
   { name: 'Dr. Lakshmi’s phone', ok: true, seen: '2 min ago' },
@@ -46,7 +48,21 @@ export default function AdminSettingsScreen() {
   };
 
   const handleSignOut = () => {
-    router.replace('/');
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out of Klasio?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await SessionStore.clearSession(true);
+            router.replace('/');
+          },
+        },
+      ]
+    );
   };
 
   return (

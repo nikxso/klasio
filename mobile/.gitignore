@@ -38,9 +38,16 @@ yarn-error.*
 
 example
 
-# generated native folders
+# generated native folders (preserve custom android source)
 /ios
-/android
+android/.gradle/
+android/build/
+android/app/build/
+android/.cxx/
+android/.kotlin/
+android/local.properties
+android/*.iml
+android/app/*.iml
 
 # python cache
 __pycache__/
