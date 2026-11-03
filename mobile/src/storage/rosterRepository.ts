@@ -265,8 +265,12 @@ export class RosterRepository {
     const params: (string | number)[] = [...studentUserIds];
 
     if (modelVersion) {
-      query += ` AND model_version = ?`;
-      params.push(modelVersion);
+      if (modelVersion.startsWith('EdgeFace') || modelVersion === 'gamma_0.6') {
+        query += ` AND (model_version = 'EdgeFace-XS-v1' OR model_version = 'gamma_0.6')`;
+      } else {
+        query += ` AND model_version = ?`;
+        params.push(modelVersion);
+      }
     }
 
     query += ' ORDER BY student_user_id, sample_index ASC;';

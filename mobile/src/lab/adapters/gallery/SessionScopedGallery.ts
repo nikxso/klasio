@@ -89,7 +89,13 @@ export class SessionScopedFaceGallery implements IFaceGallery {
         };
       }
 
-      if (profile.activeModelVersion !== manifest.modelVersion) {
+      // Check activeModelVersion compatibility: EdgeFace-XS-v1 and gamma_0.6 are canonical EdgeFace-XS representations
+      const isVersionMatch =
+        profile.activeModelVersion === manifest.modelVersion ||
+        ((profile.activeModelVersion === 'EdgeFace-XS-v1' || profile.activeModelVersion === 'gamma_0.6') &&
+         (manifest.modelVersion === 'EdgeFace-XS-v1' || manifest.modelVersion === 'gamma_0.6'));
+
+      if (!isVersionMatch) {
         return {
           isCompatible: false,
           mismatchedField: 'activeModelVersion',

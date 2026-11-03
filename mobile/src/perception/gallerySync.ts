@@ -216,12 +216,29 @@ export class GallerySyncService {
       galleryVer = item.galleryVersion;
     }
 
+    // Look up cached roster metadata for student names & institutional IDs
+    const rosterMap = new Map<string, { institutionalId: string; studentName: string }>();
+    if (sessionScope.courseOfferingId) {
+      try {
+        const cachedRoster = await RosterRepository.getCachedRoster(sessionScope.courseOfferingId);
+        for (const s of cachedRoster) {
+          rosterMap.set(s.studentUserId, {
+            institutionalId: s.institutionalId,
+            studentName: s.studentName,
+          });
+        }
+      } catch {
+        // Fallback silently if roster retrieval fails
+      }
+    }
+
     const profiles: StudentReferenceProfile[] = [];
     for (const [studentId, embeddings] of profileMap.entries()) {
+      const studentInfo = rosterMap.get(studentId);
       profiles.push({
         studentUserId: studentId,
-        institutionalId: '',
-        studentName: '',
+        institutionalId: studentInfo?.institutionalId || '',
+        studentName: studentInfo?.studentName || '',
         modelName: modelVersion.startsWith('EdgeFace') ? 'EdgeFace-XS' : 'MobileFaceNet',
         activeModelVersion: modelVersion,
         embeddingDimension: detectedDim,

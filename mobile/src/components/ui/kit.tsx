@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useState } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,13 @@ import {
   StyleSheet,
   Modal,
   Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { ChevronLeft } from 'lucide-react-native';
 import { Colors, Radii, Shadows, Tone, ToneColors } from '@/theme/tokens';
+import { API_BASE_URL } from '@/config/api';
 
 // ---------------------------------------------------------------------------
 // Screen Container
@@ -375,7 +377,35 @@ const AVATAR_PALETTES = [
   { bg: Colors.amber50, text: Colors.amber },
 ];
 
-export function Avatar({ name, size = 40 }: { name: string; size?: number }) {
+export function Avatar({
+  name,
+  size = 40,
+  userId,
+  photoUrl,
+}: {
+  name: string;
+  size?: number;
+  userId?: string | null;
+  photoUrl?: string | null;
+}) {
+  const [hasError, setHasError] = useState(false);
+  const effectiveUrl = photoUrl || (userId ? `${API_BASE_URL}/api/v1/users/${userId}/profile-photo` : null);
+
+  if (effectiveUrl && !hasError) {
+    return (
+      <Image
+        source={{ uri: effectiveUrl }}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: Colors.line,
+        }}
+        onError={() => setHasError(true)}
+      />
+    );
+  }
+
   const hash = Array.from(name || 'A').reduce(
     (acc, char) => acc + char.charCodeAt(0),
     0

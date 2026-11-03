@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, Pressable, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TouchableOpacity, TextInput, Image, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ScanFace, Users, ChevronLeft, AlertCircle, Cloud, CloudOff, RefreshCw, Check } from 'lucide-react-native';
+import { ScanFace, Users, ChevronLeft, AlertCircle, Cloud, CloudOff, RefreshCw, Check, Search, UserCheck, Edit3, X } from 'lucide-react-native';
 
 import { Screen, Card, Button, Ring, Bar, Avatar, SectionTitle, Chip, Sheet } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
+import { API_BASE_URL } from '@/config/api';
 import { AttendanceRosterList } from '@/components/AttendanceRosterList';
 import { CachedStudent, RosterRepository } from '@/storage/rosterRepository';
 import {
@@ -130,8 +131,18 @@ export default function ClassDetailScreen() {
   const [amendError, setAmendError] = useState<string>('');
   const [amendSuccessMsg, setAmendSuccessMsg] = useState<string>('');
 
+  // Student Profile Management & Search
+  const [rosterSearch, setRosterSearch] = useState<string>('');
+  const [selectedStudent, setSelectedStudent] = useState<(CachedStudent & { pct: number }) | null>(null);
+  const [studentDetailVisible, setStudentDetailVisible] = useState<boolean>(false);
+  const [isEditingStudent, setIsEditingStudent] = useState<boolean>(false);
+  const [editName, setEditName] = useState<string>('');
+  const [editInstitutionalId, setEditInstitutionalId] = useState<string>('');
+  const [editSaving, setEditSaving] = useState<boolean>(false);
+  const [editMsg, setEditMsg] = useState<string | null>(null);
+
   useEffect(() => {
-    // Attempt reading from local SQLite cached_rosters
+    // 1. Attempt reading from local SQLite cached_rosters
     if (params.id) {
       RosterRepository.getCachedRoster(params.id).then((cached) => {
         if (cached && cached.length > 0) {
@@ -143,6 +154,25 @@ export default function ClassDetailScreen() {
           );
         }
       });
+
+      // 2. Fetch fresh roster from backend
+      const token = SessionStore.getToken();
+      if (token) {
+        RosterRepository.syncAssignmentRoster(params.id, token)
+          .then((fresh) => {
+            if (fresh && fresh.length > 0) {
+              setStudents(
+                fresh.map((c, i) => ({
+                  ...c,
+                  pct: DEMO_STUDENTS[i % DEMO_STUDENTS.length]?.pct ?? 85,
+                }))
+              );
+            }
+          })
+          .catch((err) => {
+            console.warn('Failed to sync assignment roster:', err);
+          });
+      }
 
       // Data-driven slot discovery: Query already finalized/recorded sessions for today
       AttendanceRepository.listSessionsForAssignment(params.id).then((sessions) => {
@@ -342,6 +372,17 @@ export default function ClassDetailScreen() {
             attendancePercentage: s.pct,
           }))}
           marks={marks}
+          onSelectStudent={(st) => {
+            const found = students.find((s) => s.studentUserId === st.studentUserId);
+            if (found) {
+              setSelectedStudent(found);
+              setEditName(found.studentName);
+              setEditInstitutionalId(found.institutionalId);
+              setIsEditingStudent(false);
+              setEditMsg(null);
+              setStudentDetailVisible(true);
+            }
+          }}
           onToggleStatus={(studentUserId, newStatus) => {
             setMarks((prev) => ({
               ...prev,
@@ -702,65 +743,80 @@ export default function ClassDetailScreen() {
 
       <SectionTitle>Students</SectionTitle>
 
+      {/* Roster Search Bar */}
+      <View style={styles.rosterSearchBox}>
+        <Search size={15} color={Colors.soft} style={{ marginRight: 8 }} />
+        <TextInput
+          style={styles.rosterSearchInput}
+          placeholder="Search student by name or roll number..."
+          placeholderTextColor={Colors.soft}
+          value={rosterSearch}
+          onChangeText={setRosterSearch}
+        />
+        {rosterSearch.length > 0 && (
+          <Pressable onPress={() => setRosterSearch('')} hitSlop={8}>
+            <X size={15} color={Colors.soft} />
+          </Pressable>
+        )}
+      </View>
+
       <View style={styles.rosterCard}>
-        {students.map((student, index) => {
-          const isBelow = student.pct < 75;
-          const isLast = index === students.length - 1;
-          const faceTone =
-            student.faceRegistrationState === 'REGISTERED'
-              ? 'forest'
-              : student.faceRegistrationState === 'PENDING'
-              ? 'amber'
-              : 'soft';
-          const faceLabel =
-            student.faceRegistrationState === 'REGISTERED'
-              ? 'Face ID'
-              : student.faceRegistrationState === 'PENDING'
-              ? 'Pending'
-              : 'No Face ID';
+        {students
+          .filter(
+            (s) =>
+              s.studentName.toLowerCase().includes(rosterSearch.toLowerCase()) ||
+              s.institutionalId.toLowerCase().includes(rosterSearch.toLowerCase())
+          )
+          .map((student, index, arr) => {
+            const isBelow = student.pct < 75;
+            const isLast = index === arr.length - 1;
+            const faceTone =
+              student.faceRegistrationState === 'REGISTERED'
+                ? 'forest'
+                : student.faceRegistrationState === 'PENDING'
+                ? 'amber'
+                : 'soft';
+            const faceLabel =
+              student.faceRegistrationState === 'REGISTERED'
+                ? 'Face ID'
+                : student.faceRegistrationState === 'PENDING'
+                ? 'Pending'
+                : 'No Face ID';
 
-          return (
-            <View
-              key={student.studentUserId}
-              style={[styles.studentRow, !isLast && styles.rowDivider]}
-            >
-              <Avatar name={student.studentName} size={40} />
+            return (
+              <Pressable
+                key={student.studentUserId}
+                onPress={() => {
+                  setSelectedStudent(student);
+                  setEditName(student.studentName);
+                  setEditInstitutionalId(student.institutionalId);
+                  setIsEditingStudent(false);
+                  setEditMsg(null);
+                  setStudentDetailVisible(true);
+                }}
+                style={[styles.studentRow, !isLast && styles.rowDivider]}
+              >
+                <Avatar name={student.studentName} userId={student.studentUserId} size={40} />
 
-              <View style={styles.studentInfo}>
-                <View style={styles.nameHeaderRow}>
-                  <Text style={styles.studentName} numberOfLines={1}>
-                    {student.studentName}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      router.push({
-                        pathname: '/(faculty)/enrollment',
-                        params: {
-                          studentUserId: student.studentUserId,
-                          studentName: student.studentName,
-                          institutionalId: student.institutionalId,
-                          teachingAssignmentId: params.id || '',
-                          sectionCode: params.section || '',
-                        },
-                      });
-                    }}
-                    accessibilityLabel={`Biometric enrollment for ${student.studentName}`}
-                  >
+                <View style={styles.studentInfo}>
+                  <View style={styles.nameHeaderRow}>
+                    <Text style={styles.studentName} numberOfLines={1}>
+                      {student.studentName}
+                    </Text>
                     <Chip tone={faceTone}>{faceLabel}</Chip>
-                  </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.barContainer}>
+                    <Bar pct={student.pct} threshold={75} />
+                  </View>
                 </View>
 
-                <View style={styles.barContainer}>
-                  <Bar pct={student.pct} threshold={75} />
-                </View>
-              </View>
-
-              <Text style={[styles.pctText, isBelow && styles.pctBelowText]}>
-                {student.pct}%
-              </Text>
-            </View>
-          );
-        })}
+                <Text style={[styles.pctText, isBelow && styles.pctBelowText]}>
+                  {student.pct}%
+                </Text>
+              </Pressable>
+            );
+          })}
       </View>
 
       {/* Amendment Audit History */}
@@ -959,6 +1015,184 @@ export default function ClassDetailScreen() {
             Submit Amendment (Audited)
           </Button>
         </View>
+      </Sheet>
+
+      {/* Student Details Sheet */}
+      <Sheet
+        visible={studentDetailVisible}
+        onClose={() => setStudentDetailVisible(false)}
+      >
+        {selectedStudent && (
+          <View style={styles.sheetStudentDetailContainer}>
+            <View style={styles.sheetAvatarHeader}>
+              <Avatar name={selectedStudent.studentName} userId={selectedStudent.studentUserId} size={64} />
+              <View style={styles.sheetStudentMeta}>
+                <Text style={styles.sheetStudentName}>{selectedStudent.studentName}</Text>
+                <Text style={styles.sheetStudentId}>Roll No: {selectedStudent.institutionalId}</Text>
+                <View style={styles.sheetBadgeRow}>
+                  <Chip
+                    tone={
+                      selectedStudent.faceRegistrationState === 'REGISTERED'
+                        ? 'forest'
+                        : selectedStudent.faceRegistrationState === 'PENDING'
+                        ? 'amber'
+                        : 'soft'
+                    }
+                  >
+                    {selectedStudent.faceRegistrationState === 'REGISTERED'
+                      ? 'Face ID Active'
+                      : selectedStudent.faceRegistrationState === 'PENDING'
+                      ? 'Registration Pending'
+                      : 'No Face ID'}
+                  </Chip>
+                </View>
+              </View>
+            </View>
+
+            {/* Attendance Metric Bar */}
+            <Card style={styles.sheetMetricCard}>
+              <View style={styles.sheetMetricRow}>
+                <View style={styles.sheetMetricItem}>
+                  <Text style={styles.sheetMetricValue}>{selectedStudent.pct}%</Text>
+                  <Text style={styles.sheetMetricLabel}>Attendance</Text>
+                </View>
+                <View style={styles.sheetMetricDivider} />
+                <View style={styles.sheetMetricItem}>
+                  <Text style={styles.sheetMetricValue}>{heldCount}</Text>
+                  <Text style={styles.sheetMetricLabel}>Classes Held</Text>
+                </View>
+                <View style={styles.sheetMetricDivider} />
+                <View style={styles.sheetMetricItem}>
+                  <Text style={styles.sheetMetricValue}>
+                    {selectedStudent.pct >= 75 ? 'Good' : 'Shortage'}
+                  </Text>
+                  <Text style={styles.sheetMetricLabel}>Status</Text>
+                </View>
+              </View>
+            </Card>
+
+            {/* Inline Correction Form */}
+            {isEditingStudent ? (
+              <View style={styles.editSection}>
+                <Text style={styles.editSectionTitle}>Correct Student Record</Text>
+                <Text style={styles.setupLabel}>Full Name</Text>
+                <TextInput
+                  style={styles.rosterSearchInput}
+                  value={editName}
+                  onChangeText={setEditName}
+                  placeholder="Student Full Name"
+                />
+
+                <Text style={[styles.setupLabel, { marginTop: 10 }]}>Institutional Identifier</Text>
+                <TextInput
+                  style={styles.rosterSearchInput}
+                  value={editInstitutionalId}
+                  onChangeText={setEditInstitutionalId}
+                  placeholder="e.g. 21CS031"
+                  autoCapitalize="characters"
+                />
+
+                {editMsg && (
+                  <Text style={styles.editFeedbackText}>{editMsg}</Text>
+                )}
+
+                <View style={styles.editActionsRow}>
+                  <Pressable
+                    onPress={() => setIsEditingStudent(false)}
+                    style={[styles.editBtn, styles.editBtnCancel]}
+                  >
+                    <Text style={styles.editBtnCancelText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={async () => {
+                      setEditSaving(true);
+                      setEditMsg(null);
+                      try {
+                        const token = SessionStore.getToken();
+                        const res = await fetch(`${API_BASE_URL}/api/v1/faculty/students/${selectedStudent.studentUserId}`, {
+                          method: 'PATCH',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            Accept: 'application/json',
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                          },
+                          body: JSON.stringify({
+                            full_name: editName,
+                            institutional_id: editInstitutionalId,
+                          }),
+                        });
+                        if (res.ok) {
+                          setEditMsg('✓ Record updated successfully');
+                          setStudents((prev) =>
+                            prev.map((s) =>
+                              s.studentUserId === selectedStudent.studentUserId
+                                ? { ...s, studentName: editName, institutionalId: editInstitutionalId }
+                                : s
+                            )
+                          );
+                          setSelectedStudent((prev) =>
+                            prev ? { ...prev, studentName: editName, institutionalId: editInstitutionalId } : null
+                          );
+                          setTimeout(() => setIsEditingStudent(false), 1200);
+                        } else {
+                          const err = await res.text();
+                          setEditMsg(`Update failed: ${err}`);
+                        }
+                      } catch (err: any) {
+                        setEditMsg(`Error: ${err.message || 'Offline'}`);
+                      } finally {
+                        setEditSaving(false);
+                      }
+                    }}
+                    style={[styles.editBtn, styles.editBtnSave]}
+                  >
+                    {editSaving ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.editBtnSaveText}>Save Changes</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.sheetActionsContainer}>
+                {/* Faculty-Assisted Face Registration Action */}
+                <Button
+                  variant="primary"
+                  style={styles.sheetActionBtn}
+                  icon={<ScanFace size={18} color="#ffffff" />}
+                  onPress={() => {
+                    setStudentDetailVisible(false);
+                    router.push({
+                      pathname: '/(faculty)/enrollment',
+                      params: {
+                        studentUserId: selectedStudent.studentUserId,
+                        studentName: selectedStudent.studentName,
+                        institutionalId: selectedStudent.institutionalId,
+                        teachingAssignmentId: params.id || '',
+                        sectionCode: params.section || '',
+                      },
+                    });
+                  }}
+                >
+                  {selectedStudent.faceRegistrationState === 'REGISTERED'
+                    ? 'Re-enroll / Update Face Profile'
+                    : 'Faculty-Assisted Face Registration'}
+                </Button>
+
+                {/* Edit Student Info Toggle */}
+                <Button
+                  variant="soft"
+                  style={styles.sheetActionBtn}
+                  icon={<Edit3 size={16} color={Colors.ink} />}
+                  onPress={() => setIsEditingStudent(true)}
+                >
+                  Correct Student Record
+                </Button>
+              </View>
+            )}
+          </View>
+        )}
       </Sheet>
     </Screen>
   );
@@ -1397,6 +1631,132 @@ const styles = StyleSheet.create({
   historyMeta: {
     fontSize: 11,
     color: Colors.soft,
+  },
+  rosterSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: Radii.card,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  rosterSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.ink,
+    padding: 0,
+  },
+  sheetStudentDetailContainer: {
+    paddingVertical: 10,
+    gap: 16,
+  },
+  sheetAvatarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  sheetStudentMeta: {
+    flex: 1,
+  },
+  sheetStudentName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  sheetStudentId: {
+    fontSize: 13,
+    color: Colors.soft,
+    marginTop: 2,
+  },
+  sheetBadgeRow: {
+    flexDirection: 'row',
+    marginTop: 6,
+  },
+  sheetMetricCard: {
+    padding: 14,
+    backgroundColor: Colors.card,
+  },
+  sheetMetricRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+  },
+  sheetMetricItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  sheetMetricDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: Colors.line,
+  },
+  sheetMetricValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  sheetMetricLabel: {
+    fontSize: 11,
+    color: Colors.soft,
+    marginTop: 2,
+  },
+  sheetActionsContainer: {
+    gap: 10,
+    marginTop: 8,
+  },
+  sheetActionBtn: {
+    width: '100%',
+  },
+  editSection: {
+    backgroundColor: Colors.card,
+    borderRadius: Radii.card,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    gap: 6,
+  },
+  editSectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.ink,
+    marginBottom: 6,
+  },
+  editActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  editBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: Radii.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editBtnCancel: {
+    backgroundColor: Colors.line,
+  },
+  editBtnCancelText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.ink,
+  },
+  editBtnSave: {
+    backgroundColor: Colors.forest,
+  },
+  editBtnSaveText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  editFeedbackText: {
+    fontSize: 12,
+    color: Colors.forest,
+    fontWeight: '600',
+    marginTop: 4,
   },
 });
 

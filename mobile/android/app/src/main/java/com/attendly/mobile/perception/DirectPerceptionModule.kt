@@ -1,9 +1,13 @@
 package com.attendly.mobile.perception
 
+import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
 import com.facebook.react.bridge.*
@@ -14,6 +18,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import kotlinx.coroutines.*
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -634,6 +639,91 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
             } catch (e: Exception) {
                 Log.e(TAG, "Direct in-memory detection error", e)
                 promise.reject("DETECTION_FAILED", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun capturePhotoFromCamera(viewTag: Int, promise: Promise) {
+        scope.launch {
+            try {
+                val (rawBitmap, _) = grabBitmapFromCamera(viewTag)
+                val maxDim = 512
+                val srcW = rawBitmap.width
+                val srcH = rawBitmap.height
+                val scale = min(maxDim.toFloat() / srcW, maxDim.toFloat() / srcH)
+                val targetW = (srcW * scale).toInt()
+                val targetH = (srcH * scale).toInt()
+
+                val scaledBitmap = Bitmap.createScaledBitmap(rawBitmap, targetW, targetH, true)
+                val bos = ByteArrayOutputStream()
+                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, bos)
+                val bytes = bos.toByteArray()
+                val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+                val result = Arguments.createMap().apply {
+                    putBoolean("success", true)
+                    putString("base64", b64)
+                    putInt("width", targetW)
+                    putInt("height", targetH)
+                    putInt("sizeBytes", bytes.size)
+                }
+
+                if (scaledBitmap != rawBitmap) {
+                    scaledBitmap.recycle()
+                }
+
+                promise.resolve(result)
+            } catch (e: Exception) {
+                Log.e(TAG, "capturePhotoFromCamera failed", e)
+                promise.reject("CAPTURE_PHOTO_ERROR", "Failed to capture photo: ${e.message}", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun saveReportFile(fileName: String, content: String, mimeType: String, promise: Promise) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val resolver = reactContext.contentResolver
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                    put(
+                        MediaStore.MediaColumns.RELATIVE_PATH,
+                        Environment.DIRECTORY_DOWNLOADS + "/Klasio"
+                    )
+                }
+
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                if (uri == null) {
+                    val file = File(reactContext.cacheDir, fileName)
+                    file.writeText(content, Charsets.UTF_8)
+                    promise.resolve(file.absolutePath)
+                    return@launch
+                }
+
+                resolver.openOutputStream(uri)?.use { os ->
+                    os.write(content.toByteArray(Charsets.UTF_8))
+                }
+
+                withContext(Dispatchers.Main) {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = mimeType
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    val chooser = Intent.createChooser(shareIntent, "Share Attendance Report").apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    reactContext.startActivity(chooser)
+                }
+
+                promise.resolve(uri.toString())
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save report file", e)
+                promise.reject("SAVE_FILE_ERROR", "Failed to save file: ${e.message}", e)
             }
         }
     }

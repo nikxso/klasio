@@ -8,6 +8,7 @@ import {
   Platform,
   ScrollView,
   SafeAreaView,
+  findNodeHandle,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +33,8 @@ import {
 
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
+import { SessionStore } from '@/storage/sessionStore';
+import { capturePhotoFromCamera, uploadProfilePhoto } from '@/services/nativePerception';
 import { GuidedFaceEnrollmentController } from '../../lab/adapters/enrollment/GuidedFaceEnrollmentController';
 import { EdgeFaceEmbedder, EDGEFACE_XS_MANIFEST } from '../../lab/adapters/recognizers/EdgeFaceEmbedder';
 import { float32ArrayToBase64 } from '../../perception/gallerySync';
@@ -67,6 +70,7 @@ export default function FacultyEnrollmentScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const controllerRef = useRef<GuidedFaceEnrollmentController | null>(null);
+  const cameraRef = useRef<Camera>(null);
 
   useEffect(() => {
     if (!hasPermission) {
@@ -169,16 +173,34 @@ export default function FacultyEnrollmentScreen() {
       let uploaded = false;
 
       try {
+        const token = SessionStore.getToken();
         const res = await fetch(`${baseUrl}/api/v1/biometrics/enrollment`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            Accept: 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify(payload),
         });
 
         if (res.ok) {
           uploaded = true;
+        }
+
+        // Store genuine face photo for student display profile
+        if (cameraRef.current) {
+          try {
+            const nodeHandle = findNodeHandle(cameraRef.current);
+            if (nodeHandle) {
+              const photo = await capturePhotoFromCamera(nodeHandle);
+              if (photo?.base64) {
+                await uploadProfilePhoto(studentUserId, photo.base64, token);
+              }
+            }
+          } catch (photoErr) {
+            console.warn('Faculty enrollment photo error:', photoErr);
+          }
         }
       } catch (e) {
         // Fallback for offline or local preview
@@ -261,6 +283,7 @@ export default function FacultyEnrollmentScreen() {
         <View style={styles.cameraWrapper}>
           {device && hasPermission ? (
             <Camera
+              ref={cameraRef}
               style={StyleSheet.absoluteFill}
               device={device}
               isActive={true}

@@ -46,6 +46,7 @@ import type {
   FaceDetectionResult,
 } from '@/perception/contracts';
 import { float32ArrayToBase64 } from '@/perception/gallerySync';
+import { capturePhotoFromCamera, uploadProfilePhoto } from '@/services/nativePerception';
 
 const POSES = [
   { label: 'Look straight ahead', sublabel: 'Neutral expression', icon: Smile, step: 'FRONTAL' as const },
@@ -160,6 +161,19 @@ export default function StudentEnrollmentScreen() {
         const errorBody = await res.text();
         console.warn(`[BIOMETRICS_ENROLLMENT] Backend rejected (${res.status}): ${errorBody}`);
         // If server is not currently reachable during offline testing, accept locally
+      }
+
+      // Automatically store the recorded face frame as student's profile photo
+      try {
+        const nodeHandle = findNodeHandle(cameraRef.current);
+        if (nodeHandle) {
+          const photo = await capturePhotoFromCamera(nodeHandle);
+          if (photo?.base64) {
+            await uploadProfilePhoto(profile.studentUserId, photo.base64, token);
+          }
+        }
+      } catch (photoErr) {
+        console.warn('Profile photo upload error (biometric template succeeded):', photoErr);
       }
 
       setEnrollmentComplete(true);
@@ -359,7 +373,7 @@ export default function StudentEnrollmentScreen() {
         </Text>
         <Text style={styles.feedbackSub}>
           {enrollmentComplete
-            ? 'Your biometric profile is mathematically verified and registered.'
+            ? 'Your biometric profile and photo are verified. Faculty will see your genuine face photo on class rosters.'
             : isSubmitting
             ? 'Verifying unit L2 normalization and intra-student consistency...'
             : guidanceText}

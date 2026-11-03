@@ -6,6 +6,8 @@ import { BookOpen, ChevronRight, Users, Sparkles, AlertCircle, RefreshCw, BarCha
 import { Screen, Card, Ring, Chip, Button, SectionTitle, IconBubble } from '@/components/ui/kit';
 import { Colors } from '@/theme/tokens';
 import { RosterRepository } from '@/storage/rosterRepository';
+import { API_BASE_URL } from '@/config/api';
+import { SessionStore } from '@/storage/sessionStore';
 
 export interface TeachingAssignmentUI {
   id: string;
@@ -69,9 +71,46 @@ export default function FacultyAssignmentsScreen() {
   const [assignments, setAssignments] = useState<TeachingAssignmentUI[]>(INITIAL_ASSIGNMENTS);
   const [loading, setLoading] = useState(false);
 
+  const loadAssignments = async () => {
+    setLoading(true);
+    try {
+      const token = SessionStore.getToken();
+      if (!token) return;
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const mapped: TeachingAssignmentUI[] = data.map((item: any) => ({
+            id: item.id,
+            subjectCode: item.subject_code,
+            subjectName: item.subject_name,
+            sectionCode: item.section_code,
+            room: item.room || 'LH-204',
+            scheduleTime: item.schedule_time || '09:00',
+            heldCount: item.held_count || 0,
+            averageAttendancePct: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : 0,
+            studentsBelowThresholdCount: item.students_below_threshold_count || 0,
+            isDelegated: Boolean(item.is_delegated),
+            regularFacultyName: item.regular_faculty_name,
+            validTo: item.valid_to,
+          }));
+          setAssignments(mapped);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load assignments:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    // In production, syncs with GET /api/v1/faculty/assignments when online
-    // and reads/caches student rosters via RosterRepository
+    loadAssignments();
   }, []);
 
   const handleSelectAssignment = (item: TeachingAssignmentUI) => {

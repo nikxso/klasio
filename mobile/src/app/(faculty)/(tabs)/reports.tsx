@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -18,6 +19,9 @@ import {
   FileSpreadsheet,
   Download,
   Check,
+  Search,
+  Calendar,
+  Filter,
 } from 'lucide-react-native';
 import Svg, {
   Defs,
@@ -31,6 +35,8 @@ import Svg, {
 import { Screen, Card, Chip, SectionTitle, Avatar, Button } from '@/components/ui/kit';
 import { Colors, Radii, Shadows } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
+import { SessionStore } from '@/storage/sessionStore';
+import { saveReportFile } from '@/services/nativePerception';
 import {
   AttendanceBarChart,
   AttendanceTrendLineChart,
@@ -218,46 +224,188 @@ const CHART_HEIGHT = 110;
 
 export default function FacultyReportsScreen() {
   const router = useRouter();
-  const [reportList] = useState<ReportAssignmentData[]>(DEMO_REPORT_ASSIGNMENTS);
+  const [reportList, setReportList] = useState<ReportAssignmentData[]>(DEMO_REPORT_ASSIGNMENTS);
   const [selectedId, setSelectedId] = useState<string>(DEMO_REPORT_ASSIGNMENTS[0].id);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [shortageOnly, setShortageOnly] = useState<boolean>(false);
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
 
+  // Dynamic Academic Years and Terms filter
+  const [academicYears, setAcademicYears] = useState<string[]>(['2026-2027']);
+  const [selectedYear, setSelectedYear] = useState<string>('2026-2027');
+
+  // Faculty scope filters
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [dateRange, setDateRange] = useState<'ALL' | '30D' | '7D'>('ALL');
+  const [dynamicAnalytics, setDynamicAnalytics] = useState<any | null>(null);
+
+  // Load dynamic academic terms and assignments
+  const loadMetadata = useCallback(async () => {
+    try {
+      const token = SessionStore.getToken();
+      if (!token) return;
+
+      // 1. Fetch academic terms & years
+      const termsRes = await fetch(`${API_BASE_URL}/api/v1/faculty/academic-terms`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (termsRes.ok) {
+        const termsData = await termsRes.json();
+        if (termsData.academic_years && termsData.academic_years.length > 0) {
+          setAcademicYears(termsData.academic_years);
+        }
+      }
+
+      // 2. Fetch assignments
+      const assignRes = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (assignRes.ok) {
+        const assignData = await assignRes.json();
+        if (Array.isArray(assignData) && assignData.length > 0) {
+          const mapped: ReportAssignmentData[] = assignData.map((a: any) => ({
+            id: a.id,
+            subjectCode: a.subject_code,
+            subjectName: a.subject_name,
+            sectionCode: a.section_code,
+            room: a.room || 'LH-204',
+            held: a.held_count || 0,
+            avgPct: a.average_attendance_pct != null ? Math.round(a.average_attendance_pct) : 0,
+            threshold: 75,
+            trend: [],
+            studentsNeedingAttention: [],
+          }));
+          setReportList(mapped);
+          setSelectedId(mapped[0].id);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load reports metadata:', err);
+    }
+  }, []);
+
+  // Load detailed analytics for selected assignment
+  const loadSectionAnalytics = useCallback(async (assignmentId: string) => {
+    try {
+      const token = SessionStore.getToken();
+      if (!token) return;
+
+      let dateQuery = '';
+      if (dateRange === '30D') {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        dateQuery = `&start_date=${d.toISOString().split('T')[0]}`;
+      } else if (dateRange === '7D') {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        dateQuery = `&start_date=${d.toISOString().split('T')[0]}`;
+      }
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/analytics/assignments/${assignmentId}?threshold=75${dateQuery}`,
+        {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setDynamicAnalytics(data);
+      }
+    } catch (err) {
+      console.warn('Failed to load section analytics:', err);
+    }
+  }, [dateRange]);
+
+  useEffect(() => {
+    loadMetadata();
+  }, [loadMetadata]);
+
+  useEffect(() => {
+    if (selectedId) {
+      loadSectionAnalytics(selectedId);
+    }
+  }, [selectedId, loadSectionAnalytics]);
+
   const currentAssignment = useMemo(() => {
     return reportList.find((item) => item.id === selectedId) || reportList[0];
   }, [reportList, selectedId]);
 
+  // Merge dynamic analytics with selected assignment
+  const activeAttentionStudents = useMemo<ReportStudentAttention[]>(() => {
+    if (dynamicAnalytics?.students_needing_attention && dynamicAnalytics.students_needing_attention.length > 0) {
+      return dynamicAnalytics.students_needing_attention.map((s: any) => ({
+        id: s.student_user_id,
+        name: s.student_name,
+        institutionalId: s.institutional_id,
+        pct: s.attendance_percentage != null ? Math.round(s.attendance_percentage) : null,
+        attended: s.attended_sessions,
+        held: s.total_eligible_sessions,
+        run: s.consecutive_absences,
+        classesToRecover: s.classes_to_recover,
+        canMiss: s.classes_can_miss,
+        isShortage: s.is_shortage,
+        isRecoverable: s.is_recoverable,
+      }));
+    }
+    return currentAssignment.studentsNeedingAttention;
+  }, [dynamicAnalytics, currentAssignment]);
+
   const displayedStudents = useMemo(() => {
-    const list = currentAssignment.studentsNeedingAttention;
-    if (!shortageOnly) return list;
-    return list.filter((s) => s.isShortage || (s.pct !== null && s.pct < currentAssignment.threshold));
-  }, [currentAssignment, shortageOnly]);
+    let list = activeAttentionStudents;
+    if (shortageOnly) {
+      list = list.filter((s) => s.isShortage || (s.pct !== null && s.pct < currentAssignment.threshold));
+    }
+    if (searchQuery.trim().length > 0) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(
+        (s) => s.name.toLowerCase().includes(q) || s.institutionalId.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [activeAttentionStudents, shortageOnly, searchQuery, currentAssignment.threshold]);
 
-  // Compute SVG chart coordinates based on Figma polyline math
-  const chartCoordinates = useMemo(() => {
-    const trend = currentAssignment.trend;
-    const validPoints = (trend || []).filter((p) => p.pct !== null) as Array<{ label: string; pct: number }>;
-    if (validPoints.length === 0) return { line: '', polygon: '', points: [], lastPt: null };
+  const trendLineData = useMemo(() => {
+    if (dynamicAnalytics?.trend && dynamicAnalytics.trend.length > 0) {
+      return dynamicAnalytics.trend.map((t: any) => ({
+        label: t.period_label,
+        value: t.attendance_percentage != null ? Math.round(t.attendance_percentage) : 80,
+      }));
+    }
+    return (currentAssignment.trend || []).map((t) => ({
+      label: t.label,
+      value: t.pct ?? 80,
+    }));
+  }, [dynamicAnalytics, currentAssignment]);
 
-    const minVal = 70;
-    const maxVal = 100;
-    const range = maxVal - minVal;
-
-    const points: Array<[number, number]> = validPoints.map((point, index) => {
-      const x = (index * CHART_WIDTH) / Math.max(1, validPoints.length - 1);
-      const normalized = Math.min(100, Math.max(minVal, point.pct));
-      const y = CHART_HEIGHT - ((normalized - minVal) / range) * (CHART_HEIGHT - 20) - 10;
-      return [x, y];
-    });
-
-    const line = points.map((p) => `${p[0]},${p[1]}`).join(' ');
-    const polygon = `0,${CHART_HEIGHT} ${line} ${CHART_WIDTH},${CHART_HEIGHT}`;
-    const lastPt = points[points.length - 1];
-
-    return { line, polygon, points, lastPt };
-  }, [currentAssignment]);
+  const distributionBins: HistogramBin[] = useMemo(() => {
+    if (dynamicAnalytics?.roster_summaries && dynamicAnalytics.roster_summaries.length > 0) {
+      let b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
+      for (const s of dynamicAnalytics.roster_summaries) {
+        const pct = s.attendance_percentage != null ? s.attendance_percentage : 100;
+        if (pct < 50) b1++;
+        else if (pct < 65) b2++;
+        else if (pct < 75) b3++;
+        else if (pct < 90) b4++;
+        else b5++;
+      }
+      return [
+        { range: '<50%', count: b1, label: 'Critical', tone: 'rose' },
+        { range: '50-64%', count: b2, label: 'Severe', tone: 'amber' },
+        { range: '65-74%', count: b3, label: 'At-Risk', tone: 'neutral' },
+        { range: '75-89%', count: b4, label: 'Good', tone: 'sage' },
+        { range: '90-100%', count: b5, label: 'Top', tone: 'forest' },
+      ];
+    }
+    const avg = currentAssignment.avgPct ?? 85;
+    return [
+      { range: '<50%', count: avg < 75 ? 3 : 1, label: 'Critical', tone: 'rose' },
+      { range: '50-64%', count: avg < 75 ? 6 : 2, label: 'Severe', tone: 'amber' },
+      { range: '65-74%', count: avg < 75 ? 8 : 4, label: 'At-Risk', tone: 'neutral' },
+      { range: '75-89%', count: 24, label: 'Good', tone: 'sage' },
+      { range: '90-100%', count: 19, label: 'Top', tone: 'forest' },
+    ];
+  }, [dynamicAnalytics, currentAssignment]);
 
   const assignmentComparisonData = useMemo(() => {
     return reportList.map((item) => ({
@@ -267,59 +415,54 @@ export default function FacultyReportsScreen() {
     }));
   }, [reportList]);
 
-  const trendLineData = useMemo(() => {
-    return (currentAssignment.trend || []).map((t) => ({
-      label: t.label,
-      value: t.pct ?? 80,
-    }));
-  }, [currentAssignment]);
-
-  const distributionBins: HistogramBin[] = useMemo(() => {
-    const avg = currentAssignment.avgPct ?? 85;
-    if (avg >= 85) {
-      return [
-        { range: '<50%', count: 1, label: 'Critical', tone: 'rose' },
-        { range: '50-64%', count: 2, label: 'Severe', tone: 'amber' },
-        { range: '65-74%', count: 4, label: 'At-Risk', tone: 'neutral' },
-        { range: '75-89%', count: 24, label: 'Good', tone: 'sage' },
-        { range: '90-100%', count: 19, label: 'Top', tone: 'forest' },
-      ];
-    } else {
-      return [
-        { range: '<50%', count: 3, label: 'Critical', tone: 'rose' },
-        { range: '50-64%', count: 6, label: 'Severe', tone: 'amber' },
-        { range: '65-74%', count: 8, label: 'At-Risk', tone: 'neutral' },
-        { range: '75-89%', count: 20, label: 'Good', tone: 'sage' },
-        { range: '90-100%', count: 11, label: 'Top', tone: 'forest' },
-      ];
-    }
-  }, [currentAssignment]);
-
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 600);
+    await loadMetadata();
+    if (selectedId) {
+      await loadSectionAnalytics(selectedId);
+    }
+    setIsRefreshing(false);
   };
 
   const handleExport = async (reportType: 'roster' | 'sessions') => {
     setExporting(true);
     setExportMsg(null);
     try {
-      const endpoint = `${API_BASE_URL}/api/v1/analytics/assignments/${currentAssignment.id}/export?report_type=${reportType}${shortageOnly ? '&shortage_only=true' : ''}`;
-      const res = await fetch(endpoint, {
-        headers: { Accept: 'text/csv' },
-      });
-      if (res.ok) {
-        setExportMsg(`Exported ${currentAssignment.subjectCode} ${reportType === 'roster' ? 'roster summary' : 'session logs'} to CSV.`);
-      } else {
-        setExportMsg(`Export generated: ${currentAssignment.subjectCode}_${reportType}.csv ready.`);
+      const token = SessionStore.getToken();
+      let dateQuery = '';
+      if (dateRange === '30D') {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        dateQuery = `&start_date=${d.toISOString().split('T')[0]}`;
+      } else if (dateRange === '7D') {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        dateQuery = `&start_date=${d.toISOString().split('T')[0]}`;
       }
-    } catch {
-      setExportMsg(`Export generated: ${currentAssignment.subjectCode}_${reportType}.csv (offline preview).`);
+
+      const endpoint = `${API_BASE_URL}/api/v1/analytics/assignments/${currentAssignment.id}/export?report_type=${reportType}${shortageOnly ? '&shortage_only=true' : ''}${dateQuery}`;
+      const res = await fetch(endpoint, {
+        headers: {
+          Accept: 'text/csv',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (res.ok) {
+        const csvContent = await res.text();
+        const safeSubject = currentAssignment.subjectCode.replace(/[^a-zA-Z0-9]/g, '_');
+        const fileName = `${safeSubject}_${reportType}_${new Date().toISOString().split('T')[0]}.csv`;
+        await saveReportFile(fileName, csvContent, 'text/csv');
+        setExportMsg(`Exported & shared: ${fileName}`);
+      } else {
+        const errText = await res.text();
+        setExportMsg(`Export failed (${res.status}): ${errText}`);
+      }
+    } catch (err: any) {
+      setExportMsg(`Export error: ${err.message || 'Offline'}`);
     } finally {
       setExporting(false);
-      setTimeout(() => setExportMsg(null), 4000);
+      setTimeout(() => setExportMsg(null), 5000);
     }
   };
 
@@ -342,6 +485,63 @@ export default function FacultyReportsScreen() {
         </Pressable>
       }
     >
+      {/* Academic Year Dynamic Filter */}
+      <View style={styles.filterBar}>
+        <View style={styles.filterLabelRow}>
+          <Calendar size={13} color={Colors.forest} />
+          <Text style={styles.filterLabelText}>Academic Year</Text>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterScrollRow}
+        >
+          {academicYears.map((yr) => {
+            const isSelected = selectedYear === yr;
+            return (
+              <Pressable
+                key={yr}
+                onPress={() => setSelectedYear(yr)}
+                style={[styles.yearChip, isSelected && styles.yearChipSelected]}
+              >
+                <Text style={[styles.yearChipText, isSelected && styles.yearChipTextSelected]}>
+                  {yr}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* Date Range & Scope Quick Selector */}
+      <View style={styles.dateRangeBar}>
+        <Text style={styles.dateRangeLabel}>Scope:</Text>
+        <Pressable
+          onPress={() => setDateRange('ALL')}
+          style={[styles.rangePill, dateRange === 'ALL' && styles.rangePillSelected]}
+        >
+          <Text style={[styles.rangePillText, dateRange === 'ALL' && styles.rangePillTextSelected]}>
+            All Term
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setDateRange('30D')}
+          style={[styles.rangePill, dateRange === '30D' && styles.rangePillSelected]}
+        >
+          <Text style={[styles.rangePillText, dateRange === '30D' && styles.rangePillTextSelected]}>
+            Last 30 Days
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setDateRange('7D')}
+          style={[styles.rangePill, dateRange === '7D' && styles.rangePillSelected]}
+        >
+          <Text style={[styles.rangePillText, dateRange === '7D' && styles.rangePillTextSelected]}>
+            Last 7 Days
+          </Text>
+        </Pressable>
+      </View>
+
       {/* Horizontal Subject Selection Tabs */}
       <View style={styles.tabsWrapper}>
         <ScrollView
@@ -457,6 +657,18 @@ export default function FacultyReportsScreen() {
         >
           Students who need attention
         </SectionTitle>
+
+        {/* Search Filter for Student Scope */}
+        <View style={styles.searchContainer}>
+          <Search size={15} color={Colors.soft} style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search student by name or roll number..."
+            placeholderTextColor={Colors.soft}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </View>
 
         {/* Filter Chips */}
         <View style={styles.filterPillsRow}>
@@ -787,5 +999,96 @@ const styles = StyleSheet.create({
   },
   filterPillTextActive: {
     color: '#ffffff',
+  },
+  filterBar: {
+    marginBottom: 10,
+  },
+  filterLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  filterLabelText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.ink,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  filterScrollRow: {
+    gap: 8,
+  },
+  yearChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  yearChipSelected: {
+    backgroundColor: Colors.forest,
+    borderColor: Colors.forest,
+  },
+  yearChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.ink,
+  },
+  yearChipTextSelected: {
+    color: '#ffffff',
+  },
+  dateRangeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 14,
+  },
+  dateRangeLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.soft,
+  },
+  rangePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  rangePillSelected: {
+    backgroundColor: Colors.ink,
+    borderColor: Colors.ink,
+  },
+  rangePillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.soft,
+  },
+  rangePillTextSelected: {
+    color: '#ffffff',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: Radii.card,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+    gap: 8,
+  },
+  searchIcon: {
+    marginRight: 2,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.ink,
+    padding: 0,
   },
 });

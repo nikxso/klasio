@@ -1,0 +1,122 @@
+name: Attendly CI Pipeline
+
+on:
+  push:
+    branches: [main, master, staging]
+  pull_request:
+    branches: [main, master, staging]
+
+jobs:
+  # ============================================================================
+  # 1. Backend Testing & Contract Synchronization Gate
+  # ============================================================================
+  backend-gate:
+    name: Backend Tests & Coverage Gate (Python 3.12)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: atten_user
+          POSTGRES_PASSWORD: atten_password
+          POSTGRES_DB: atten_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atten_user -d atten_test_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install Dependencies
+        working-directory: backend
+        run: |
+          uv sync --extra dev
+
+      - name: Run Alembic Migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: "postgresql+asyncpg://atten_user:atten_password@localhost:5432/atten_test_db"
+          SECRET_KEY: "ci-testing-strong-secret-key-32-chars-long"
+        run: |
+          uv run alembic upgrade head
+
+      - name: Run Pytest Suite with Coverage (Target >= 85%)
+        working-directory: backend
+        env:
+          DATABASE_URL: "postgresql+asyncpg://atten_user:atten_password@localhost:5432/atten_test_db"
+          SECRET_KEY: "ci-testing-strong-secret-key-32-chars-long"
+        run: |
+          uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=85
+
+      - name: Verify OpenAPI Specification Synchronization
+        working-directory: backend
+        env:
+          DATABASE_URL: "postgresql+asyncpg://atten_user:atten_password@localhost:5432/atten_test_db"
+          SECRET_KEY: "ci-testing-strong-secret-key-32-chars-long"
+        run: |
+          uv run pytest tests/contract/test_openapi_sync.py
+
+  # ============================================================================
+  # 2. Mobile TypeScript Compilation & Edge Suite Gate
+  # ============================================================================
+  mobile-gate:
+    name: Mobile Typecheck & Invariant Suites (Node 20)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install Node Dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Run TypeScript Strict Check (tsc --noEmit)
+        working-directory: mobile
+        run: npx tsc --noEmit
+
+      - name: Run Mobile Storage & Gallery Regression Suites
+        working-directory: mobile
+        run: |
+          npm run test:storage
+          npm run test:gallery
+          npm run test:sync
+          npm run test:session
+          npm run test:enrollment
+
+  # ============================================================================
+  # 3. Deployment Configuration Lint Gate
+  # ============================================================================
+  staging-lint-gate:
+    name: Staging Docker Compose Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Staging Docker Compose Syntax
+        env:
+          SECRET_KEY: "ci-validation-secret-key-32-chars-min"
+          POSTGRES_PASSWORD: "ci_secure_db_password_24chars"
+        run: |
+          docker compose -f docker-compose.staging.yml config

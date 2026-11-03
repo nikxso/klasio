@@ -18,6 +18,7 @@ interface AttendanceRosterListProps {
   students: RosterStudentItemProps[];
   marks: Record<string, 'PRESENT' | 'ABSENT' | 'EXCUSED' | boolean>;
   onToggleStatus: (studentUserId: string, newStatus: 'PRESENT' | 'ABSENT' | 'EXCUSED') => void;
+  onSelectStudent?: (student: RosterStudentItemProps) => void;
   readOnly?: boolean;
 }
 
@@ -25,6 +26,7 @@ export function AttendanceRosterList({
   students,
   marks,
   onToggleStatus,
+  onSelectStudent,
   readOnly = false,
 }: AttendanceRosterListProps) {
   if (!students || students.length === 0) {
@@ -51,30 +53,37 @@ export function AttendanceRosterList({
             key={student.studentUserId}
             style={[styles.row, !isLast && styles.rowDivider]}
           >
-            <Avatar name={student.studentName} size={40} />
+            <Pressable
+              style={styles.studentInfoWrapper}
+              onPress={() => onSelectStudent?.(student)}
+              accessibilityRole="button"
+              accessibilityLabel={`View ${student.studentName}'s profile`}
+            >
+              <Avatar name={student.studentName} userId={student.studentUserId} size={40} />
 
-            <View style={styles.studentInfo}>
-              <View style={styles.nameRow}>
-                <Text style={styles.nameText} numberOfLines={1}>
-                  {student.studentName}
-                </Text>
-                <Chip tone={badgeConfig.tone}>{badgeConfig.label}</Chip>
-              </View>
-
-              <View style={styles.subRow}>
-                <Text style={styles.idText}>{student.institutionalId}</Text>
-                {student.attendancePercentage !== undefined && (
-                  <Text
-                    style={[
-                      styles.pctText,
-                      student.attendancePercentage < 75 && styles.pctBelowText,
-                    ]}
-                  >
-                    · {student.attendancePercentage}% avg
+              <View style={styles.studentInfo}>
+                <View style={styles.nameRow}>
+                  <Text style={styles.nameText} numberOfLines={1}>
+                    {student.studentName}
                   </Text>
-                )}
+                  <Chip tone={badgeConfig.tone}>{badgeConfig.label}</Chip>
+                </View>
+
+                <View style={styles.subRow}>
+                  <Text style={styles.idText}>{student.institutionalId}</Text>
+                  {student.attendancePercentage !== undefined && (
+                    <Text
+                      style={[
+                        styles.pctText,
+                        student.attendancePercentage < 75 && styles.pctBelowText,
+                      ]}
+                    >
+                      · {student.attendancePercentage}% avg
+                    </Text>
+                  )}
+                </View>
               </View>
-            </View>
+            </Pressable>
 
             {!readOnly && (
               <View style={styles.actionsRow}>
@@ -157,6 +166,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    gap: 12,
+  },
+  studentInfoWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
   },
   rowDivider: {

@@ -25,6 +25,10 @@ import { SessionStore } from '@/storage/sessionStore';
 
 export default function StudentProfileScreen() {
   const router = useRouter();
+  const currentUser = SessionStore.getUser();
+  const studentName = currentUser?.fullName || 'Aarav Sharma';
+  const studentId = currentUser?.id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94';
+  const studentRoll = currentUser?.institutionalId || '21CS037';
 
   const handleSignOut = () => {
     Alert.alert(
@@ -47,9 +51,9 @@ export default function StudentProfileScreen() {
   return (
     <Screen scrollable>
       <View style={styles.headerBlock}>
-        <Avatar name="Aarav Sharma" size={76} />
-        <Text style={styles.userName}>Aarav Sharma</Text>
-        <Text style={styles.userSub}>CSE · Section 3A · 21CS037</Text>
+        <Avatar name={studentName} userId={studentId} size={76} />
+        <Text style={styles.userName}>{studentName}</Text>
+        <Text style={styles.userSub}>CSE · Section 3A · {studentRoll}</Text>
         <Chip tone="forest" style={styles.cohortChip}>
           Cohort 2026–27 · 3rd Year
         </Chip>
