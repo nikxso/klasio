@@ -149,6 +149,60 @@ async def revoke_substitute_delegation(
     )
 
 
+class FacultyDelegationItem(BaseModel):
+    id: uuid.UUID
+    assignment_id: uuid.UUID
+    subject_name: str
+    section_code: str
+    substitute_faculty_name: str
+    substitute_faculty_id: str
+    start_date: date
+    end_date: date
+    reason: str
+    status: str
+
+
+@router.get("/delegations", response_model=List[FacultyDelegationItem], summary="List delegations for faculty")
+async def list_faculty_delegations(
+    current_faculty: User = Depends(require_faculty),
+    db: AsyncSession = Depends(get_db_session),
+):
+    stmt = (
+        select(SubstituteDelegation)
+        .options(
+            selectinload(SubstituteDelegation.teaching_assignment).selectinload(TeachingAssignment.class_section),
+            selectinload(SubstituteDelegation.teaching_assignment).selectinload(TeachingAssignment.subject),
+            selectinload(SubstituteDelegation.substitute_faculty),
+            selectinload(SubstituteDelegation.regular_faculty),
+        )
+        .where(
+            or_(
+                SubstituteDelegation.regular_faculty_user_id == current_faculty.id,
+                SubstituteDelegation.substitute_faculty_user_id == current_faculty.id,
+            )
+        )
+        .order_by(SubstituteDelegation.created_at.desc())
+    )
+    res = await db.execute(stmt)
+    delegations = res.scalars().all()
+    return [
+        FacultyDelegationItem(
+            id=d.id,
+            assignment_id=d.teaching_assignment_id,
+            subject_name=d.teaching_assignment.subject.name if d.teaching_assignment and d.teaching_assignment.subject else "Subject",
+            section_code=d.teaching_assignment.class_section.section_code if d.teaching_assignment and d.teaching_assignment.class_section else "Section",
+            substitute_faculty_name=d.substitute_faculty.full_name if d.substitute_faculty else "Faculty",
+            substitute_faculty_id=d.substitute_faculty.institutional_id if d.substitute_faculty else "",
+            start_date=d.start_date,
+            end_date=d.end_date,
+            reason=d.delegation_reason,
+            status=d.status.value if hasattr(d.status, "value") else str(d.status),
+        )
+        for d in delegations
+    ]
+
+
+
 class AcademicTermsListResponse(BaseModel):
     academic_years: List[str]
     terms: List[Dict[str, Any]]

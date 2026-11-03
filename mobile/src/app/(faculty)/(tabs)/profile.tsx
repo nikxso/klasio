@@ -7,7 +7,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation } from 'expo-router';
 import {
   User,
   ShieldCheck,
@@ -22,20 +22,31 @@ import {
   CheckCircle2,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, IconBubble, Avatar } from '@/components/ui/kit';
+import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { AttendanceSyncWorker } from '@/storage/syncWorker';
-import { SessionStore } from '@/storage/sessionStore';
+import { SessionStore, AuthUser } from '@/storage/sessionStore';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
+import { API_BASE_URL } from '@/config/api';
 
 export default function FacultyProfileScreen() {
   const router = useRouter();
+  const navigation = useNavigation<any>();
+  const [user, setUser] = useState<AuthUser | null>(SessionStore.getUser());
   const [pendingQueueCount, setPendingQueueCount] = useState<number>(0);
   const [syncing, setSyncing] = useState(false);
+  const [showSignOutSheet, setShowSignOutSheet] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [cacheBuster, setCacheBuster] = useState(Date.now());
 
   useEffect(() => {
-    async function loadQueueStatus() {
+    async function initUserAndQueue() {
+      const stored = SessionStore.getUser() || (await SessionStore.initFromStorage())?.user;
+      if (stored) {
+        setUser(stored);
+      }
+      setCacheBuster(Date.now());
       try {
         const items = await AttendanceSyncWorker.getPendingQueueItems();
         setPendingQueueCount(items.length);
@@ -43,7 +54,7 @@ export default function FacultyProfileScreen() {
         setPendingQueueCount(0);
       }
     }
-    loadQueueStatus();
+    initUserAndQueue();
   }, []);
 
   const handleSyncNow = async () => {
@@ -60,52 +71,57 @@ export default function FacultyProfileScreen() {
     }
   };
 
-  const handleSignOut = async () => {
-    const pendingCount = await SessionStore.hasPendingSync();
-    if (pendingCount > 0) {
-      Alert.alert(
-        'Pending Offline Records',
-        `You have ${pendingCount} offline attendance record(s) queued for synchronization. Signing out now will preserve these records on this device, but they will not be visible on the portal until synchronized.\n\nDo you want to sign out now?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Sign Out & Preserve Records',
-            style: 'destructive',
-            onPress: async () => {
-              await SessionStore.clearSession(true);
-              router.replace('/');
-            },
-          },
-        ]
-      );
-      return;
-    }
-
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out of Klasio?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            await SessionStore.clearSession(true);
-            router.replace('/');
-          },
-        },
-      ]
-    );
+  const handleSignOutPress = async () => {
+    try {
+      const count = await SessionStore.hasPendingSync();
+      setPendingQueueCount(count);
+    } catch (_) {}
+    setShowSignOutSheet(true);
   };
+
+  const handleConfirmSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await SessionStore.clearSession(true);
+      setShowSignOutSheet(false);
+      try {
+        // Find the root navigation container to reset to root index
+        let rootNav = navigation;
+        while (rootNav.getParent && rootNav.getParent()) {
+          rootNav = rootNav.getParent();
+        }
+        rootNav.reset({
+          index: 0,
+          routes: [{ name: 'index' }],
+        });
+      } catch (navErr) {
+        router.replace('/');
+      }
+    } catch (e) {
+      console.warn('Sign out error:', e);
+      router.replace('/');
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
+
+  const facultyName = user?.fullName || 'Dr. Lakshmi Iyer';
+  const facultyStaffId = user?.institutionalId || 'FAC-0142';
+  const facultyId = user?.id;
 
   return (
     <Screen scrollable>
       <View style={styles.headerBlock}>
-        <Avatar name="Dr. Lakshmi Iyer" size={72} />
-        <Text style={styles.userName}>Dr. Lakshmi Iyer</Text>
-        <Text style={styles.userRole}>Associate Professor · Computer Science</Text>
+        <Avatar
+          name={facultyName}
+          userId={facultyId}
+          photoUrl={facultyId ? `${API_BASE_URL}/api/v1/users/${facultyId}/profile-photo?t=${cacheBuster}` : null}
+          size={72}
+        />
+        <Text style={styles.userName}>{facultyName}</Text>
+        <Text style={styles.userRole}>Faculty · Computer Science</Text>
         <Chip tone="forest" style={styles.badgeChip}>
-          Staff ID: FAC-0142
+          Staff ID: {facultyStaffId}
         </Chip>
       </View>
 
@@ -200,7 +216,7 @@ export default function FacultyProfileScreen() {
       </Card>
 
       <Pressable
-        onPress={handleSignOut}
+        onPress={handleSignOutPress}
         style={({ pressed }) => [
           styles.signOutButton,
           pressed && { opacity: 0.8 },
@@ -209,6 +225,39 @@ export default function FacultyProfileScreen() {
         <LogOut size={18} color={Colors.rose} />
         <Text style={styles.signOutText}>Sign out</Text>
       </Pressable>
+
+      {/* Sign Out Confirmation Sheet */}
+      <Sheet visible={showSignOutSheet} onClose={() => setShowSignOutSheet(false)}>
+        <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+          <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff5f5', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+            <LogOut size={26} color={Colors.rose} />
+          </View>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.ink, marginBottom: 6 }}>
+            Sign out of Klasio?
+          </Text>
+          <Text style={{ fontSize: 13, color: Colors.soft, textAlign: 'center', paddingHorizontal: 20, marginBottom: 20 }}>
+            {pendingQueueCount > 0
+              ? `You have ${pendingQueueCount} offline attendance record(s) queued for synchronization. Signing out will preserve these records on this device.`
+              : 'You will be returned to the login screen and will need your staff credentials to sign back in.'}
+          </Text>
+          <View style={{ width: '100%', gap: 10 }}>
+            <Button
+              tone="rose"
+              disabled={isSigningOut}
+              onPress={handleConfirmSignOut}
+            >
+              {isSigningOut ? 'Signing out…' : (pendingQueueCount > 0 ? 'Sign Out & Preserve Records' : 'Sign Out')}
+            </Button>
+            <Button
+              tone="soft"
+              disabled={isSigningOut}
+              onPress={() => setShowSignOutSheet(false)}
+            >
+              Cancel
+            </Button>
+          </View>
+        </View>
+      </Sheet>
     </Screen>
   );
 }

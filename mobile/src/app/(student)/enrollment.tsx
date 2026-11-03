@@ -166,10 +166,35 @@ export default function StudentEnrollmentScreen() {
       // Automatically store the recorded face frame as student's profile photo
       try {
         const nodeHandle = findNodeHandle(cameraRef.current);
+        let uploaded = false;
         if (nodeHandle) {
-          const photo = await capturePhotoFromCamera(nodeHandle);
-          if (photo?.base64) {
-            await uploadProfilePhoto(profile.studentUserId, photo.base64, token);
+          try {
+            const photo = await capturePhotoFromCamera(nodeHandle);
+            if (photo?.base64) {
+              await uploadProfilePhoto(profile.studentUserId, photo.base64, token);
+              uploaded = true;
+            }
+          } catch (photoErr) {
+            console.warn('[ENROLLMENT] capturePhotoFromCamera error:', photoErr);
+          }
+        }
+        if (!uploaded && cameraRef.current) {
+          try {
+            const photo = await cameraRef.current.takePhoto({ enableShutterSound: false });
+            if (photo?.path) {
+              const res = await fetch(photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`);
+              const blob = await res.blob();
+              const reader = new FileReader();
+              reader.readAsDataURL(blob);
+              reader.onloadend = async () => {
+                const b64 = (reader.result as string)?.split(',')[1];
+                if (b64) {
+                  await uploadProfilePhoto(profile.studentUserId, b64, token);
+                }
+              };
+            }
+          } catch (e2) {
+            console.warn('[ENROLLMENT] takePhoto fallback error:', e2);
           }
         }
       } catch (photoErr) {
@@ -341,6 +366,7 @@ export default function StudentEnrollmentScreen() {
               style={StyleSheet.absoluteFill}
               device={frontDevice}
               isActive={sessionActive && !enrollmentComplete}
+              photo={true}
             />
           ) : null}
 

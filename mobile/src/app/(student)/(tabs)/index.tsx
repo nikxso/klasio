@@ -92,6 +92,7 @@ const DEFAULT_SUMMARY: StudentPersonalAttendanceResponse = {
 
 export default function StudentHomeScreen() {
   const router = useRouter();
+  const [user, setUser] = useState(SessionStore.getUser());
   const [data, setData] = useState<StudentPersonalAttendanceResponse>(DEFAULT_SUMMARY);
   const [faceStatus, setFaceStatus] = useState<'none' | 'pending' | 'approved'>('approved');
   const [unreadCount, setUnreadCount] = useState<number>(1);
@@ -99,8 +100,14 @@ export default function StudentHomeScreen() {
   useEffect(() => {
     let isCancelled = false;
     async function loadData() {
+      const stored = SessionStore.getUser() || (await SessionStore.initFromStorage())?.user;
+      if (stored && !isCancelled) {
+        setUser(stored);
+      }
+
       try {
-        const cached = await StudentRepository.getCachedAttendance(DEFAULT_SUMMARY.student_id);
+        const studentId = stored?.id || DEFAULT_SUMMARY.student_id;
+        const cached = await StudentRepository.getCachedAttendance(studentId);
         if (cached && cached.data && cached.data.subjects.length > 0 && !isCancelled) {
           setData(cached.data);
         }
@@ -108,10 +115,9 @@ export default function StudentHomeScreen() {
         // Fallback to initial local cache
       }
 
-      const user = SessionStore.getUser();
       const token = SessionStore.getToken();
-      if (user) {
-        const count = await NotificationRepository.getUnreadCount(user.id, token);
+      if (stored) {
+        const count = await NotificationRepository.getUnreadCount(stored.id, token);
         if (!isCancelled) setUnreadCount(count);
       }
     }
@@ -128,7 +134,7 @@ export default function StudentHomeScreen() {
     <Screen
       left={<KlasioLogo variant="lockup" size={24} />}
       subtitle="Hi there 👋"
-      title="Aarav Sharma"
+      title={user?.fullName || 'Student'}
       right={
         <Pressable
           style={styles.notificationWrapper}

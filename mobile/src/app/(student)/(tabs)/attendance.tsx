@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
+  ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -17,6 +18,10 @@ import {
   Sparkles,
   WifiOff,
   BookOpen,
+  Calendar as CalendarIcon,
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
 } from 'lucide-react-native';
 
 import {
@@ -31,16 +36,82 @@ import {
 } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
+import { SessionStore } from '@/storage/sessionStore';
 import {
   StudentRepository,
   StudentPersonalAttendanceResponse,
   StudentSubjectSummary,
-  StudentSessionHistoryItem,
 } from '@/storage/studentRepository';
 import { AttendanceTrendLineChart } from '@/components/charts';
 
+export interface CalendarSessionItem {
+  session_id: string;
+  session_date: string;
+  period_slot: number;
+  time_slot: string;
+  subject_code: string;
+  subject_name: string;
+  faculty_name: string;
+  attendance_status: 'PRESENT' | 'ABSENT' | 'EXCUSED';
+  status_reason?: string | null;
+}
+
+const FALLBACK_CALENDAR_SESSIONS: CalendarSessionItem[] = [
+  {
+    session_id: 'sess-01',
+    session_date: '2026-11-02',
+    period_slot: 1,
+    time_slot: '09:00 – 10:00 AM',
+    subject_code: 'CS303',
+    subject_name: 'Operating Systems',
+    faculty_name: 'Prof. Rahul Menon',
+    attendance_status: 'ABSENT',
+  },
+  {
+    session_id: 'sess-02',
+    session_date: '2026-10-31',
+    period_slot: 2,
+    time_slot: '10:00 – 11:00 AM',
+    subject_code: 'CS301',
+    subject_name: 'Data Structures',
+    faculty_name: 'Dr. Lakshmi Iyer',
+    attendance_status: 'PRESENT',
+  },
+  {
+    session_id: 'sess-03',
+    session_date: '2026-10-31',
+    period_slot: 3,
+    time_slot: '11:15 – 12:15 PM',
+    subject_code: 'CS301',
+    subject_name: 'Data Structures Lab',
+    faculty_name: 'Dr. Lakshmi Iyer',
+    attendance_status: 'PRESENT',
+  },
+  {
+    session_id: 'sess-04',
+    session_date: '2026-10-28',
+    period_slot: 1,
+    time_slot: '09:00 – 10:00 AM',
+    subject_code: 'CS305',
+    subject_name: 'Computer Networks',
+    faculty_name: 'Dr. Fatima Khan',
+    attendance_status: 'PRESENT',
+  },
+  {
+    session_id: 'sess-05',
+    session_date: '2026-10-29',
+    period_slot: 2,
+    time_slot: '10:00 – 11:00 AM',
+    subject_code: 'CS301',
+    subject_name: 'Data Structures',
+    faculty_name: 'Dr. Lakshmi Iyer',
+    attendance_status: 'EXCUSED',
+    status_reason: 'Approved Medical Leave',
+  },
+];
+
 const DEFAULT_FALLBACK_ATTENDANCE: StudentPersonalAttendanceResponse = {
-  student_id: 'stu-aarav-21cs037',
+  student_id: '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94',
   overall_attendance_percentage: 82.0,
   subjects: [
     {
@@ -94,40 +165,69 @@ const DEFAULT_FALLBACK_ATTENDANCE: StudentPersonalAttendanceResponse = {
   ],
 };
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
 export default function StudentAttendanceScreen() {
   const router = useRouter();
   const [data, setData] = useState<StudentPersonalAttendanceResponse>(DEFAULT_FALLBACK_ATTENDANCE);
+  const [calendarSessions, setCalendarSessions] = useState<CalendarSessionItem[]>(FALLBACK_CALENDAR_SESSIONS);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
-  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
 
-  // Month state: defaults to October 2026 per Figma prototype
-  const [monthName] = useState('October 2026');
-  const [year] = useState(2026);
-  const [monthIndex] = useState(9); // 0-indexed: 9 = October
+  // Month navigation: default to November 2026 per current semester progression
+  const [currentDate, setCurrentDate] = useState(() => new Date(2026, 10, 2)); // Nov 2, 2026
+  const [selectedDate, setSelectedDate] = useState('2026-11-02');
+
+  const touchStartXRef = useRef<number>(0);
 
   const loadAttendance = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
 
+    const token = SessionStore.getToken();
+    const user = SessionStore.getUser();
+    const studentId = user?.id || DEFAULT_FALLBACK_ATTENDANCE.student_id;
+
     try {
-      const cached = await StudentRepository.getCachedAttendance(DEFAULT_FALLBACK_ATTENDANCE.student_id);
+      const cached = await StudentRepository.getCachedAttendance(studentId);
       if (cached && cached.data) {
         setData(cached.data);
       }
 
+      // 1. Fetch Subject Summary
       const res = await fetch(`${API_BASE_URL}/api/v1/student/attendance`, {
-        headers: { Accept: 'application/json' },
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
 
       if (res.ok) {
         const live: StudentPersonalAttendanceResponse = await res.json();
         setData(live);
         setIsOffline(false);
-        await StudentRepository.saveCachedAttendance(DEFAULT_FALLBACK_ATTENDANCE.student_id, live);
+        await StudentRepository.saveCachedAttendance(studentId, live);
       } else {
         setIsOffline(true);
+      }
+
+      // 2. Fetch Calendar Sessions
+      const calRes = await fetch(`${API_BASE_URL}/api/v1/student/attendance/calendar`, {
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (calRes.ok) {
+        const liveCal: CalendarSessionItem[] = await calRes.json();
+        if (Array.isArray(liveCal) && liveCal.length > 0) {
+          setCalendarSessions(liveCal);
+        }
       }
     } catch {
       setIsOffline(true);
@@ -141,51 +241,247 @@ export default function StudentAttendanceScreen() {
     loadAttendance();
   }, [loadAttendance]);
 
-  // Generate calendar days for October (31 days)
-  // 1 Oct 2026 was a Thursday (index 3 if Monday is 0)
-  const firstDayOffset = 3;
-  const daysInMonth = 31;
+  // Month Switchers
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth(); // 0-indexed
+  const monthTitle = `${MONTH_NAMES[month]} ${year}`;
+
+  const handlePrevMonth = () => {
+    setCurrentDate(new Date(year, month - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentDate(new Date(year, month + 1, 1));
+  };
+
+  // Touch Swipe Handlers for Month Switch
+  const onTouchStart = (e: any) => {
+    touchStartXRef.current = e.nativeEvent.pageX;
+  };
+
+  const onTouchEnd = (e: any) => {
+    const endX = e.nativeEvent.pageX;
+    const diff = endX - touchStartXRef.current;
+    if (diff > 50) {
+      handlePrevMonth(); // Swiped right -> go to previous month
+    } else if (diff < -50) {
+      handleNextMonth(); // Swiped left -> go to next month
+    }
+  };
+
+  // Calendar Day Grid Calculation
+  const firstDayIndex = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0 ... Sunday = 6
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-  // Determine actual attendance status for past days:
-  // Day 1: Present, Day 2: Absent, Day 3: Excused, Day 4 (Today): Present
-  const getAttendanceStatusForDay = (d: number): 'present' | 'absent' | 'excused' | null => {
-    if (d > 4) return null; // Future dates
-    if (d === 2) return 'absent';
-    if (d === 3) return 'excused';
+  // Group sessions by date
+  const sessionsByDate: Record<string, CalendarSessionItem[]> = {};
+  for (const s of calendarSessions) {
+    if (!sessionsByDate[s.session_date]) {
+      sessionsByDate[s.session_date] = [];
+    }
+    sessionsByDate[s.session_date].push(s);
+  }
+
+  // Attendance dot status for day
+  const getDayStatus = (d: number): 'present' | 'absent' | 'excused' | null => {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const sess = sessionsByDate[dateStr];
+    if (!sess || sess.length === 0) return null;
+    if (sess.some((x) => x.attendance_status === 'ABSENT')) return 'absent';
+    if (sess.every((x) => x.attendance_status === 'PRESENT')) return 'present';
+    if (sess.some((x) => x.attendance_status === 'EXCUSED')) return 'excused';
     return 'present';
   };
+
+  // Sessions for currently selected date
+  const selectedDateSessions = sessionsByDate[selectedDate] || [];
+
+  const formattedSelectedDate = (() => {
+    try {
+      const parts = selectedDate.split('-');
+      if (parts.length === 3) {
+        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        return d.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+      }
+    } catch (_) {}
+    return selectedDate;
+  })();
 
   return (
     <Screen
       title="Attendance"
-      subtitle="By subject and by day"
+      subtitle="Monthly calendar and session breakdown"
       scrollable
     >
       {isOffline && (
         <View style={styles.offlineBanner}>
           <WifiOff size={16} color={Colors.amber} />
           <Text style={styles.offlineBannerText}>
-            You're viewing saved data
+            You're viewing saved attendance data
           </Text>
         </View>
       )}
 
-      {/* Overall Attendance Progression Trend */}
-      <AttendanceTrendLineChart
-        data={[
-          { label: 'Aug', value: 88 },
-          { label: 'Sep W1', value: 85 },
-          { label: 'Sep W3', value: 79 },
-          { label: 'Oct W1', value: 82 },
-          { label: 'Oct W3', value: 84 },
-          { label: 'Now', value: Math.round(data.overall_attendance_percentage) },
-        ]}
-        threshold={75}
-        title="Attendance Progression Trend"
-      />
+      {/* 1. CALENDAR FIRST WITH SWIPE & MONTH NAVIGATION */}
+      <View
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
+        <Card style={styles.calendarCard}>
+          {/* Month Switcher Header */}
+          <View style={styles.monthHeaderRow}>
+            <Pressable
+              onPress={handlePrevMonth}
+              hitSlop={12}
+              style={styles.monthArrowButton}
+              accessibilityLabel="Previous month"
+            >
+              <ChevronLeft size={20} color={Colors.ink} />
+            </Pressable>
 
-      {/* Subjects Breakdown */}
+            <View style={styles.monthTitleWrapper}>
+              <CalendarIcon size={16} color={Colors.forest} style={{ marginRight: 6 }} />
+              <Text style={styles.monthTitleText}>{monthTitle}</Text>
+            </View>
+
+            <Pressable
+              onPress={handleNextMonth}
+              hitSlop={12}
+              style={styles.monthArrowButton}
+              accessibilityLabel="Next month"
+            >
+              <ChevronRight size={20} color={Colors.ink} />
+            </Pressable>
+          </View>
+
+          {/* Weekday Labels (Mon - Sun) */}
+          <View style={styles.calendarWeekRow}>
+            {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((w, idx) => (
+              <Text key={`${w}-${idx}`} style={styles.calendarWeekHeader}>
+                {w}
+              </Text>
+            ))}
+          </View>
+
+          {/* Days Grid */}
+          <View style={styles.calendarGrid}>
+            {Array.from({ length: firstDayIndex }, (_, i) => (
+              <View key={`empty-${i}`} style={styles.calendarDayCell} />
+            ))}
+
+            {days.map((d) => {
+              const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+              const isSelected = selectedDate === dateStr;
+              const status = getDayStatus(d);
+
+              return (
+                <Pressable
+                  key={`day-${d}`}
+                  onPress={() => setSelectedDate(dateStr)}
+                  style={({ pressed }) => [
+                    styles.calendarDayCell,
+                    isSelected && styles.dayCellSelected,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.dayText,
+                      isSelected && styles.dayTextSelected,
+                    ]}
+                  >
+                    {d}
+                  </Text>
+                  {status && (
+                    <View
+                      style={[
+                        styles.indicatorDot,
+                        status === 'present' && styles.dotPresent,
+                        status === 'absent' && styles.dotAbsent,
+                        status === 'excused' && styles.dotExcused,
+                      ]}
+                    />
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {/* Calendar Legend */}
+          <View style={styles.calendarLegendRow}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, styles.dotPresent]} />
+              <Text style={styles.legendLabel}>Attended</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, styles.dotAbsent]} />
+              <Text style={styles.legendLabel}>Missed</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, styles.dotExcused]} />
+              <Text style={styles.legendLabel}>Excused</Text>
+            </View>
+            <Text style={styles.swipeHintText}>Swipe ↔ to change month</Text>
+          </View>
+        </Card>
+      </View>
+
+      {/* 2. SESSIONS BREAKDOWN FOR SELECTED DATE */}
+      <SectionTitle>Classes on {formattedSelectedDate}</SectionTitle>
+      {selectedDateSessions.length > 0 ? (
+        <View style={styles.dailySessionsList}>
+          {selectedDateSessions.map((session) => (
+            <Card key={session.session_id} style={styles.sessionCard}>
+              <View style={styles.sessionHeaderRow}>
+                <View style={styles.slotBadge}>
+                  <Clock size={12} color={Colors.forest} />
+                  <Text style={styles.slotBadgeText}>{session.time_slot}</Text>
+                </View>
+                <Chip
+                  tone={
+                    session.attendance_status === 'PRESENT'
+                      ? 'forest'
+                      : session.attendance_status === 'ABSENT'
+                      ? 'rose'
+                      : 'amber'
+                  }
+                >
+                  {session.attendance_status === 'PRESENT' ? 'Attended' : session.attendance_status === 'ABSENT' ? 'Missed' : 'Excused'}
+                </Chip>
+              </View>
+
+              <Text style={styles.sessionSubjectName}>
+                {session.subject_code} · {session.subject_name}
+              </Text>
+              <Text style={styles.sessionFacultyName}>
+                Faculty: {session.faculty_name}
+              </Text>
+
+              {session.status_reason && (
+                <View style={styles.reasonBlock}>
+                  <Text style={styles.reasonText}>Note: {session.status_reason}</Text>
+                </View>
+              )}
+            </Card>
+          ))}
+        </View>
+      ) : (
+        <Card style={styles.emptySessionCard}>
+          <Clock size={24} color={Colors.soft} style={{ marginBottom: 6 }} />
+          <Text style={styles.emptySessionTitle}>No classes recorded</Text>
+          <Text style={styles.emptySessionSub}>
+            No scheduled or recorded attendance sessions found for {formattedSelectedDate}.
+          </Text>
+        </Card>
+      )}
+
+      {/* 3. SUBJECTS BREAKDOWN */}
       <SectionTitle>Subjects Breakdown</SectionTitle>
       <View style={styles.subjectsContainer}>
         {data.subjects.map((s) => (
@@ -244,70 +540,21 @@ export default function StudentAttendanceScreen() {
         ))}
       </View>
 
-      {/* Monthly Attendance Calendar */}
-      <SectionTitle>{monthName}</SectionTitle>
-      <Card style={styles.calendarCard}>
-        {/* Day-of-Week Headers */}
-        <View style={styles.calendarWeekRow}>
-          {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
-            <Text key={i} style={styles.calendarWeekHeader}>
-              {d}
-            </Text>
-          ))}
-        </View>
-
-        {/* Days Grid */}
-        <View style={styles.calendarGrid}>
-          {Array.from({ length: firstDayOffset }, (_, i) => (
-            <View key={`empty-${i}`} style={styles.calendarDayCell} />
-          ))}
-
-          {days.map((d) => {
-            const status = getAttendanceStatusForDay(d);
-            const isToday = d === 4;
-
-            return (
-              <View
-                key={d}
-                style={[
-                  styles.calendarDayCell,
-                  status === 'present' && styles.dayCellPresent,
-                  status === 'absent' && styles.dayCellAbsent,
-                  status === 'excused' && styles.dayCellExcused,
-                  isToday && styles.dayCellToday,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.dayText,
-                    status === 'present' && styles.dayTextPresent,
-                    status === 'absent' && styles.dayTextAbsent,
-                    status === 'excused' && styles.dayTextExcused,
-                  ]}
-                >
-                  {d}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-
-        {/* Legend */}
-        <View style={styles.calendarLegendRow}>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: Colors.forest }]} />
-            <Text style={styles.legendLabel}>Present</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: Colors.rose }]} />
-            <Text style={styles.legendLabel}>Absent</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: Colors.amber }]} />
-            <Text style={styles.legendLabel}>Excused</Text>
-          </View>
-        </View>
-      </Card>
+      {/* 4. OVERALL ATTENDANCE PROGRESSION TREND */}
+      <View style={{ marginTop: 14 }}>
+        <AttendanceTrendLineChart
+          data={[
+            { label: 'Aug', value: 88 },
+            { label: 'Sep W1', value: 85 },
+            { label: 'Sep W3', value: 79 },
+            { label: 'Oct W1', value: 82 },
+            { label: 'Oct W3', value: 84 },
+            { label: 'Now', value: Math.round(data.overall_attendance_percentage) },
+          ]}
+          threshold={75}
+          title="Attendance Progression Trend"
+        />
+      </View>
     </Screen>
   );
 }
@@ -327,8 +574,183 @@ const styles = StyleSheet.create({
     color: '#8f6500',
     fontWeight: '500',
   },
+  calendarCard: {
+    padding: 16,
+    marginBottom: 14,
+  },
+  monthHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  monthArrowButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  monthTitleWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  monthTitleText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  calendarWeekRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 8,
+  },
+  calendarWeekHeader: {
+    width: 38,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.soft,
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-around',
+    rowGap: 6,
+  },
+  calendarDayCell: {
+    width: 38,
+    height: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 2,
+  },
+  dayCellSelected: {
+    backgroundColor: Colors.forest,
+  },
+  dayText: {
+    fontSize: 14,
+    color: Colors.ink,
+    fontWeight: '500',
+  },
+  dayTextSelected: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  indicatorDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    marginTop: 3,
+  },
+  dotPresent: {
+    backgroundColor: Colors.forest,
+  },
+  dotAbsent: {
+    backgroundColor: Colors.rose,
+  },
+  dotExcused: {
+    backgroundColor: Colors.amber,
+  },
+  calendarLegendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 14,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.line,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  legendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  legendLabel: {
+    fontSize: 11,
+    color: Colors.soft,
+  },
+  swipeHintText: {
+    marginLeft: 'auto',
+    fontSize: 10,
+    color: Colors.soft,
+    fontStyle: 'italic',
+  },
+  dailySessionsList: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  sessionCard: {
+    padding: 14,
+    gap: 6,
+  },
+  sessionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  slotBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.forest50,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  slotBadgeText: {
+    fontSize: 12,
+    color: Colors.forest,
+    fontWeight: '600',
+  },
+  sessionSubjectName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.ink,
+    marginTop: 2,
+  },
+  sessionFacultyName: {
+    fontSize: 12,
+    color: Colors.soft,
+  },
+  reasonBlock: {
+    backgroundColor: '#fff9eb',
+    padding: 6,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  reasonText: {
+    fontSize: 11,
+    color: '#8f6500',
+  },
+  emptySessionCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  emptySessionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.ink,
+    marginBottom: 2,
+  },
+  emptySessionSub: {
+    fontSize: 12,
+    color: Colors.soft,
+    textAlign: 'center',
+  },
   subjectsContainer: {
     gap: 10,
+    marginBottom: 10,
   },
   subjectCard: {
     padding: 14,
@@ -372,85 +794,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.soft,
     flex: 1,
-  },
-  calendarCard: {
-    padding: 16,
-    marginBottom: 20,
-  },
-  calendarWeekRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 10,
-  },
-  calendarWeekHeader: {
-    width: 36,
-    textAlign: 'center',
-    fontSize: 11,
-    fontWeight: '600',
-    color: Colors.soft,
-  },
-  calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-around',
-    rowGap: 8,
-  },
-  calendarDayCell: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayCellPresent: {
-    backgroundColor: Colors.forest50,
-  },
-  dayCellAbsent: {
-    backgroundColor: Colors.rose50,
-  },
-  dayCellExcused: {
-    backgroundColor: Colors.amber50,
-  },
-  dayCellToday: {
-    borderWidth: 2,
-    borderColor: Colors.forest,
-  },
-  dayText: {
-    fontSize: 13,
-    color: Colors.soft,
-  },
-  dayTextPresent: {
-    color: Colors.forest,
-    fontWeight: '700',
-  },
-  dayTextAbsent: {
-    color: Colors.rose,
-    fontWeight: '700',
-  },
-  dayTextExcused: {
-    color: Colors.amber,
-    fontWeight: '700',
-  },
-  calendarLegendRow: {
-    flexDirection: 'row',
-    gap: 16,
-    marginTop: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: Colors.line,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  legendLabel: {
-    fontSize: 11,
-    color: Colors.soft,
   },
 });

@@ -391,6 +391,10 @@ export function Avatar({
   const [hasError, setHasError] = useState(false);
   const effectiveUrl = photoUrl || (userId ? `${API_BASE_URL}/api/v1/users/${userId}/profile-photo` : null);
 
+  React.useEffect(() => {
+    setHasError(false);
+  }, [userId, photoUrl]);
+
   if (effectiveUrl && !hasError) {
     return (
       <Image

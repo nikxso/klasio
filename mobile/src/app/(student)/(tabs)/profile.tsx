@@ -1,12 +1,11 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
-  Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation } from 'expo-router';
 import {
   ScanFace,
   Bell,
@@ -16,42 +15,70 @@ import {
   ChevronRight,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, IconBubble, Avatar } from '@/components/ui/kit';
+import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
-
-import { SessionStore } from '@/storage/sessionStore';
+import { API_BASE_URL } from '@/config/api';
+import { SessionStore, AuthUser } from '@/storage/sessionStore';
 
 export default function StudentProfileScreen() {
   const router = useRouter();
-  const currentUser = SessionStore.getUser();
-  const studentName = currentUser?.fullName || 'Aarav Sharma';
-  const studentId = currentUser?.id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94';
-  const studentRoll = currentUser?.institutionalId || '21CS037';
+  const navigation = useNavigation<any>();
+  const [user, setUser] = useState<AuthUser | null>(SessionStore.getUser());
+  const [showSignOutSheet, setShowSignOutSheet] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [cacheBuster, setCacheBuster] = useState(Date.now());
 
-  const handleSignOut = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out of Klasio?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            await SessionStore.clearSession(true);
-            router.replace('/');
-          },
-        },
-      ]
-    );
+  useEffect(() => {
+    async function initUser() {
+      const stored = SessionStore.getUser() || (await SessionStore.initFromStorage())?.user;
+      if (stored) {
+        setUser(stored);
+      }
+      setCacheBuster(Date.now());
+    }
+    initUser();
+  }, []);
+
+  const studentName = user?.fullName || 'Aarav Sharma';
+  const studentId = user?.id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94';
+  const studentRoll = user?.institutionalId || '21CS037';
+
+  const handleConfirmSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await SessionStore.clearSession(true);
+      setShowSignOutSheet(false);
+      try {
+        let rootNav = navigation;
+        while (rootNav.getParent && rootNav.getParent()) {
+          rootNav = rootNav.getParent();
+        }
+        rootNav.reset({
+          index: 0,
+          routes: [{ name: 'index' }],
+        });
+      } catch (navErr) {
+        router.replace('/');
+      }
+    } catch (e) {
+      console.warn('Sign out error:', e);
+      router.replace('/');
+    } finally {
+      setIsSigningOut(false);
+    }
   };
 
   return (
     <Screen scrollable>
       <View style={styles.headerBlock}>
-        <Avatar name={studentName} userId={studentId} size={76} />
+        <Avatar
+          name={studentName}
+          userId={studentId}
+          photoUrl={`${API_BASE_URL}/api/v1/users/${studentId}/profile-photo?t=${cacheBuster}`}
+          size={76}
+        />
         <Text style={styles.userName}>{studentName}</Text>
         <Text style={styles.userSub}>CSE · Section 3A · {studentRoll}</Text>
         <Chip tone="forest" style={styles.cohortChip}>
@@ -129,7 +156,7 @@ export default function StudentProfileScreen() {
       </Card>
 
       <Pressable
-        onPress={handleSignOut}
+        onPress={() => setShowSignOutSheet(true)}
         style={({ pressed }) => [
           styles.signOutButton,
           pressed && { opacity: 0.8 },
@@ -138,6 +165,37 @@ export default function StudentProfileScreen() {
         <LogOut size={18} color={Colors.rose} />
         <Text style={styles.signOutText}>Sign out</Text>
       </Pressable>
+
+      {/* Sign Out Confirmation Sheet */}
+      <Sheet visible={showSignOutSheet} onClose={() => setShowSignOutSheet(false)}>
+        <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+          <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff5f5', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+            <LogOut size={26} color={Colors.rose} />
+          </View>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.ink, marginBottom: 6 }}>
+            Sign out of Klasio?
+          </Text>
+          <Text style={{ fontSize: 13, color: Colors.soft, textAlign: 'center', paddingHorizontal: 20, marginBottom: 20 }}>
+            You will be returned to the login screen and will need your institutional ID to sign back in.
+          </Text>
+          <View style={{ width: '100%', gap: 10 }}>
+            <Button
+              tone="rose"
+              disabled={isSigningOut}
+              onPress={handleConfirmSignOut}
+            >
+              {isSigningOut ? 'Signing out…' : 'Sign Out'}
+            </Button>
+            <Button
+              tone="soft"
+              disabled={isSigningOut}
+              onPress={() => setShowSignOutSheet(false)}
+            >
+              Cancel
+            </Button>
+          </View>
+        </View>
+      </Sheet>
     </Screen>
   );
 }

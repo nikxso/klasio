@@ -87,19 +87,25 @@ expo-env.d.ts
 *.tsbuildinfo
 
 # ------------------------------------------------------------------------------
-# 4. Android Build Artifacts & Native Binaries
+# 4. Android & iOS Native Platforms (Expo Prebuild / Multi-GB Native Artifacts)
 # ------------------------------------------------------------------------------
+android/
+**/android/
+ios/
+**/ios/
+
 # Generated Gradle & C++ build caches
 .gradle/
 **/.gradle/
-**/android/.gradle/
-**/android/build/
-**/android/app/build/
-**/android/.cxx/
-**/android/.kotlin/
-**/android/local.properties
-**/android/*.iml
-**/android/app/*.iml
+**/build/
+.cxx/
+**/.cxx/
+.kotlin/
+**/.kotlin/
+local.properties
+**/local.properties
+*.iml
+**/*.iml
 
 # Package outputs & binaries (Never commit compiled APKs or AABs)
 *.apk
@@ -110,6 +116,7 @@ expo-env.d.ts
 *.hprof
 
 # Keystores & Signing
+*.keystore
 *.jks
 *.p8
 *.p12
@@ -136,13 +143,16 @@ staging_pg_data/
 Thumbs.db
 ehthumbs.db
 .idea/
+**/.idea/
 .vscode/
+**/.vscode/
 *.swp
 *.swo
 *.tmp
 *~
 *.bak
 *.log
+**/*.log
 uploads/
 **/uploads/
 
@@ -154,17 +164,26 @@ uploads/
 # 7. Internal Documentation, Specifications, Research & Design Assets
 # (Excluded from public GitHub repository to highlight core engineering only)
 # ------------------------------------------------------------------------------
-/docs/
-/specs/
-/research/
-/desings/
-/designs
-/.agents/
-/.specify/
-/STARTUP_GUIDE.md
-/PROJECT_GUIDE.md
-/PERCEPTION_GUIDE.md
-/DEVELOPER_QUICKSTART.md
+docs/
+**/docs/
+specs/
+**/specs/
+research/
+**/research/
+desings
+desings/
+**/desings/
+designs
+designs/
+**/designs/
+.agents/
+**/.agents/
+.specify/
+**/.specify/
+STARTUP_GUIDE.md
+PROJECT_GUIDE.md
+PERCEPTION_GUIDE.md
+DEVELOPER_QUICKSTART.md
 /AGENTS.md
-/Klasio Brand Identity Showcase (1).png
+Klasio Brand Identity Showcase (1).png
 

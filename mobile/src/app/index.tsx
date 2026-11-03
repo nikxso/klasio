@@ -350,15 +350,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   heroTitle: {
-    fontSize: 38,
-    lineHeight: 42,
-    fontWeight: '700',
+    fontFamily: 'ChangaOne-Regular',
+    fontSize: 40,
+    lineHeight: 46,
     color: '#ffffff',
     letterSpacing: -0.5,
   },
   heroTitleBrand: {
+    fontFamily: 'ChangaOne-Regular',
     color: Colors.apricot,
-    fontStyle: 'italic',
   },
   heroSubtitle: {
     fontSize: 14,

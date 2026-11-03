@@ -192,10 +192,35 @@ export default function FacultyEnrollmentScreen() {
         if (cameraRef.current) {
           try {
             const nodeHandle = findNodeHandle(cameraRef.current);
+            let uploadedPhoto = false;
             if (nodeHandle) {
-              const photo = await capturePhotoFromCamera(nodeHandle);
-              if (photo?.base64) {
-                await uploadProfilePhoto(studentUserId, photo.base64, token);
+              try {
+                const photo = await capturePhotoFromCamera(nodeHandle);
+                if (photo?.base64) {
+                  await uploadProfilePhoto(studentUserId, photo.base64, token);
+                  uploadedPhoto = true;
+                }
+              } catch (photoErr) {
+                console.warn('[FACULTY_ENROLL] capturePhotoFromCamera error:', photoErr);
+              }
+            }
+            if (!uploadedPhoto && cameraRef.current) {
+              try {
+                const photo = await cameraRef.current.takePhoto({ enableShutterSound: false });
+                if (photo?.path) {
+                  const res = await fetch(photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`);
+                  const blob = await res.blob();
+                  const reader = new FileReader();
+                  reader.readAsDataURL(blob);
+                  reader.onloadend = async () => {
+                    const b64 = (reader.result as string)?.split(',')[1];
+                    if (b64) {
+                      await uploadProfilePhoto(studentUserId, b64, token);
+                    }
+                  };
+                }
+              } catch (e2) {
+                console.warn('[FACULTY_ENROLL] takePhoto error:', e2);
               }
             }
           } catch (photoErr) {
@@ -287,6 +312,7 @@ export default function FacultyEnrollmentScreen() {
               style={StyleSheet.absoluteFill}
               device={device}
               isActive={true}
+              photo={true}
             />
           ) : (
             <View style={[StyleSheet.absoluteFill, styles.cameraPlaceholder]}>

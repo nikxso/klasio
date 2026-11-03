@@ -33,9 +33,15 @@ export const Colors = {
   // Biometrics / Face ID
   lilac: '#7a6bb8',
   lilac50: '#eeebf8',
+  // Aliases & shades
+  inkSecondary: '#706677',
+  inkTertiary: '#9e94a5',
 } as const;
 
 export const Radii = {
+  sm: 8,
+  md: 14,
+  lg: 24,
   card: 24,
   button: 16,
   bubble: 14,

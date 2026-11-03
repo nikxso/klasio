@@ -1,13 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation } from 'expo-router';
 import {
   ScanFace,
   Percent,
@@ -25,7 +24,8 @@ import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button } from '@/compone
 import { Colors, Radii } from '@/theme/tokens';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
-import { SessionStore } from '@/storage/sessionStore';
+import { SessionStore, AuthUser } from '@/storage/sessionStore';
+import { API_BASE_URL } from '@/config/api';
 
 const DEVICES = [
   { name: 'Dr. Lakshmi’s phone', ok: true, seen: '2 min ago' },
@@ -35,9 +35,25 @@ const DEVICES = [
 
 export default function AdminSettingsScreen() {
   const router = useRouter();
+  const navigation = useNavigation<any>();
+  const [user, setUser] = useState<AuthUser | null>(SessionStore.getUser());
   const [facesSheet, setFacesSheet] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [devices, setDevices] = useState(DEVICES);
+  const [showSignOutSheet, setShowSignOutSheet] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [cacheBuster, setCacheBuster] = useState(Date.now());
+
+  useEffect(() => {
+    async function initUser() {
+      const stored = SessionStore.getUser() || (await SessionStore.initFromStorage())?.user;
+      if (stored) {
+        setUser(stored);
+      }
+      setCacheBuster(Date.now());
+    }
+    initUser();
+  }, []);
 
   const handlePushUpdate = () => {
     setUpdating(true);
@@ -47,32 +63,48 @@ export default function AdminSettingsScreen() {
     }, 1200);
   };
 
-  const handleSignOut = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out of Klasio?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            await SessionStore.clearSession(true);
-            router.replace('/');
-          },
-        },
-      ]
-    );
+  const handleConfirmSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await SessionStore.clearSession(true);
+      setShowSignOutSheet(false);
+      try {
+        let rootNav = navigation;
+        while (rootNav.getParent && rootNav.getParent()) {
+          rootNav = rootNav.getParent();
+        }
+        rootNav.reset({
+          index: 0,
+          routes: [{ name: 'index' }],
+        });
+      } catch (navErr) {
+        router.replace('/');
+      }
+    } catch (e) {
+      console.warn('Sign out error:', e);
+      router.replace('/');
+    } finally {
+      setIsSigningOut(false);
+    }
   };
+
+  const adminName = user?.fullName || 'Meera Nair';
+  const adminId = user?.institutionalId || 'ADM-0007';
+  const adminUserId = user?.id;
 
   return (
     <Screen scrollable>
       <View style={styles.headerBlock}>
-        <Avatar name="Meera Nair" size={76} />
-        <Text style={styles.userName}>Meera Nair</Text>
+        <Avatar
+          name={adminName}
+          userId={adminUserId}
+          photoUrl={adminUserId ? `${API_BASE_URL}/api/v1/users/${adminUserId}/profile-photo?t=${cacheBuster}` : null}
+          size={76}
+        />
+        <Text style={styles.userName}>{adminName}</Text>
         <Text style={styles.userSub}>Administrator · Academic Dean Office</Text>
         <Chip tone="forest" style={styles.adminChip}>
-          ADM-0007 · Full Permissions
+          {adminId} · Full Permissions
         </Chip>
       </View>
 
@@ -148,7 +180,7 @@ export default function AdminSettingsScreen() {
       </Card>
 
       <Pressable
-        onPress={handleSignOut}
+        onPress={() => setShowSignOutSheet(true)}
         style={({ pressed }) => [
           styles.signOutButton,
           pressed && { opacity: 0.8 },
@@ -157,6 +189,37 @@ export default function AdminSettingsScreen() {
         <LogOut size={18} color={Colors.rose} />
         <Text style={styles.signOutText}>Sign out</Text>
       </Pressable>
+
+      {/* Sign Out Confirmation Sheet */}
+      <Sheet visible={showSignOutSheet} onClose={() => setShowSignOutSheet(false)}>
+        <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+          <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff5f5', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+            <LogOut size={26} color={Colors.rose} />
+          </View>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.ink, marginBottom: 6 }}>
+            Sign out of Klasio?
+          </Text>
+          <Text style={{ fontSize: 13, color: Colors.soft, textAlign: 'center', paddingHorizontal: 20, marginBottom: 20 }}>
+            You will be returned to the login screen and will need your administrator credentials to sign back in.
+          </Text>
+          <View style={{ width: '100%', gap: 10 }}>
+            <Button
+              tone="rose"
+              disabled={isSigningOut}
+              onPress={handleConfirmSignOut}
+            >
+              {isSigningOut ? 'Signing out…' : 'Sign Out'}
+            </Button>
+            <Button
+              tone="soft"
+              disabled={isSigningOut}
+              onPress={() => setShowSignOutSheet(false)}
+            >
+              Cancel
+            </Button>
+          </View>
+        </View>
+      </Sheet>
 
       {/* Face Recognition Device Sync Sheet */}
       <Sheet visible={facesSheet} onClose={() => setFacesSheet(false)}>
