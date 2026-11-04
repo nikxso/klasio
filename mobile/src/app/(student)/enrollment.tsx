@@ -135,6 +135,7 @@ export default function StudentEnrollmentScreen() {
     try {
       // Encode primary representative unit embedding to Base64 (RFC 4648)
       const b64 = float32ArrayToBase64(profile.embeddings[0]);
+      const multiB64 = profile.embeddings.map((emb) => float32ArrayToBase64(emb));
 
       // Direct API Contract: POST /api/v1/biometrics/enrollment
       const payload = {
@@ -143,6 +144,7 @@ export default function StudentEnrollmentScreen() {
         embedding_dimension: profile.embeddingDimension,
         sample_count: profile.embeddings.length,
         embedding_base64: b64,
+        embeddings_base64: multiB64,
         quality_score: 0.88,
       };
 
@@ -160,7 +162,19 @@ export default function StudentEnrollmentScreen() {
       if (!res.ok) {
         const errorBody = await res.text();
         console.warn(`[BIOMETRICS_ENROLLMENT] Backend rejected (${res.status}): ${errorBody}`);
-        // If server is not currently reachable during offline testing, accept locally
+        throw new Error(`Enrollment failed (${res.status}): ${errorBody}`);
+      }
+
+      // Update local session state for current user
+      const curSession = SessionStore.getSession();
+      if (curSession?.user && curSession.user.id === profile.studentUserId) {
+        await SessionStore.setSession({
+          ...curSession,
+          user: {
+            ...curSession.user,
+            faceRegistrationState: 'REGISTERED',
+          },
+        });
       }
 
       // Automatically store the recorded face frame as student's profile photo
@@ -203,8 +217,8 @@ export default function StudentEnrollmentScreen() {
 
       setEnrollmentComplete(true);
     } catch (err: any) {
-      console.warn('[BIOMETRICS_ENROLLMENT] Offline or network error; enrolled locally:', err);
-      setEnrollmentComplete(true);
+      console.error('[BIOMETRICS_ENROLLMENT] Persistence failed:', err);
+      setEnrollmentError(err.message || 'Face registration failed. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

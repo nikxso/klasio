@@ -2034,7 +2034,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(31, 26, 41, 0.75)',
   },
   viewfinderFrame: {
-    ...StyleSheet.absoluteFillObject,
+    ...(StyleSheet.absoluteFill as any),
     margin: 20,
     pointerEvents: 'none',
   },
