@@ -1,8 +1,10 @@
 import asyncio
+import os
 from typing import AsyncGenerator
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -20,7 +22,7 @@ import src.models  # noqa: F401
 
 settings = get_settings()
 
-TEST_DATABASE_URL = settings.DATABASE_URL
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", settings.DATABASE_URL.replace("/atten_db", "/atten_test_db"))
 
 
 @pytest.fixture(scope="session")
@@ -42,6 +44,29 @@ async def test_engine():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            text("""
+                INSERT INTO institutions (id, code, name, status, created_at, updated_at)
+                VALUES ('00000000-0000-0000-0000-000000000001', 'KLASIO_MAIN', 'Klasio Institute of Technology', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO NOTHING
+            """)
+        )
+        await conn.execute(
+            text("""
+                INSERT INTO campuses (id, institution_id, code, name, status, created_at, updated_at)
+                VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'MAIN', 'Main Campus', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO NOTHING
+            """)
+        )
+
+    session_factory = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    async with session_factory() as session:
+        from scripts.seed_access_control import seed_access_control_catalog
+        await seed_access_control_catalog(session)
 
     yield engine
 

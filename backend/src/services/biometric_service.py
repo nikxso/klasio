@@ -148,14 +148,15 @@ class BiometricService:
         payload: FaceEnrollmentRequest,
     ) -> bytes:
         """
-        Perform strict mathematical and structural validation on the biometric template.
+        Perform strict mathematical and structural validation on the biometric template(s).
         - Supported model and version
         - Dimension matching model manifest
-        - Sample count >= 3
+        - Sample count >= 3 (or number of validated templates)
         - Quality score >= 0.70
         - Base64 payload decoding & byte length matching dimension * 4
         - Finite float values (no NaN or Inf)
         - Unit L2 normalization (||v|| == 1.0 within tolerance)
+        - Multi-sample pairwise consistency gate (>= 0.60)
         """
         # 1. Model version check
         if payload.active_model_version not in SUPPORTED_MODELS:
@@ -182,38 +183,64 @@ class BiometricService:
                 f"Quality score {payload.quality_score:.2f} is below minimum threshold {self.min_quality_score:.2f}"
             )
 
-        # 3. Base64 payload decoding
-        try:
-            raw_bytes = base64.b64decode(payload.embedding_base64)
-        except Exception as e:
-            raise BiometricValidationError(f"Invalid base64 embedding payload: {str(e)}")
+        # 3. Base64 payload decoding (support multi-template or single template)
+        b64_list: List[str] = []
+        if payload.embeddings_base64 and len(payload.embeddings_base64) > 0:
+            b64_list = payload.embeddings_base64
+        elif payload.embedding_base64:
+            b64_list = [payload.embedding_base64]
+        else:
+            raise BiometricValidationError("Either embeddings_base64 or embedding_base64 must be provided")
 
         expected_byte_length = expected_dim * 4
-        if len(raw_bytes) != expected_byte_length:
-            raise BiometricValidationError(
-                f"Decoded embedding byte length ({len(raw_bytes)}) does not match "
-                f"expected {expected_byte_length} bytes for dimension {expected_dim}"
-            )
+        validated_bytes: List[bytes] = []
+        validated_vectors: List[Tuple[float, ...]] = []
 
-        # 4. Numerical unpacking and validation
-        try:
-            floats = struct.unpack(f"{expected_dim}f", raw_bytes)
-        except Exception as e:
-            raise BiometricValidationError(f"Failed to unpack float32 vector: {str(e)}")
+        for b64_payload in b64_list:
+            try:
+                raw_bytes = base64.b64decode(b64_payload)
+            except Exception as e:
+                raise BiometricValidationError(f"Invalid base64 embedding payload: {str(e)}")
 
-        for val in floats:
-            if math.isnan(val) or math.isinf(val):
-                raise BiometricValidationError("Embedding contains non-finite (NaN or Inf) values")
+            if len(raw_bytes) != expected_byte_length:
+                raise BiometricValidationError(
+                    f"Decoded embedding byte length ({len(raw_bytes)}) does not match "
+                    f"expected {expected_byte_length} bytes for dimension {expected_dim}"
+                )
 
-        # 5. Unit L2 norm validation
-        norm = math.sqrt(sum(v * v for v in floats))
-        if abs(norm - 1.0) > self.l2_tolerance:
-            raise BiometricValidationError(
-                f"Embedding vector must be L2-normalized: calculated norm {norm:.6f} "
-                f"deviates from 1.0 beyond tolerance {self.l2_tolerance}"
-            )
+            # 4. Numerical unpacking and validation
+            try:
+                floats = struct.unpack(f"{expected_dim}f", raw_bytes)
+            except Exception as e:
+                raise BiometricValidationError(f"Failed to unpack float32 vector: {str(e)}")
 
-        return raw_bytes
+            for val in floats:
+                if math.isnan(val) or math.isinf(val):
+                    raise BiometricValidationError("Embedding contains non-finite (NaN or Inf) values")
+
+            # 5. Unit L2 norm validation
+            norm = math.sqrt(sum(v * v for v in floats))
+            if abs(norm - 1.0) > self.l2_tolerance:
+                raise BiometricValidationError(
+                    f"Embedding vector must be L2-normalized: calculated norm {norm:.6f} "
+                    f"deviates from 1.0 beyond tolerance {self.l2_tolerance}"
+                )
+
+            validated_bytes.append(raw_bytes)
+            validated_vectors.append(floats)
+
+        # 6. Pairwise consistency validation across multi-sample observations
+        if len(validated_vectors) > 1:
+            for i in range(len(validated_vectors)):
+                for j in range(i + 1, len(validated_vectors)):
+                    cos_sim = sum(validated_vectors[i][k] * validated_vectors[j][k] for k in range(expected_dim))
+                    if cos_sim < 0.60:
+                        raise BiometricValidationError(
+                            f"Pairwise consistency between sample {i} and sample {j} is {cos_sim:.2f}, "
+                            f"below consistency gate threshold 0.60"
+                        )
+
+        return b"".join(validated_bytes)
 
     async def enroll_student_face(
         self,
@@ -246,6 +273,7 @@ class BiometricService:
 
         # 3. Validate template payload
         raw_bytes = self.validate_biometric_payload(payload)
+        actual_sample_count = max(payload.sample_count, len(raw_bytes) // (payload.embedding_dimension * 4))
 
         # 4. Atomic upsert into StudentFaceProfile
         profile_stmt = select(StudentFaceProfile).where(
@@ -262,7 +290,7 @@ class BiometricService:
             profile.registration_state = FaceRegistrationStatus.REGISTERED
             profile.active_model_version = payload.active_model_version
             profile.embedding_dimension = payload.embedding_dimension
-            profile.sample_count = payload.sample_count
+            profile.sample_count = actual_sample_count
             profile.embedding_blob = raw_bytes
             profile.quality_score = payload.quality_score
             profile.last_validated_at = now
@@ -272,7 +300,7 @@ class BiometricService:
                 registration_state=FaceRegistrationStatus.REGISTERED,
                 active_model_version=payload.active_model_version,
                 embedding_dimension=payload.embedding_dimension,
-                sample_count=payload.sample_count,
+                sample_count=actual_sample_count,
                 embedding_blob=raw_bytes,
                 quality_score=payload.quality_score,
                 last_validated_at=now,
@@ -504,21 +532,31 @@ class BiometricService:
             if not fp or fp.registration_state != FaceRegistrationStatus.REGISTERED or not fp.embedding_blob:
                 continue
 
-            b64_embedding = base64.b64encode(fp.embedding_blob).decode("ascii")
+            exp_dim = SUPPORTED_MODELS.get(fp.active_model_version or "", fp.embedding_dimension or 512)
+            chunk_size = exp_dim * 4
+            total_bytes = len(fp.embedding_blob)
+            num_samples = max(1, total_bytes // chunk_size)
             updated_at = fp.last_validated_at or fp.updated_at or datetime.now(timezone.utc)
 
-            templates.append(
-                GalleryStudentTemplate(
-                    student_user_id=user.id,
-                    institutional_id=user.institutional_id,
-                    student_name=user.full_name,
-                    embedding_base64=b64_embedding,
-                    model_version=fp.active_model_version or "Unknown",
-                    quality_score=fp.quality_score or 0.0,
-                    updated_at=updated_at,
+            for s_idx in range(num_samples):
+                start_idx = s_idx * chunk_size
+                end_idx = start_idx + chunk_size
+                sample_bytes = fp.embedding_blob[start_idx:end_idx] if end_idx <= total_bytes else fp.embedding_blob[start_idx:]
+                b64_embedding = base64.b64encode(sample_bytes).decode("ascii")
+
+                templates.append(
+                    GalleryStudentTemplate(
+                        student_user_id=user.id,
+                        institutional_id=user.institutional_id,
+                        student_name=user.full_name,
+                        embedding_base64=b64_embedding,
+                        sample_index=s_idx,
+                        model_version=fp.active_model_version or "Unknown",
+                        quality_score=fp.quality_score or 0.0,
+                        updated_at=updated_at,
+                    )
                 )
-            )
-            hash_parts.append(f"{user.id}:{updated_at.isoformat()}")
+            hash_parts.append(f"{user.id}:{updated_at.isoformat()}:{num_samples}")
 
         # Deterministic gallery freshness version hash
         raw_hash_string = "|".join(hash_parts)

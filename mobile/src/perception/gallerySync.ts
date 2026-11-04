@@ -137,7 +137,7 @@ export class GallerySyncService {
             modelVersion: tpl.model_version,
             embeddingDimension: rawFloats.length,
             embeddingBlob: tpl.embedding_base64, // Stored as base64 string in SQLite
-            sampleIndex: 0,
+            sampleIndex: tpl.sample_index ?? 0,
             galleryVersion: versionInt,
           };
         });
