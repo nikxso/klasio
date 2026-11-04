@@ -147,6 +147,7 @@ ehthumbs.db
 *.tmp
 *~
 *.bak
+*.zip
 *.log
 **/*.log
 uploads/
