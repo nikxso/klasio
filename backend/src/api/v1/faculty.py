@@ -45,7 +45,7 @@ async def get_faculty_assignments(
 @router.get("/assignments/{teaching_assignment_id}/roster", response_model=ClassRosterResponse)
 async def get_assignment_roster(
     teaching_assignment_id: uuid.UUID,
-    session_date: Optional[date] = Query(None),
+    session_date: date = Query(..., description="Academic date of attendance session"),
     current_faculty: User = Depends(require_faculty),
     db: AsyncSession = Depends(get_db_session),
 ):

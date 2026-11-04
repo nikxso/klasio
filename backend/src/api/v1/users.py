@@ -57,6 +57,7 @@ async def verify_user_photo_scope(current_user: User, target_user_id: uuid.UUID,
 
 
 @router.get("/{user_id}/profile-photo", summary="Retrieve a user display profile photo")
+@router.head("/{user_id}/profile-photo", summary="Check a user display profile photo")
 async def get_profile_photo(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),

@@ -11,7 +11,8 @@ class FaceEnrollmentRequest(BaseModel):
     active_model_version: str = Field(..., min_length=1, max_length=64, description="Face recognition model name and version")
     embedding_dimension: int = Field(..., description="Vector embedding dimension (192 or 512)")
     sample_count: int = Field(..., ge=1, description="Number of multi-sample observations captured")
-    embedding_base64: str = Field(..., min_length=1, description="Base64 encoded float32 binary template embedding")
+    embedding_base64: Optional[str] = Field(None, description="Base64 encoded float32 binary template embedding")
+    embeddings_base64: Optional[List[str]] = Field(None, description="List of base64 encoded float32 binary template embeddings")
     quality_score: float = Field(..., ge=0.0, le=1.0, description="Overall face quality score")
 
 
@@ -48,6 +49,7 @@ class GalleryStudentTemplate(BaseModel):
     institutional_id: str
     student_name: str
     embedding_base64: str
+    sample_index: int = 0
     model_version: str
     quality_score: float
     updated_at: datetime

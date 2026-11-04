@@ -44,14 +44,29 @@ EXCLUDED_RUNTIME_PATHS = {
     "/api/v1/notifications/{notification_id}/read",
     "/api/v1/notifications/mark-all-read",
     "/api/v1/admin/departments/overview",
+    "/api/v1/admin/faculty/{faculty_id}/assignments",
     "/api/v1/admin/users",
+    "/api/v1/admin/users/{user_id}/role",
     "/api/v1/attendance/requests",
     "/api/v1/attendance/requests/{request_id}",
     "/api/v1/student/requests",
+    "/api/v1/student/attendance/calendar",
+    "/api/v1/faculty/academic-terms",
+    "/api/v1/faculty/delegations",
+    "/api/v1/faculty/students/{student_user_id}",
+    "/api/v1/users/{user_id}/profile-photo",
+}
+
+EXCLUDED_RUNTIME_OPERATIONS = {
+    ("/api/v1/admin/departments", "get"),
+    ("/api/v1/admin/terms", "get"),
+    ("/api/v1/admin/subjects", "get"),
+    ("/api/v1/admin/sections", "get"),
 }
 
 EXCLUDED_RUNTIME_SCHEMAS = {
     "AdminUserListItem",
+    "AdminUserCreate",
     "AttendanceRequestStatus",
     "CreateAttendanceRequest",
     "DepartmentOverviewItem",
@@ -59,6 +74,13 @@ EXCLUDED_RUNTIME_SCHEMAS = {
     "NotificationUnreadCountResponse",
     "ResolveAttendanceRequest",
     "StudentAttendanceRequestResponse",
+    "AcademicTermsListResponse",
+    "FacultyAssignmentItem",
+    "FacultyDelegationItem",
+    "StudentDailySessionItem",
+    "StudentProfileDetailResponse",
+    "StudentProfileUpdateRequest",
+    "UserRoleUpdate",
 }
 
 DOMAIN_ENUMS = [
@@ -119,7 +141,10 @@ def _get_in_scope_runtime_operations(
         if path in EXCLUDED_RUNTIME_PATHS or not path.startswith("/api/v1/"):
             continue
         for method in methods:
-            ops.add((path, method.lower()))
+            m = method.lower()
+            if (path, m) in EXCLUDED_RUNTIME_OPERATIONS:
+                continue
+            ops.add((path, m))
     return ops
 
 
