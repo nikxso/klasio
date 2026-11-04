@@ -19,6 +19,13 @@ import {
   ShieldCheck,
   UserCheck,
   Briefcase,
+  ShieldAlert,
+  Key,
+  Clock,
+  FileText,
+  CheckCircle2,
+  AlertTriangle,
+  RotateCcw,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, Avatar, Sheet, Button } from '@/components/ui/kit';
@@ -55,11 +62,99 @@ interface SubjectItem {
   name: string;
 }
 
+interface RoleAssignmentScopeItem {
+  id: string;
+  scope_type: string;
+  campus_id?: string;
+  department_id?: string;
+  class_section_id?: string;
+  student_user_id?: string;
+}
+
+interface RoleAssignmentItem {
+  id: string;
+  membership_id: string;
+  role_template_id: string;
+  role_template_code: string;
+  role_template_name: string;
+  status: string;
+  valid_from: string;
+  valid_until?: string | null;
+  reason?: string | null;
+  scopes: RoleAssignmentScopeItem[];
+}
+
+interface MembershipItem {
+  id: string;
+  institution_id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  institutional_id: string;
+  legacy_role: string;
+  status: string;
+  joined_at: string;
+  role_assignments: RoleAssignmentItem[];
+}
+
+interface RoleTemplateItem {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+}
+
+interface UnmappedAccount {
+  user_id: string;
+  full_name: string;
+  institutional_id: string;
+  email: string;
+  legacy_role: string;
+  membership_id?: string | null;
+  account_status: string;
+}
+
+interface DelegationItem {
+  id: string;
+  grantor_user_name: string;
+  grantee_user_name: string;
+  status: string;
+  valid_from: string;
+  valid_until: string;
+  reason: string;
+}
+
+interface AuditItem {
+  id: string;
+  actor_name?: string;
+  action: string;
+  target_resource_type?: string;
+  outcome: string;
+  reason?: string;
+  created_at: string;
+}
+
 export default function AdminPeopleScreen() {
-  const [who, setWho] = useState<'student' | 'faculty' | 'admin'>('student');
+  const [who, setWho] = useState<'student' | 'faculty' | 'admin' | 'access'>('student');
+  const [accessSubTab, setAccessSubTab] = useState<'memberships' | 'unmapped' | 'delegations' | 'audits'>('memberships');
   const [query, setQuery] = useState('');
   const [users, setUsers] = useState<Person[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Access Control Data States
+  const [memberships, setMemberships] = useState<MembershipItem[]>([]);
+  const [roleTemplates, setRoleTemplates] = useState<RoleTemplateItem[]>([]);
+  const [unmappedAccounts, setUnmappedAccounts] = useState<UnmappedAccount[]>([]);
+  const [delegations, setDelegations] = useState<DelegationItem[]>([]);
+  const [audits, setAudits] = useState<AuditItem[]>([]);
+  const [selectedMembership, setSelectedMembership] = useState<MembershipItem | null>(null);
+  const [showAssignRoleSheet, setShowAssignRoleSheet] = useState(false);
+  const [assignRoleTargetMembershipId, setAssignRoleTargetMembershipId] = useState('');
+  const [selectedRoleTemplateId, setSelectedRoleTemplateId] = useState('');
+  const [selectedScopeType, setSelectedScopeType] = useState<string>('INSTITUTION');
+  const [assignmentReason, setAssignmentReason] = useState('');
+  const [assignRoleSubmitting, setAssignRoleSubmitting] = useState(false);
+  const [assignRoleError, setAssignRoleError] = useState<string | null>(null);
 
   // Sheets
   const [selectedUser, setSelectedUser] = useState<Person | null>(null);
@@ -87,6 +182,153 @@ export default function AdminPeopleScreen() {
   const [assignError, setAssignError] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
 
+  const loadAccessControlData = useCallback(async () => {
+    setLoading(true);
+    const token = SessionStore.getToken();
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+
+    try {
+      const [memsRes, tplsRes, unmapRes, delegRes, auditRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/v1/admin/access-control/memberships`, { headers }),
+        fetch(`${API_BASE_URL}/api/v1/admin/access-control/role-templates`, { headers }),
+        fetch(`${API_BASE_URL}/api/v1/admin/access-control/unmapped-accounts`, { headers }),
+        fetch(`${API_BASE_URL}/api/v1/admin/access-control/delegations`, { headers }),
+        fetch(`${API_BASE_URL}/api/v1/admin/access-control/audits`, { headers }),
+      ]);
+
+      if (memsRes.ok) setMemberships(await memsRes.json());
+      if (tplsRes.ok) {
+        const tpls = await tplsRes.json();
+        setRoleTemplates(tpls);
+        if (tpls.length > 0 && !selectedRoleTemplateId) setSelectedRoleTemplateId(tpls[0].id);
+      }
+      if (unmapRes.ok) setUnmappedAccounts(await unmapRes.json());
+      if (delegRes.ok) setDelegations(await delegRes.json());
+      if (auditRes.ok) setAudits(await auditRes.json());
+    } catch (e) {
+      console.warn('Error loading access control data:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedRoleTemplateId]);
+
+  const handleCreateRoleAssignment = async () => {
+    if (!assignRoleTargetMembershipId || !selectedRoleTemplateId) {
+      setAssignRoleError('Target membership and role template are required.');
+      return;
+    }
+    setAssignRoleSubmitting(true);
+    setAssignRoleError(null);
+    const token = SessionStore.getToken();
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/access-control/role-assignments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          membership_id: assignRoleTargetMembershipId,
+          role_template_id: selectedRoleTemplateId,
+          scope_type: selectedScopeType,
+          reason: assignmentReason.trim() || 'Assigned via Admin Management Console',
+        }),
+      });
+
+      if (res.ok) {
+        setShowAssignRoleSheet(false);
+        setAssignmentReason('');
+        await loadAccessControlData();
+        // If viewing selected membership, refresh it
+        if (selectedMembership && selectedMembership.id === assignRoleTargetMembershipId) {
+          const freshMems = await (await fetch(`${API_BASE_URL}/api/v1/admin/access-control/memberships`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })).json();
+          const updated = freshMems.find((m: any) => m.id === assignRoleTargetMembershipId);
+          if (updated) setSelectedMembership(updated);
+        }
+      } else {
+        const err = await res.json();
+        setAssignRoleError(err.detail || 'Failed to assign role template');
+      }
+    } catch (e: any) {
+      setAssignRoleError(e?.message || 'Network error');
+    } finally {
+      setAssignRoleSubmitting(false);
+    }
+  };
+
+  const handleUpdateAssignmentStatus = async (assignmentId: string, newStatus: string) => {
+    const token = SessionStore.getToken();
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/access-control/role-assignments/${assignmentId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          status: newStatus,
+          reason: `Status changed to ${newStatus} by administrator`,
+        }),
+      });
+      if (res.ok) {
+        await loadAccessControlData();
+        if (selectedMembership) {
+          const freshMems = await (await fetch(`${API_BASE_URL}/api/v1/admin/access-control/memberships`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })).json();
+          const updated = freshMems.find((m: any) => m.id === selectedMembership.id);
+          if (updated) setSelectedMembership(updated);
+        }
+      }
+    } catch (e) {
+      console.warn('Update assignment status error:', e);
+    }
+  };
+
+  const handleApproveDelegation = async (delegationId: string) => {
+    const token = SessionStore.getToken();
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/access-control/delegations/${delegationId}/approve`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ reason: 'Approved by administrator' }),
+      });
+      if (res.ok) {
+        await loadAccessControlData();
+      }
+    } catch (e) {
+      console.warn('Approve delegation error:', e);
+    }
+  };
+
+  const handleRevokeDelegation = async (delegationId: string) => {
+    const token = SessionStore.getToken();
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/access-control/delegations/${delegationId}/revoke`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ reason: 'Revoked by administrator' }),
+      });
+      if (res.ok) {
+        await loadAccessControlData();
+      }
+    } catch (e) {
+      console.warn('Revoke delegation error:', e);
+    }
+  };
+
   const loadDirectory = useCallback(async () => {
     setLoading(true);
     const token = SessionStore.getToken();
@@ -96,6 +338,10 @@ export default function AdminPeopleScreen() {
     };
 
     try {
+      if (who === 'access') {
+        await loadAccessControlData();
+        return;
+      }
       const res = await fetch(`${API_BASE_URL}/api/v1/admin/users?role=${who}`, { headers });
       if (res.ok) {
         const data = await res.json();
@@ -330,63 +576,253 @@ export default function AdminPeopleScreen() {
             Admins
           </Text>
         </Pressable>
-      </View>
 
-      {/* Search & Add User Row */}
-      <View style={styles.searchRow}>
-        <View style={styles.searchBox}>
-          <Search size={18} color={Colors.soft} />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder={`Search ${who}s…`}
-            placeholderTextColor={Colors.soft}
-            style={styles.searchInput}
-          />
-        </View>
         <Pressable
-          onPress={() => {
-            setUserError(null);
-            setShowAddUserSheet(true);
-          }}
-          style={styles.addUserButton}
-          accessibilityLabel="Add user"
+          onPress={() => setWho('access')}
+          style={[styles.segmentButton, who === 'access' && styles.segmentButtonActive]}
         >
-          <Plus size={20} color="#ffffff" />
+          <Text style={[styles.segmentText, who === 'access' && styles.segmentTextActive]}>
+            Access & Roles
+          </Text>
         </Pressable>
       </View>
 
-      {/* Directory List */}
-      <Card style={styles.listCard}>
-        {loading ? (
-          <ActivityIndicator color={Colors.forest} style={{ paddingVertical: 20 }} />
-        ) : filteredList.length > 0 ? (
-          filteredList.map((person, index) => (
-            <View key={person.id}>
-              {index > 0 && <View style={styles.divider} />}
+      {/* Search & Add User Row */}
+      {who !== 'access' && (
+        <View style={styles.searchRow}>
+          <View style={styles.searchBox}>
+            <Search size={18} color={Colors.soft} />
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder={`Search ${who}s…`}
+              placeholderTextColor={Colors.soft}
+              style={styles.searchInput}
+            />
+          </View>
+          <Pressable
+            onPress={() => {
+              setUserError(null);
+              setShowAddUserSheet(true);
+            }}
+            style={styles.addUserButton}
+            accessibilityLabel="Add user"
+          >
+            <Plus size={20} color="#ffffff" />
+          </Pressable>
+        </View>
+      )}
+
+      {/* Directory List or Access Control Panel */}
+      {who === 'access' ? (
+        <View style={{ gap: 12 }}>
+          {/* Access Control Sub-Navigation */}
+          <View style={styles.accessSubNav}>
+            {(['memberships', 'unmapped', 'delegations', 'audits'] as const).map((tab) => (
               <Pressable
-                onPress={() => handleSelectUser(person)}
-                style={({ pressed }) => [
-                  styles.personRow,
-                  pressed && { opacity: 0.7 },
+                key={tab}
+                onPress={() => setAccessSubTab(tab)}
+                style={[
+                  styles.accessSubNavBtn,
+                  accessSubTab === tab && styles.accessSubNavBtnActive,
                 ]}
               >
-                <Avatar name={person.name} userId={person.id} size={40} />
-                <View style={styles.personTextCol}>
-                  <Text style={styles.personName}>{person.name}</Text>
-                  <Text style={styles.personSub}>{person.sub}</Text>
-                </View>
-                <Chip tone={person.role.toUpperCase() === 'ADMIN' ? 'forest' : person.role.toUpperCase() === 'FACULTY' ? 'lilac' : 'soft'}>
-                  {person.role}
-                </Chip>
-                <ChevronRight size={16} color={Colors.soft} />
+                <Text
+                  style={[
+                    styles.accessSubNavText,
+                    accessSubTab === tab && styles.accessSubNavTextActive,
+                  ]}
+                >
+                  {tab === 'memberships'
+                    ? 'Memberships'
+                    : tab === 'unmapped'
+                    ? `Unmapped (${unmappedAccounts.length})`
+                    : tab === 'delegations'
+                    ? 'Delegations'
+                    : 'Audits'}
+                </Text>
               </Pressable>
+            ))}
+          </View>
+
+          {/* SubTab 1: Memberships & Role Assignments */}
+          {accessSubTab === 'memberships' && (
+            <Card style={styles.listCard}>
+              {loading ? (
+                <ActivityIndicator color={Colors.forest} style={{ paddingVertical: 20 }} />
+              ) : memberships.length > 0 ? (
+                memberships.map((m, idx) => (
+                  <View key={m.id}>
+                    {idx > 0 && <View style={styles.divider} />}
+                    <Pressable
+                      onPress={() => setSelectedMembership(m)}
+                      style={({ pressed }) => [styles.personRow, pressed && { opacity: 0.7 }]}
+                    >
+                      <Avatar name={m.user_name} userId={m.user_id} size={40} />
+                      <View style={styles.personTextCol}>
+                        <Text style={styles.personName}>{m.user_name}</Text>
+                        <Text style={styles.personSub}>
+                          {m.institutional_id} · {m.role_assignments.length} assigned roles
+                        </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                          {m.role_assignments.map((ra) => (
+                            <Chip
+                              key={ra.id}
+                              tone={ra.status === 'ACTIVE' ? 'forest' : ra.status === 'SUSPENDED' ? 'apricot' : 'rose'}
+                            >
+                              {ra.role_template_code}
+                            </Chip>
+                          ))}
+                        </View>
+                      </View>
+                      <ChevronRight size={16} color={Colors.soft} />
+                    </Pressable>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.emptyText}>No memberships found.</Text>
+              )}
+            </Card>
+          )}
+
+          {/* SubTab 2: Unmapped Legacy Accounts */}
+          {accessSubTab === 'unmapped' && (
+            <View style={{ gap: 10 }}>
+              <View style={styles.infoBox}>
+                <AlertTriangle size={18} color={Colors.apricot} />
+                <Text style={styles.infoBoxText}>
+                  These accounts have legacy categories but lack explicit Institutional Access Control v1 role assignments. Review and assign fixed templates.
+                </Text>
+              </View>
+              <Card style={styles.listCard}>
+                {unmappedAccounts.length > 0 ? (
+                  unmappedAccounts.map((u, idx) => (
+                    <View key={u.user_id}>
+                      {idx > 0 && <View style={styles.divider} />}
+                      <View style={styles.personRow}>
+                        <Avatar name={u.full_name} userId={u.user_id} size={40} />
+                        <View style={styles.personTextCol}>
+                          <Text style={styles.personName}>{u.full_name}</Text>
+                          <Text style={styles.personSub}>{u.email} · {u.institutional_id}</Text>
+                        </View>
+                        <Chip tone="apricot">Legacy {u.legacy_role}</Chip>
+                        {u.membership_id && (
+                          <Button
+                            tone="forest"
+                            onPress={() => {
+                              setAssignRoleTargetMembershipId(u.membership_id!);
+                              setShowAssignRoleSheet(true);
+                            }}
+                          >
+                            Assign
+                          </Button>
+                        )}
+                      </View>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.emptyText}>All accounts are mapped to active institutional roles.</Text>
+                )}
+              </Card>
             </View>
-          ))
-        ) : (
-          <Text style={styles.emptyText}>No users found in this category.</Text>
-        )}
-      </Card>
+          )}
+
+          {/* SubTab 3: Delegations */}
+          {accessSubTab === 'delegations' && (
+            <Card style={styles.listCard}>
+              {delegations.length > 0 ? (
+                delegations.map((d, idx) => (
+                  <View key={d.id} style={{ paddingVertical: 12 }}>
+                    {idx > 0 && <View style={[styles.divider, { marginBottom: 12 }]} />}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.personName}>{d.grantor_user_name} → {d.grantee_user_name}</Text>
+                      <Chip tone={d.status === 'ACTIVE' ? 'forest' : d.status === 'REVOKED' ? 'rose' : 'lilac'}>
+                        {d.status}
+                      </Chip>
+                    </View>
+                    <Text style={[styles.personSub, { marginTop: 4 }]}>
+                      Valid: {new Date(d.valid_from).toLocaleDateString()} to {new Date(d.valid_until).toLocaleDateString()}
+                    </Text>
+                    <Text style={[styles.personSub, { fontStyle: 'italic', marginTop: 2 }]}>
+                      Reason: {d.reason}
+                    </Text>
+                    {d.status === 'ACTIVE' && (
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <Button
+                          tone="rose"
+                          onPress={() => handleRevokeDelegation(d.id)}
+                        >
+                          Revoke
+                        </Button>
+                      </View>
+                    )}
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.emptyText}>No active or historical delegations recorded.</Text>
+              )}
+            </Card>
+          )}
+
+          {/* SubTab 4: Audits */}
+          {accessSubTab === 'audits' && (
+            <Card style={styles.listCard}>
+              {audits.length > 0 ? (
+                audits.map((a, idx) => (
+                  <View key={a.id} style={{ paddingVertical: 10 }}>
+                    {idx > 0 && <View style={[styles.divider, { marginBottom: 10 }]} />}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={[styles.personName, { fontSize: 14 }]}>{a.action}</Text>
+                      <Chip tone={a.outcome === 'ALLOWED' ? 'forest' : 'rose'}>{a.outcome}</Chip>
+                    </View>
+                    <Text style={[styles.personSub, { marginTop: 2 }]}>
+                      Actor: {a.actor_name || 'System / Anonymous'} · {new Date(a.created_at).toLocaleString()}
+                    </Text>
+                    {a.reason && (
+                      <Text style={[styles.personSub, { fontStyle: 'italic', marginTop: 2 }]}>
+                        {a.reason}
+                      </Text>
+                    )}
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.emptyText}>No authorization audit logs found.</Text>
+              )}
+            </Card>
+          )}
+        </View>
+      ) : (
+        <Card style={styles.listCard}>
+          {loading ? (
+            <ActivityIndicator color={Colors.forest} style={{ paddingVertical: 20 }} />
+          ) : filteredList.length > 0 ? (
+            filteredList.map((person, index) => (
+              <View key={person.id}>
+                {index > 0 && <View style={styles.divider} />}
+                <Pressable
+                  onPress={() => handleSelectUser(person)}
+                  style={({ pressed }) => [
+                    styles.personRow,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Avatar name={person.name} userId={person.id} size={40} />
+                  <View style={styles.personTextCol}>
+                    <Text style={styles.personName}>{person.name}</Text>
+                    <Text style={styles.personSub}>{person.sub}</Text>
+                  </View>
+                  <Chip tone={person.role.toUpperCase() === 'ADMIN' ? 'forest' : person.role.toUpperCase() === 'FACULTY' ? 'lilac' : 'soft'}>
+                    {person.role}
+                  </Chip>
+                  <ChevronRight size={16} color={Colors.soft} />
+                </Pressable>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.emptyText}>No users found in this category.</Text>
+          )}
+        </Card>
+      )}
 
       {/* --- SHEET: ADD USER --- */}
       <Sheet visible={showAddUserSheet} onClose={() => setShowAddUserSheet(false)}>
@@ -613,6 +1049,171 @@ export default function AdminPeopleScreen() {
             onPress={handleAssignClassToFaculty}
           >
             {assigning ? 'Assigning…' : 'Confirm Assignment'}
+          </Button>
+        </View>
+      </Sheet>
+
+      {/* --- SHEET: MEMBERSHIP & ROLE ASSIGNMENTS (IAC v1) --- */}
+      {selectedMembership && (
+        <Sheet visible={!!selectedMembership} onClose={() => setSelectedMembership(null)}>
+          <View style={styles.sheetHeader}>
+            <Avatar name={selectedMembership.user_name} userId={selectedMembership.user_id} size={50} />
+            <View style={styles.sheetHeaderCol}>
+              <Text style={styles.sheetFacultyName}>{selectedMembership.user_name}</Text>
+              <Text style={styles.sheetFacultyDept}>
+                {selectedMembership.user_email} · {selectedMembership.institutional_id}
+              </Text>
+              <Text style={{ fontSize: 11, color: Colors.forest, marginTop: 2 }}>
+                Status: {selectedMembership.status} · Joined {new Date(selectedMembership.joined_at).toLocaleDateString()}
+              </Text>
+            </View>
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+            <Text style={styles.sheetSectionTitle}>Active & Historical Roles</Text>
+            <Pressable
+              onPress={() => {
+                setAssignRoleTargetMembershipId(selectedMembership.id);
+                setAssignRoleError(null);
+                setShowAssignRoleSheet(true);
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+            >
+              <Plus size={14} color={Colors.forest} />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.forest }}>Assign Template</Text>
+            </Pressable>
+          </View>
+
+          <View style={{ gap: 8, marginVertical: 10 }}>
+            {selectedMembership.role_assignments.length > 0 ? (
+              selectedMembership.role_assignments.map((ra) => (
+                <View
+                  key={ra.id}
+                  style={{
+                    backgroundColor: Colors.card,
+                    padding: 12,
+                    borderRadius: Radii.card,
+                    borderWidth: 1,
+                    borderColor: Colors.line,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.ink }}>
+                      {ra.role_template_code}
+                    </Text>
+                    <Chip tone={ra.status === 'ACTIVE' ? 'forest' : ra.status === 'SUSPENDED' ? 'apricot' : 'rose'}>
+                      {ra.status}
+                    </Chip>
+                  </View>
+                  <Text style={{ fontSize: 11, color: Colors.soft, marginTop: 4 }}>
+                    Scope: {ra.scopes.map((s) => s.scope_type).join(', ') || 'INSTITUTION'}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: Colors.soft, marginTop: 2 }}>
+                    Valid: {new Date(ra.valid_from).toLocaleDateString()} {ra.valid_until ? `to ${new Date(ra.valid_until).toLocaleDateString()}` : '(Ongoing)'}
+                  </Text>
+                  {ra.reason && (
+                    <Text style={{ fontSize: 11, color: Colors.ink, fontStyle: 'italic', marginTop: 2 }}>
+                      Reason: {ra.reason}
+                    </Text>
+                  )}
+                  {ra.status === 'ACTIVE' && (
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                      <Button
+                        tone="lilac"
+                        onPress={() => handleUpdateAssignmentStatus(ra.id, 'SUSPENDED')}
+                      >
+                        Suspend
+                      </Button>
+                      <Button
+                        tone="rose"
+                        onPress={() => handleUpdateAssignmentStatus(ra.id, 'REVOKED')}
+                      >
+                        Revoke
+                      </Button>
+                    </View>
+                  )}
+                </View>
+              ))
+            ) : (
+              <Text style={{ fontSize: 12, color: Colors.soft, marginVertical: 8 }}>
+                No explicit role assignments found.
+              </Text>
+            )}
+          </View>
+        </Sheet>
+      )}
+
+      {/* --- SHEET: ASSIGN FIXED ROLE TEMPLATE --- */}
+      <Sheet visible={showAssignRoleSheet} onClose={() => setShowAssignRoleSheet(false)}>
+        <Text style={styles.sheetTitle}>Assign Role Template</Text>
+        <Text style={styles.sheetSub}>Select one of the 20 approved fixed role templates and define scope</Text>
+
+        {assignRoleError && <Text style={styles.errorBanner}>{assignRoleError}</Text>}
+
+        <Text style={styles.inputLabel}>Select Role Template</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {roleTemplates.map((t) => (
+              <Pressable
+                key={t.id}
+                onPress={() => setSelectedRoleTemplateId(t.id)}
+                style={[
+                  styles.pickerChip,
+                  selectedRoleTemplateId === t.id && styles.pickerChipActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pickerChipText,
+                    selectedRoleTemplateId === t.id && styles.pickerChipTextActive,
+                  ]}
+                >
+                  {t.code}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+
+        <Text style={styles.inputLabel}>Scope Hierarchy</Text>
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+          {(['INSTITUTION', 'CAMPUS', 'DEPARTMENT', 'CLASS_SECTION'] as const).map((st) => (
+            <Pressable
+              key={st}
+              onPress={() => setSelectedScopeType(st)}
+              style={[
+                styles.roleAssignBtn,
+                selectedScopeType === st && styles.roleAssignBtnActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.roleAssignBtnText,
+                  selectedScopeType === st && styles.roleAssignBtnTextActive,
+                ]}
+              >
+                {st}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <Text style={styles.inputLabel}>Assignment Reason / Justification</Text>
+        <TextInput
+          value={assignmentReason}
+          onChangeText={setAssignmentReason}
+          placeholder="e.g. Appointed Department Head for AY 2026-27"
+          placeholderTextColor={Colors.soft}
+          style={styles.textInput}
+        />
+
+        <View style={{ marginTop: 20 }}>
+          <Button
+            tone="forest"
+            disabled={assignRoleSubmitting}
+            onPress={handleCreateRoleAssignment}
+          >
+            {assignRoleSubmitting ? 'Granting…' : 'Grant Role Assignment'}
           </Button>
         </View>
       </Sheet>
@@ -866,5 +1467,43 @@ const styles = StyleSheet.create({
   pickerChipTextActive: {
     color: Colors.forest,
     fontWeight: '700',
+  },
+  accessSubNav: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  accessSubNavBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.line,
+  },
+  accessSubNavBtnActive: {
+    backgroundColor: Colors.forest,
+  },
+  accessSubNavText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.soft,
+  },
+  accessSubNavTextActive: {
+    color: '#ffffff',
+  },
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.apricot50 || 'rgba(235, 140, 94, 0.1)',
+    padding: 10,
+    borderRadius: Radii.card,
+    borderWidth: 1,
+    borderColor: Colors.apricot,
+  },
+  infoBoxText: {
+    flex: 1,
+    fontSize: 11,
+    color: Colors.ink,
+    lineHeight: 16,
   },
 });

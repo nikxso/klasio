@@ -32,6 +32,12 @@ function getDirectPerceptionModule(): any {
   }
 }
 
+const IS_TEST_ENVIRONMENT =
+  typeof process !== 'undefined' &&
+  (process.env?.NODE_ENV === 'test' ||
+   typeof (globalThis as any).jest !== 'undefined' ||
+   (Array.isArray(process.argv) && process.argv.some((arg) => typeof arg === 'string' && arg.includes('test'))));
+
 export const EDGEFACE_XS_MANIFEST: ModelManifest = {
   modelName: 'EdgeFace-XS',
   modelVersion: 'gamma_0.6',
@@ -54,6 +60,7 @@ export class EdgeFaceEmbedder implements IFaceEmbedder, IFaceRecognizer {
   readonly embeddingDimension = 512;
   readonly manifest: ModelManifest = EDGEFACE_XS_MANIFEST;
 
+  public isTestFixtureMode: boolean = IS_TEST_ENVIRONMENT;
   private isInitialized = false;
   private modelPath: string = '';
 
@@ -125,6 +132,12 @@ export class EdgeFaceEmbedder implements IFaceEmbedder, IFaceRecognizer {
     }
 
     // Priority 3: Offline / Node.js test environment deterministic simulation
+    if (!this.isTestFixtureMode) {
+      throw new Error(
+        '[EdgeFaceEmbedder] On-device neural inference failed or was unavailable. Refusing artificial embedding synthesis in production.'
+      );
+    }
+
     // 1. Face Crop & 5-Point Alignment
     const tCropStart = performance.now();
     const frameW = input.frame.width;

@@ -20,12 +20,20 @@ import {
   Check,
   Layers,
   GraduationCap,
+  Landmark,
 } from 'lucide-react-native';
 
 import { Screen, Card, IconBubble, SectionTitle, Sheet, Button, Chip } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
+
+interface CampusItem {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+}
 
 interface DepartmentItem {
   id: string;
@@ -63,6 +71,7 @@ interface FacultyUserItem {
 
 export default function AdminAcademicsScreen() {
   const router = useRouter();
+  const [campuses, setCampuses] = useState<CampusItem[]>([]);
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [rawDepartments, setRawDepartments] = useState<{ id: string; code: string; name: string }[]>([]);
   const [terms, setTerms] = useState<TermItem[]>([]);
@@ -72,9 +81,13 @@ export default function AdminAcademicsScreen() {
   const [loading, setLoading] = useState(false);
 
   // Modal Sheet Visibility States
-  const [activeSheet, setActiveSheet] = useState<'NONE' | 'DEPT' | 'SUBJECT' | 'SECTION' | 'ASSIGN' >('NONE');
+  const [activeSheet, setActiveSheet] = useState<'NONE' | 'CAMPUS' | 'DEPT' | 'SUBJECT' | 'SECTION' | 'ASSIGN'>('NONE');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Form States: Add Campus
+  const [campusCode, setCampusCode] = useState('');
+  const [campusName, setCampusName] = useState('');
 
   // Form States: Add Department
   const [deptCode, setDeptCode] = useState('');
@@ -107,6 +120,13 @@ export default function AdminAcademicsScreen() {
     };
 
     try {
+      // 0. Campuses
+      const resCampuses = await fetch(`${API_BASE_URL}/api/v1/admin/campuses`, { headers });
+      if (resCampuses.ok) {
+        const cList = await resCampuses.json();
+        setCampuses(cList);
+      }
+
       // 1. Overview
       const resOverview = await fetch(`${API_BASE_URL}/api/v1/admin/departments/overview`, { headers });
       if (resOverview.ok) {
@@ -175,6 +195,40 @@ export default function AdminAcademicsScreen() {
   useEffect(() => {
     loadAcademicsData();
   }, [loadAcademicsData]);
+
+  // Handle Create Campus
+  const handleCreateCampus = async () => {
+    if (!campusCode.trim() || !campusName.trim()) {
+      setErrorMessage('Please enter both Campus Code and Campus Name.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/campuses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ code: campusCode.trim().toUpperCase(), name: campusName.trim() }),
+      });
+      if (res.ok) {
+        setCampusCode('');
+        setCampusName('');
+        setActiveSheet('NONE');
+        await loadAcademicsData();
+      } else {
+        const err = await res.json();
+        setErrorMessage(err.detail || 'Failed to create campus');
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   // Handle Create Department
   const handleCreateDepartment = async () => {
@@ -332,7 +386,29 @@ export default function AdminAcademicsScreen() {
       subtitle="Departments, Subjects, Sections & Assignments"
       scrollable
     >
+      {/* Campuses Overview */}
+      {campuses.length > 0 && (
+        <View style={{ marginBottom: 16 }}>
+          <SectionTitle>Campuses</SectionTitle>
+          <View style={styles.departmentsList}>
+            {campuses.map((c) => (
+              <Card key={c.id} style={styles.deptCard}>
+                <IconBubble icon={Landmark} tone="lilac" size={42} />
+                <View style={styles.deptTextCol}>
+                  <Text style={styles.deptName}>{c.name}</Text>
+                  <Text style={styles.deptSub}>
+                    Code: {c.code} · Status: {c.status}
+                  </Text>
+                </View>
+                <Chip tone={c.status === 'ACTIVE' ? 'forest' : 'rose'}>{c.status}</Chip>
+              </Card>
+            ))}
+          </View>
+        </View>
+      )}
+
       {/* Departments Overview */}
+      <SectionTitle>Departments</SectionTitle>
       <View style={styles.departmentsList}>
         {loading && departments.length === 0 ? (
           <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
@@ -360,6 +436,18 @@ export default function AdminAcademicsScreen() {
 
       <SectionTitle>Quick Actions</SectionTitle>
       <View style={styles.actionsGrid}>
+        {/* 0. Add Campus */}
+        <Card
+          onPress={() => {
+            setErrorMessage(null);
+            setActiveSheet('CAMPUS');
+          }}
+          style={styles.actionCard}
+        >
+          <Landmark size={24} color={Colors.forest} />
+          <Text style={styles.actionLabel}>Add campus</Text>
+        </Card>
+
         {/* 1. Add Department */}
         <Card
           onPress={() => {
@@ -408,6 +496,43 @@ export default function AdminAcademicsScreen() {
           <Text style={styles.actionLabel}>Assign teacher</Text>
         </Card>
       </View>
+
+      {/* --- SHEET 0: ADD CAMPUS --- */}
+      <Sheet visible={activeSheet === 'CAMPUS'} onClose={() => setActiveSheet('NONE')}>
+        <Text style={styles.sheetTitle}>Add Campus</Text>
+        <Text style={styles.sheetSub}>Establish a physical or branch campus within this institution</Text>
+
+        {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
+
+        <Text style={styles.inputLabel}>Campus Code</Text>
+        <TextInput
+          value={campusCode}
+          onChangeText={setCampusCode}
+          placeholder="e.g. NORTH, SOUTH, MAIN"
+          placeholderTextColor={Colors.soft}
+          autoCapitalize="characters"
+          style={styles.textInput}
+        />
+
+        <Text style={styles.inputLabel}>Campus Name</Text>
+        <TextInput
+          value={campusName}
+          onChangeText={setCampusName}
+          placeholder="e.g. North Innovation Campus"
+          placeholderTextColor={Colors.soft}
+          style={styles.textInput}
+        />
+
+        <View style={{ marginTop: 24 }}>
+          <Button
+            tone="forest"
+            onPress={handleCreateCampus}
+            disabled={submitting}
+          >
+            {submitting ? 'Creating...' : 'Create Campus'}
+          </Button>
+        </View>
+      </Sheet>
 
       {/* --- SHEET 1: ADD DEPARTMENT --- */}
       <Sheet visible={activeSheet === 'DEPT'} onClose={() => setActiveSheet('NONE')}>

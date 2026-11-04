@@ -18,6 +18,7 @@ export interface BackendGalleryTemplate {
   institutional_id: string;
   student_name: string;
   embedding_base64: string;
+  sample_index?: number;
   model_version: string;
   quality_score: number;
   updated_at: string;

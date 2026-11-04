@@ -257,47 +257,13 @@ export default function FacultyScanningScreen() {
 
         // Query authorized cached roster for this section
         const cachedRoster = await RosterRepository.getCachedRoster(assignmentId);
-        let studentIds = cachedRoster.map((s) => s.studentUserId);
-
-        // Fallback demo students if no local roster has been cached yet
-        if (studentIds.length === 0) {
-          studentIds = ['stu-1', 'stu-2', 'stu-3', 'stu-4', 'stu-5', 'stu-6'];
-        }
+        const studentIds = cachedRoster.map((s) => s.studentUserId);
 
         const gallery = await GallerySyncService.loadSessionScopedGallery(
           sessionScope,
           studentIds,
           'EdgeFace-XS-v1'
         );
-
-        // Populate baseline synthetic verified reference profiles if offline/demo
-        if (gallery.size === 0) {
-          const profiles = [
-            {
-              studentUserId: 'stu-1',
-              institutionalId: '21CS031',
-              studentName: 'Aarav Sharma',
-              modelName: 'EdgeFace-XS',
-              activeModelVersion: 'EdgeFace-XS-v1',
-              embeddingDimension: 512,
-              normalization: 'L2' as const,
-              alignmentMode: 'SIMILARITY_TRANSFORM_5PT' as const,
-              embeddings: [new Float32Array(512).fill(1.0 / Math.sqrt(512))],
-            },
-            {
-              studentUserId: 'stu-2',
-              institutionalId: '21CS032',
-              studentName: 'Priya Nair',
-              modelName: 'EdgeFace-XS',
-              activeModelVersion: 'EdgeFace-XS-v1',
-              embeddingDimension: 512,
-              normalization: 'L2' as const,
-              alignmentMode: 'SIMILARITY_TRANSFORM_5PT' as const,
-              embeddings: [new Float32Array(512).fill(1.0 / Math.sqrt(512))],
-            },
-          ];
-          gallery.initialize(sessionScope, profiles, 1);
-        }
 
         if (!isCancelled) {
           sessionGalleryRef.current = gallery;

@@ -420,51 +420,56 @@ export default function FacultyEnrollmentScreen() {
           </Pressable>
         </View>
 
-        {/* Viewfinder Wrapper with Animated Circular Progress Ring */}
+        {/* Viewfinder Wrapper occupying ~70% screen height with semi-transparent oval face guide */}
         <View style={styles.viewfinderWrapper}>
-          <Svg width={220} height={220} viewBox="0 0 100 100" style={styles.svgRing}>
-            <Circle
-              cx="50"
-              cy="50"
-              r="46"
-              stroke="rgba(255, 255, 255, 0.2)"
-              strokeWidth="4"
-              fill="none"
+          {device && hasPermission ? (
+            <Camera
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              device={device}
+              isActive={status === 'GUIDING' || status === 'UPLOADING'}
+              photo={true}
             />
-            <Circle
-              cx="50"
-              cy="50"
-              r="46"
-              stroke={Colors.apricot}
-              strokeWidth="4"
-              strokeDasharray="289"
-              strokeDashoffset={289 - (289 * progressPercent) / 100}
-              strokeLinecap="round"
-              fill="none"
-            />
-          </Svg>
+          ) : null}
 
-          {/* Oval Live Camera Cutout */}
-          <View style={styles.cameraOval}>
-            {device && hasPermission ? (
-              <Camera
-                ref={cameraRef}
-                style={StyleSheet.absoluteFill}
-                device={device}
-                isActive={status === 'GUIDING' || status === 'UPLOADING'}
-                photo={true}
-              />
-            ) : null}
+          {/* Semi-transparent dark overlay around centered oval guide */}
+          <View style={styles.darkOverlayTop} pointerEvents="none" />
+          <View style={styles.darkOverlayMiddle} pointerEvents="none">
+            <View style={styles.darkOverlaySide} />
+            <View style={styles.ovalGuideCutout}>
+              <Svg width={250} height={330} viewBox="0 0 250 330" style={styles.svgRing}>
+                <Circle
+                  cx="125"
+                  cy="165"
+                  r="120"
+                  stroke="rgba(255, 255, 255, 0.25)"
+                  strokeWidth="4"
+                  fill="none"
+                />
+                <Circle
+                  cx="125"
+                  cy="165"
+                  r="120"
+                  stroke={Colors.apricot}
+                  strokeWidth="4"
+                  strokeDasharray="754"
+                  strokeDashoffset={754 - (754 * progressPercent) / 100}
+                  strokeLinecap="round"
+                  fill="none"
+                />
+              </Svg>
 
-            {/* Overlay Silhouette & Status Icon */}
-            <View style={styles.faceSilhouette} pointerEvents="none">
-              {isUploading ? (
-                <ActivityIndicator size="large" color={Colors.apricot} />
-              ) : (
-                <ScanFace size={64} color="rgba(255,255,255,0.7)" strokeWidth={1.5} />
-              )}
+              <View style={styles.faceSilhouette}>
+                {isUploading ? (
+                  <ActivityIndicator size="large" color={Colors.apricot} />
+                ) : (
+                  <ScanFace size={72} color="rgba(255,255,255,0.7)" strokeWidth={1.5} />
+                )}
+              </View>
             </View>
+            <View style={styles.darkOverlaySide} />
           </View>
+          <View style={styles.darkOverlayBottom} pointerEvents="none" />
         </View>
 
         {/* Dynamic Pose Guidance Feedback */}
@@ -761,24 +766,44 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   viewfinderWrapper: {
-    width: 220,
-    height: 220,
+    height: '68%',
+    width: '100%',
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#000000',
+  },
+  darkOverlayTop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    width: '100%',
+  },
+  darkOverlayMiddle: {
+    flexDirection: 'row',
+    height: 330,
+    width: '100%',
+  },
+  darkOverlaySide: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+  },
+  ovalGuideCutout: {
+    width: 250,
+    height: 330,
+    borderRadius: 125,
+    borderWidth: 2,
+    borderColor: Colors.apricot,
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 20,
+  },
+  darkOverlayBottom: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    width: '100%',
   },
   svgRing: {
     position: 'absolute',
     transform: [{ rotate: '-90deg' }],
-  },
-  cameraOval: {
-    width: 190,
-    height: 190,
-    borderRadius: 95,
-    backgroundColor: '#2d2639',
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   faceSilhouette: {
     position: 'absolute',
