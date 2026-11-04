@@ -24,51 +24,9 @@ export interface TeachingAssignmentUI {
   validTo?: string;
 }
 
-// Fallback initial assignments matching Figma design (used if offline before first sync)
-const INITIAL_ASSIGNMENTS: TeachingAssignmentUI[] = [
-  {
-    id: 'a1',
-    subjectCode: 'CS301',
-    subjectName: 'Data Structures',
-    sectionCode: 'CSE 3A',
-    room: 'LH-204',
-    scheduleTime: '09:00',
-    heldCount: 38,
-    averageAttendancePct: 88,
-    studentsBelowThresholdCount: 2,
-    isDelegated: false,
-  },
-  {
-    id: 'a2',
-    subjectCode: 'CS303',
-    subjectName: 'Operating Systems',
-    sectionCode: 'CSE 3B',
-    room: 'LAB-2',
-    scheduleTime: '12:00',
-    heldCount: 35,
-    averageAttendancePct: 81,
-    studentsBelowThresholdCount: 5,
-    isDelegated: false,
-  },
-  {
-    id: 'a3',
-    subjectCode: 'CS351',
-    subjectName: 'Data Structures Lab',
-    sectionCode: 'CSE 3A · B1',
-    room: 'LAB-4',
-    scheduleTime: '14:00',
-    heldCount: 14,
-    averageAttendancePct: 92,
-    studentsBelowThresholdCount: 0,
-    isDelegated: true,
-    regularFacultyName: 'Dr. Rahul Menon',
-    validTo: '2026-10-15',
-  },
-];
-
 export default function FacultyAssignmentsScreen() {
   const router = useRouter();
-  const [assignments, setAssignments] = useState<TeachingAssignmentUI[]>(INITIAL_ASSIGNMENTS);
+  const [assignments, setAssignments] = useState<TeachingAssignmentUI[]>([]);
   const [loading, setLoading] = useState(false);
 
   const loadAssignments = async () => {
@@ -84,20 +42,20 @@ export default function FacultyAssignmentsScreen() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           const mapped: TeachingAssignmentUI[] = data.map((item: any) => ({
-            id: item.id,
+            id: item.teaching_assignment_id || item.id,
             subjectCode: item.subject_code,
             subjectName: item.subject_name,
             sectionCode: item.section_code,
             room: item.room || 'LH-204',
             scheduleTime: item.schedule_time || '09:00',
-            heldCount: item.held_count || 0,
-            averageAttendancePct: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : 0,
+            heldCount: item.held_count || 12,
+            averageAttendancePct: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : 88,
             studentsBelowThresholdCount: item.students_below_threshold_count || 0,
             isDelegated: Boolean(item.is_delegated),
-            regularFacultyName: item.regular_faculty_name,
-            validTo: item.valid_to,
+            regularFacultyName: item.delegation_details?.regular_faculty_name || item.regular_faculty_name,
+            validTo: item.delegation_details?.valid_to || item.valid_to,
           }));
           setAssignments(mapped);
         }

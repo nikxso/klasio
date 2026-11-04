@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -30,6 +30,8 @@ import {
   Sheet,
 } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
+import { API_BASE_URL } from '@/config/api';
+import { SessionStore } from '@/storage/sessionStore';
 
 interface DelegationItem {
   id: string;
@@ -44,50 +46,113 @@ interface DelegationItem {
   status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
 }
 
-const DEMO_COLLEAGUES = [
-  { id: 'fac-b', name: 'Prof. Rahul Menon', dept: 'Computer Science', staffId: 'FAC-0143' },
-  { id: 'fac-c', name: 'Dr. Fatima Khan', dept: 'Mathematics', staffId: 'FAC-0089' },
-  { id: 'fac-d', name: 'Prof. Daniel Joseph', dept: 'Electronics', staffId: 'FAC-0199' },
-];
-
-const DEMO_ASSIGNMENTS = [
-  { id: 'a1', subject: 'Data Structures', section: 'CSE 3A' },
-  { id: 'a2', subject: 'Operating Systems', section: 'CSE 3B' },
-];
-
-const INITIAL_DELEGATIONS: DelegationItem[] = [
-  {
-    id: 'del-1',
-    assignmentId: 'a1',
-    subjectName: 'Data Structures',
-    sectionCode: 'CSE 3A',
-    substituteFacultyName: 'Prof. Rahul Menon',
-    substituteFacultyId: 'FAC-0143',
-    startDate: '2026-10-05',
-    endDate: '2026-10-07',
-    reason: 'Attending IEEE international research symposium',
-    status: 'ACTIVE',
-  },
-];
-
 export default function DelegationsScreen() {
   const router = useRouter();
-  const [delegations, setDelegations] = useState<DelegationItem[]>(INITIAL_DELEGATIONS);
+  const [delegations, setDelegations] = useState<DelegationItem[]>([]);
+  const [assignments, setAssignments] = useState<{ id: string; subject: string; section: string }[]>([]);
+  const [colleagues, setColleagues] = useState<{ id: string; name: string; dept: string; staffId: string }[]>([]);
+  const [loading, setLoading] = useState(false);
   const [newSheetVisible, setNewSheetVisible] = useState(false);
   const [revokeSheetTarget, setRevokeSheetTarget] = useState<DelegationItem | null>(null);
 
   // Form State
-  const [selectedAssignment, setSelectedAssignment] = useState(DEMO_ASSIGNMENTS[0]);
-  const [selectedColleague, setSelectedColleague] = useState(DEMO_COLLEAGUES[0]);
-  const [startDate, setStartDate] = useState('2026-10-08');
-  const [endDate, setEndDate] = useState('2026-10-10');
+  const [selectedAssignment, setSelectedAssignment] = useState<{ id: string; subject: string; section: string } | null>(null);
+  const [selectedColleague, setSelectedColleague] = useState<{ id: string; name: string; dept: string; staffId: string } | null>(null);
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().split('T')[0];
+  });
   const [reason, setReason] = useState('');
   const [revocationReason, setRevocationReason] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadData = useCallback(async () => {
+    const token = SessionStore.getToken();
+    if (!token) return;
+    setLoading(true);
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+    try {
+      // 1. Delegations
+      const delRes = await fetch(`${API_BASE_URL}/api/v1/faculty/delegations`, { headers });
+      if (delRes.ok) {
+        const dData = await delRes.json();
+        if (Array.isArray(dData)) {
+          setDelegations(
+            dData.map((d: any) => ({
+              id: d.id,
+              assignmentId: d.assignment_id,
+              subjectName: d.subject_name,
+              sectionCode: d.section_code,
+              substituteFacultyName: d.substitute_faculty_name,
+              substituteFacultyId: d.substitute_faculty_id,
+              startDate: d.start_date,
+              endDate: d.end_date,
+              reason: d.reason,
+              status: d.status,
+            }))
+          );
+        }
+      }
+
+      // 2. Teaching Assignments
+      const taRes = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, { headers });
+      if (taRes.ok) {
+        const taData = await taRes.json();
+        if (Array.isArray(taData)) {
+          const mapped = taData.map((t: any) => ({
+            id: t.teaching_assignment_id || t.id,
+            subject: t.subject_name,
+            section: t.section_code,
+          }));
+          setAssignments(mapped);
+          if (mapped.length > 0 && !selectedAssignment) {
+            setSelectedAssignment(mapped[0]);
+          }
+        }
+      }
+
+      // 3. Faculty Colleagues
+      const facRes = await fetch(`${API_BASE_URL}/api/v1/admin/users?role=faculty`, { headers });
+      if (facRes.ok) {
+        const facData = await facRes.json();
+        const currentUser = SessionStore.getUser();
+        if (Array.isArray(facData)) {
+          const others = facData
+            .filter((u: any) => u.id !== currentUser?.id)
+            .map((u: any) => ({
+              id: u.id,
+              name: u.name,
+              dept: 'Computer Science',
+              staffId: u.identifier || u.email,
+            }));
+          setColleagues(others);
+          if (others.length > 0 && !selectedColleague) {
+            setSelectedColleague(others[0]);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Load delegations error:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedAssignment, selectedColleague]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const activeDelegations = delegations.filter((d) => d.status === 'ACTIVE');
 
-  const handleCreateDelegation = () => {
+  const handleCreateDelegation = async () => {
+    if (!selectedAssignment || !selectedColleague) {
+      setErrorMessage('Please select an offering and colleague.');
+      return;
+    }
     if (reason.trim().length < 5) {
       setErrorMessage('Please provide a justification of at least 5 characters.');
       return;
@@ -97,37 +162,70 @@ export default function DelegationsScreen() {
       return;
     }
 
-    const newDel: DelegationItem = {
-      id: `del-${Date.now()}`,
-      assignmentId: selectedAssignment.id,
-      subjectName: selectedAssignment.subject,
-      sectionCode: selectedAssignment.section,
-      substituteFacultyName: selectedColleague.name,
-      substituteFacultyId: selectedColleague.staffId,
-      startDate,
-      endDate,
-      reason: reason.trim(),
-      status: 'ACTIVE',
-    };
-
-    setDelegations([newDel, ...delegations]);
-    setNewSheetVisible(false);
-    setReason('');
+    setSubmitting(true);
     setErrorMessage(null);
+    const token = SessionStore.getToken();
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/faculty/assignments/${selectedAssignment.id}/delegations`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            substitute_faculty_user_id: selectedColleague.id,
+            start_date: startDate,
+            end_date: endDate,
+            delegation_reason: reason.trim(),
+          }),
+        }
+      );
+
+      if (res.ok) {
+        setNewSheetVisible(false);
+        setReason('');
+        await loadData();
+      } else {
+        const err = await res.json();
+        setErrorMessage(err.detail || 'Failed to create substitute delegation');
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleRevokeDelegation = () => {
+  const handleRevokeDelegation = async () => {
     if (!revokeSheetTarget) return;
+    const token = SessionStore.getToken();
 
-    setDelegations((prev) =>
-      prev.map((d) =>
-        d.id === revokeSheetTarget.id
-          ? { ...d, status: 'REVOKED' as const }
-          : d
-      )
-    );
-    setRevokeSheetTarget(null);
-    setRevocationReason('');
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/faculty/delegations/${revokeSheetTarget.id}/revoke`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            revocation_reason: revocationReason.trim() || 'Early revocation by instructor',
+          }),
+        }
+      );
+
+      if (res.ok) {
+        setRevokeSheetTarget(null);
+        setRevocationReason('');
+        await loadData();
+      }
+    } catch (e) {
+      console.warn('Revoke delegation error:', e);
+    }
   };
 
   return (
@@ -230,8 +328,8 @@ export default function DelegationsScreen() {
 
         <Text style={styles.fieldLabel}>Select offering</Text>
         <View style={styles.pillsRow}>
-          {DEMO_ASSIGNMENTS.map((a) => {
-            const isSelected = selectedAssignment.id === a.id;
+          {assignments.map((a) => {
+            const isSelected = selectedAssignment?.id === a.id;
             return (
               <Pressable
                 key={a.id}
@@ -256,8 +354,8 @@ export default function DelegationsScreen() {
 
         <Text style={styles.fieldLabel}>Select faculty colleague</Text>
         <View style={styles.colleagueSelectCard}>
-          {DEMO_COLLEAGUES.map((c) => {
-            const isSelected = selectedColleague.id === c.id;
+          {colleagues.map((c) => {
+            const isSelected = selectedColleague?.id === c.id;
             return (
               <Pressable
                 key={c.id}

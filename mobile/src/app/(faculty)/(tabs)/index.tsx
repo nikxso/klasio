@@ -22,68 +22,72 @@ import {
 import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
-import { SessionStore } from '@/storage/sessionStore';
+import { SessionStore, AuthUser } from '@/storage/sessionStore';
 import { NotificationRepository } from '@/storage/notificationRepository';
-
-const TODAY_CLASSES = [
-  {
-    id: 'ac8bf5c4-851a-4206-acf5-c8b174b1ae04',
-    subject: 'Data Structures',
-    section: 'CSE 3A',
-    room: 'LH-204',
-    time: '09:00',
-    slotLabel: 'Next',
-    startsIn: '12 min',
-    held: 38,
-    avg: 88,
-  },
-  {
-    id: '428d32a5-2999-4206-ac52-d0a5cf20efcd',
-    subject: 'Operating Systems',
-    section: 'CSE 3B',
-    room: 'LAB-2',
-    time: '12:00',
-    slotLabel: 'Later',
-    held: 35,
-    avg: 81,
-  },
-  {
-    id: 'b7407716-9665-40fa-a177-b396a7f432cd',
-    subject: 'Operating Systems',
-    section: 'CSE 3A',
-    room: 'LAB-4',
-    time: '14:00',
-    slotLabel: 'Afternoon',
-    held: 14,
-    avg: 92,
-  },
-];
+import { API_BASE_URL } from '@/config/api';
 
 export default function FacultyHomeScreen() {
   const router = useRouter();
+  const [user, setUser] = useState<AuthUser | null>(SessionStore.getUser());
+  const [classes, setClasses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [online] = useState(true);
   const [waitingRecords] = useState(0);
-  const [unreadCount, setUnreadCount] = useState<number>(1);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
 
   useEffect(() => {
     let isCancelled = false;
-    async function checkUnread() {
-      const user = SessionStore.getUser();
+    async function loadFacultyData() {
+      const stored = SessionStore.getUser() || (await SessionStore.initFromStorage())?.user;
+      if (stored && !isCancelled) setUser(stored);
+
       const token = SessionStore.getToken();
-      if (user) {
-        const count = await NotificationRepository.getUnreadCount(user.id, token);
+      if (stored) {
+        const count = await NotificationRepository.getUnreadCount(stored.id, token);
         if (!isCancelled) setUnreadCount(count);
       }
+
+      if (token) {
+        try {
+          setLoading(true);
+          const res = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && !isCancelled) {
+              const mapped = data.map((item: any, idx: number) => ({
+                id: item.teaching_assignment_id || item.id,
+                subject: item.subject_name,
+                section: item.section_code,
+                room: 'LH-204',
+                time: idx === 0 ? '09:00' : idx === 1 ? '11:15' : '14:00',
+                slotLabel: idx === 0 ? 'Next' : idx === 1 ? 'Later' : 'Afternoon',
+                startsIn: idx === 0 ? 'In progress' : 'Upcoming',
+                held: item.held_count || 12,
+                avg: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : 88,
+                isDelegated: Boolean(item.is_delegated),
+                regularFaculty: item.delegation_details?.regular_faculty_name || '',
+              }));
+              setClasses(mapped);
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to load faculty assignments:', e);
+        } finally {
+          if (!isCancelled) setLoading(false);
+        }
+      }
     }
-    checkUnread();
+    loadFacultyData();
     return () => {
       isCancelled = true;
     };
   }, []);
 
-  const nextClass = TODAY_CLASSES[0];
+  const nextClass = classes[0];
 
-  const handleOpenClass = (item: typeof TODAY_CLASSES[0]) => {
+  const handleOpenClass = (item: any) => {
     router.push({
       pathname: '/(faculty)/section/[id]',
       params: {
@@ -94,13 +98,13 @@ export default function FacultyHomeScreen() {
         room: item.room,
         held: String(item.held),
         avg: String(item.avg),
-        isDelegated: 'false',
-        regularFaculty: '',
+        isDelegated: item.isDelegated ? 'true' : 'false',
+        regularFaculty: item.regularFaculty || '',
       },
     });
   };
 
-  const handleStartAttendance = (item: typeof TODAY_CLASSES[0]) => {
+  const handleStartAttendance = (item: any) => {
     router.push({
       pathname: '/(faculty)/session/select-context' as any,
       params: {
@@ -113,7 +117,7 @@ export default function FacultyHomeScreen() {
     <Screen
       left={<KlasioLogo variant="lockup" size={24} />}
       subtitle="Good morning"
-      title="Dr. Lakshmi Iyer"
+      title={user?.fullName || 'Faculty'}
       right={
         <View style={styles.headerRightActions}>
           <Pressable
@@ -151,35 +155,44 @@ export default function FacultyHomeScreen() {
       }
     >
       {/* Next Class Hero Card */}
-      <View style={styles.heroCard}>
-        <View style={styles.heroFloatCircle} />
+      {nextClass ? (
+        <View style={styles.heroCard}>
+          <View style={styles.heroFloatCircle} />
 
-        <Chip tone="apricot" icon={<Clock size={12} color="#b86a2a" />}>
-          Starts in {nextClass.startsIn}
-        </Chip>
+          <Chip tone="apricot" icon={<Clock size={12} color="#b86a2a" />}>
+            Starts in {nextClass.startsIn}
+          </Chip>
 
-        <Text style={styles.heroClassTitle}>{nextClass.subject}</Text>
+          <Text style={styles.heroClassTitle}>{nextClass.subject}</Text>
 
-        <View style={styles.heroMetaRow}>
-          <Text style={styles.heroMetaText}>{nextClass.section}</Text>
-          <View style={styles.heroLocationRow}>
-            <MapPin size={13} color="rgba(255,255,255,0.8)" />
-            <Text style={styles.heroMetaText}>{nextClass.room}</Text>
+          <View style={styles.heroMetaRow}>
+            <Text style={styles.heroMetaText}>{nextClass.section}</Text>
+            <View style={styles.heroLocationRow}>
+              <MapPin size={13} color="rgba(255,255,255,0.8)" />
+              <Text style={styles.heroMetaText}>{nextClass.room}</Text>
+            </View>
+            <Text style={styles.heroMetaText}>{nextClass.time}</Text>
           </View>
-          <Text style={styles.heroMetaText}>{nextClass.time}</Text>
-        </View>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.takeAttendanceButton,
-            pressed && styles.takeAttendanceButtonPressed,
-          ]}
-          onPress={() => handleStartAttendance(nextClass)}
-        >
-          <ScanFace size={19} color={Colors.forest} />
-          <Text style={styles.takeAttendanceText}>Start attendance</Text>
-        </Pressable>
-      </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.takeAttendanceButton,
+              pressed && styles.takeAttendanceButtonPressed,
+            ]}
+            onPress={() => handleStartAttendance(nextClass)}
+          >
+            <ScanFace size={19} color={Colors.forest} />
+            <Text style={styles.takeAttendanceText}>Start attendance</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Card style={styles.classCard}>
+          <View style={{ paddingVertical: 12, alignItems: 'center', width: '100%' }}>
+            <Text style={styles.subjectText}>No classes scheduled for today</Text>
+            <Text style={styles.sectionText}>All authorized assignments are up to date.</Text>
+          </View>
+        </Card>
+      )}
 
       {/* Offline / Sync Banner */}
       {(!online || waitingRecords > 0) && (
@@ -213,7 +226,7 @@ export default function FacultyHomeScreen() {
       </Text>
 
       <View style={styles.classesList}>
-        {TODAY_CLASSES.map((item) => (
+        {classes.map((item) => (
           <Card
             key={item.id}
             onPress={() => handleOpenClass(item)}

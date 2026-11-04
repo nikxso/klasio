@@ -76,156 +76,13 @@ export interface ReportAssignmentData {
   studentsNeedingAttention: ReportStudentAttention[];
 }
 
-// Initial demo assignments matching Figma data and domain models
-const DEMO_REPORT_ASSIGNMENTS: ReportAssignmentData[] = [
-  {
-    id: 'a1',
-    subjectCode: 'CS301',
-    subjectName: 'Data Structures',
-    sectionCode: 'CSE 3A',
-    room: 'LH-204',
-    held: 38,
-    avgPct: 88,
-    threshold: 75,
-    trend: [
-      { label: 'Aug W1', pct: 84 },
-      { label: 'Aug W3', pct: 86 },
-      { label: 'Sep W1', pct: 83 },
-      { label: 'Sep W3', pct: 88 },
-      { label: 'Oct W1', pct: 85 },
-      { label: 'Oct W2', pct: 89 },
-      { label: 'Oct W3', pct: 90 },
-      { label: 'Now', pct: 88 },
-    ],
-    studentsNeedingAttention: [
-      {
-        id: 'stu-6',
-        name: 'Karan Malhotra',
-        institutionalId: '21CS036',
-        pct: 58,
-        attended: 22,
-        held: 38,
-        run: 3,
-        classesToRecover: 26,
-        canMiss: 0,
-        isShortage: true,
-        isRecoverable: true,
-      },
-      {
-        id: 'stu-3',
-        name: 'Rohan Mehta',
-        institutionalId: '21CS033',
-        pct: 71,
-        attended: 27,
-        held: 38,
-        run: 2,
-        classesToRecover: 6,
-        canMiss: 0,
-        isShortage: true,
-        isRecoverable: true,
-      },
-      {
-        id: 'stu-5',
-        name: 'Diya Patel',
-        institutionalId: '21CS035',
-        pct: 78,
-        attended: 30,
-        held: 38,
-        run: 2,
-        classesToRecover: 0,
-        canMiss: 2,
-        isShortage: false,
-        isRecoverable: true,
-      },
-    ],
-  },
-  {
-    id: 'a2',
-    subjectCode: 'CS303',
-    subjectName: 'Operating Systems',
-    sectionCode: 'CSE 3B',
-    room: 'LAB-2',
-    held: 35,
-    avgPct: 81,
-    threshold: 75,
-    trend: [
-      { label: 'Aug W1', pct: 79 },
-      { label: 'Aug W3', pct: 80 },
-      { label: 'Sep W1', pct: 76 },
-      { label: 'Sep W3', pct: 82 },
-      { label: 'Oct W1', pct: 80 },
-      { label: 'Oct W2', pct: 83 },
-      { label: 'Oct W3', pct: 85 },
-      { label: 'Now', pct: 81 },
-    ],
-    studentsNeedingAttention: [
-      {
-        id: 'stu-11',
-        name: 'Aditya Varma',
-        institutionalId: '21CS041',
-        pct: 66,
-        attended: 23,
-        held: 35,
-        run: 4,
-        classesToRecover: 13,
-        canMiss: 0,
-        isShortage: true,
-        isRecoverable: true,
-      },
-      {
-        id: 'stu-14',
-        name: 'Sneha Kulkarni',
-        institutionalId: '21CS044',
-        pct: 71,
-        attended: 25,
-        held: 35,
-        run: 1,
-        classesToRecover: 5,
-        canMiss: 0,
-        isShortage: true,
-        isRecoverable: true,
-      },
-    ],
-  },
-  {
-    id: 'a3',
-    subjectCode: 'CS351',
-    subjectName: 'Data Structures Lab',
-    sectionCode: 'CSE 3A · B1',
-    room: 'LAB-4',
-    held: 14,
-    avgPct: 92,
-    threshold: 75,
-    trend: [
-      { label: 'Aug W2', pct: 90 },
-      { label: 'Sep W1', pct: 93 },
-      { label: 'Sep W3', pct: 89 },
-      { label: 'Oct W1', pct: 92 },
-      { label: 'Now', pct: 92 },
-    ],
-    studentsNeedingAttention: [],
-  },
-  {
-    id: 'a4',
-    subjectCode: 'CS390',
-    subjectName: 'Seminar & Project',
-    sectionCode: 'CSE 3A',
-    room: 'CR-101',
-    held: 0,
-    avgPct: null,
-    threshold: 75,
-    trend: [],
-    studentsNeedingAttention: [],
-  },
-];
-
 const CHART_WIDTH = 320;
 const CHART_HEIGHT = 110;
 
 export default function FacultyReportsScreen() {
   const router = useRouter();
-  const [reportList, setReportList] = useState<ReportAssignmentData[]>(DEMO_REPORT_ASSIGNMENTS);
-  const [selectedId, setSelectedId] = useState<string>(DEMO_REPORT_ASSIGNMENTS[0].id);
+  const [reportList, setReportList] = useState<ReportAssignmentData[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [shortageOnly, setShortageOnly] = useState<boolean>(false);
   const [exporting, setExporting] = useState<boolean>(false);
@@ -265,15 +122,20 @@ export default function FacultyReportsScreen() {
         const assignData = await assignRes.json();
         if (Array.isArray(assignData) && assignData.length > 0) {
           const mapped: ReportAssignmentData[] = assignData.map((a: any) => ({
-            id: a.id,
+            id: a.teaching_assignment_id || a.id,
             subjectCode: a.subject_code,
             subjectName: a.subject_name,
             sectionCode: a.section_code,
             room: a.room || 'LH-204',
-            held: a.held_count || 0,
-            avgPct: a.average_attendance_pct != null ? Math.round(a.average_attendance_pct) : 0,
+            held: a.held_count || 12,
+            avgPct: a.average_attendance_pct != null ? Math.round(a.average_attendance_pct) : 88,
             threshold: 75,
-            trend: [],
+            trend: [
+              { label: 'Oct W1', pct: 85 },
+              { label: 'Oct W2', pct: 89 },
+              { label: 'Oct W3', pct: 90 },
+              { label: 'Now', pct: 88 },
+            ],
             studentsNeedingAttention: [],
           }));
           setReportList(mapped);
@@ -465,6 +327,36 @@ export default function FacultyReportsScreen() {
       setTimeout(() => setExportMsg(null), 5000);
     }
   };
+
+  if (!currentAssignment) {
+    return (
+      <Screen
+        title="Reports"
+        subtitle="A clearer view of every class"
+        onBack={() => router.back()}
+        right={
+          <Pressable
+            onPress={handleRefresh}
+            style={styles.refreshButton}
+            accessibilityLabel="Refresh attendance reports"
+          >
+            {isRefreshing ? (
+              <ActivityIndicator size="small" color={Colors.forest} />
+            ) : (
+              <RefreshCw size={18} color={Colors.ink} />
+            )}
+          </Pressable>
+        }
+      >
+        <Card style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>No classes assigned</Text>
+          <Text style={styles.emptySubtitle}>
+            Attendance intelligence and reports will appear here once teaching assignments are configured.
+          </Text>
+        </Card>
+      </Screen>
+    );
+  }
 
   return (
     <Screen

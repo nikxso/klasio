@@ -35,54 +35,6 @@ const CATEGORIES = [
   { key: 'REQUEST', label: 'Requests' },
 ];
 
-// Fallback demonstrable notifications for offline demo mode
-const FALLBACK_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: 'demo-notif-1',
-    recipient_user_id: 'default',
-    category: 'ATTENDANCE',
-    priority: 'NORMAL',
-    title: 'Attendance Finalized',
-    message: 'Attendance for CS301 (Data Structures) Period 1 was finalized with 36 present.',
-    action_route: '/(faculty)/assignments',
-    is_read: false,
-    created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-  },
-  {
-    id: 'demo-notif-2',
-    recipient_user_id: 'default',
-    category: 'ALERT',
-    priority: 'HIGH',
-    title: 'Attendance Shortage Alert',
-    message: 'Karan Malhotra (21CS036) is currently below 75% attendance threshold (58%).',
-    action_route: '/(faculty)/reports',
-    is_read: false,
-    created_at: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
-  },
-  {
-    id: 'demo-notif-3',
-    recipient_user_id: 'default',
-    category: 'REQUEST',
-    priority: 'NORMAL',
-    title: 'Grievance Submitted',
-    message: 'Aarav Sharma submitted an attendance correction request for CS301 on 2026-10-31.',
-    action_route: '/(student)/(tabs)/requests',
-    is_read: true,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
-  },
-  {
-    id: 'demo-notif-4',
-    recipient_user_id: 'default',
-    category: 'SYSTEM',
-    priority: 'LOW',
-    title: 'Biometric Model Ready',
-    message: 'EdgeFace-XS (512-D) offline face recognition pipeline initialized successfully.',
-    action_route: undefined,
-    is_read: true,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-  },
-];
-
 export default function NotificationCenterScreen() {
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -103,18 +55,9 @@ export default function NotificationCenterScreen() {
           token,
           selectedCategory
         );
-        if (items.length > 0) {
-          setNotifications(items);
-        } else {
-          // If no cached or server notifications, display initial fallback
-          const filteredFallback =
-            selectedCategory === 'ALL'
-              ? FALLBACK_NOTIFICATIONS
-              : FALLBACK_NOTIFICATIONS.filter((n) => n.category === selectedCategory);
-          setNotifications(filteredFallback);
-        }
+        setNotifications(items);
       } catch (err) {
-        setNotifications(FALLBACK_NOTIFICATIONS);
+        setNotifications([]);
       } finally {
         if (showLoadingSpinner) setLoading(false);
         setRefreshing(false);
@@ -287,10 +230,10 @@ export default function NotificationCenterScreen() {
                       <Chip
                         tone={
                           item.category === 'ATTENDANCE'
-                            ? 'sage'
+                            ? 'forest'
                             : item.category === 'ALERT'
                             ? 'apricot'
-                            : 'neutral'
+                            : 'soft'
                         }
                       >
                         {item.category}

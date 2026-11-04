@@ -25,6 +25,7 @@ import {
   SectionTitle,
 } from '@/components/ui/kit';
 import { Colors } from '@/theme/tokens';
+import { API_BASE_URL } from '@/config/api';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import {
   StudentRepository,
@@ -35,67 +36,13 @@ import { SessionStore } from '@/storage/sessionStore';
 import { NotificationRepository } from '@/storage/notificationRepository';
 import { AttendanceBarChart, AttendanceTrendLineChart } from '@/components/charts';
 
-const DEFAULT_SUMMARY: StudentPersonalAttendanceResponse = {
-  student_id: 'stu-aarav-21cs037',
-  overall_attendance_percentage: 82.0,
-  subjects: [
-    {
-      subject_id: 'sub-01',
-      teaching_assignment_id: 'a1',
-      subject_code: 'CS301',
-      subject_name: 'Data Structures',
-      faculty_name: 'Dr. Lakshmi Iyer',
-      total_eligible_sessions: 42,
-      attended_sessions: 36,
-      attendance_percentage: 86.0,
-      effective_start_date: '2026-08-01',
-      classes_to_recover: 0,
-      classes_can_miss: 6,
-      is_shortage: false,
-      is_recoverable: true,
-      threshold: 75.0,
-    },
-    {
-      subject_id: 'sub-02',
-      teaching_assignment_id: 'a2',
-      subject_code: 'CS303',
-      subject_name: 'Operating Systems',
-      faculty_name: 'Prof. Rahul Menon',
-      total_eligible_sessions: 38,
-      attended_sessions: 27,
-      attendance_percentage: 71.0,
-      effective_start_date: '2026-08-01',
-      classes_to_recover: 3,
-      classes_can_miss: 0,
-      is_shortage: true,
-      is_recoverable: true,
-      threshold: 75.0,
-    },
-    {
-      subject_id: 'sub-03',
-      teaching_assignment_id: 'a3',
-      subject_code: 'CS305',
-      subject_name: 'Computer Networks',
-      faculty_name: 'Dr. Fatima Khan',
-      total_eligible_sessions: 35,
-      attended_sessions: 28,
-      attendance_percentage: 80.0,
-      effective_start_date: '2026-08-01',
-      classes_to_recover: 0,
-      classes_can_miss: 2,
-      is_shortage: false,
-      is_recoverable: true,
-      threshold: 75.0,
-    },
-  ],
-};
-
 export default function StudentHomeScreen() {
   const router = useRouter();
   const [user, setUser] = useState(SessionStore.getUser());
-  const [data, setData] = useState<StudentPersonalAttendanceResponse>(DEFAULT_SUMMARY);
+  const [data, setData] = useState<StudentPersonalAttendanceResponse | null>(null);
+  const [loading, setLoading] = useState(true);
   const [faceStatus, setFaceStatus] = useState<'none' | 'pending' | 'approved'>('approved');
-  const [unreadCount, setUnreadCount] = useState<number>(1);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
 
   useEffect(() => {
     let isCancelled = false;
@@ -105,17 +52,40 @@ export default function StudentHomeScreen() {
         setUser(stored);
       }
 
-      try {
-        const studentId = stored?.id || DEFAULT_SUMMARY.student_id;
-        const cached = await StudentRepository.getCachedAttendance(studentId);
-        if (cached && cached.data && cached.data.subjects.length > 0 && !isCancelled) {
-          setData(cached.data);
+      if (stored?.id) {
+        try {
+          const cached = await StudentRepository.getCachedAttendance(stored.id);
+          if (cached?.data && cached.data.subjects.length > 0 && !isCancelled) {
+            setData(cached.data);
+          }
+        } catch {
+          // ignore cache read error
         }
-      } catch {
-        // Fallback to initial local cache
       }
 
       const token = SessionStore.getToken();
+      if (token) {
+        try {
+          setLoading(true);
+          const res = await fetch(`${API_BASE_URL}/api/v1/student/attendance`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          });
+          if (res.ok) {
+            const liveData: StudentPersonalAttendanceResponse = await res.json();
+            if (!isCancelled) {
+              setData(liveData);
+              if (stored?.id) {
+                await StudentRepository.saveCachedAttendance(stored.id, liveData);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to sync student attendance:', e);
+        } finally {
+          if (!isCancelled) setLoading(false);
+        }
+      }
+
       if (stored) {
         const count = await NotificationRepository.getUnreadCount(stored.id, token);
         if (!isCancelled) setUnreadCount(count);
@@ -127,8 +97,8 @@ export default function StudentHomeScreen() {
     };
   }, []);
 
-  const overall = Math.round(data.overall_attendance_percentage);
-  const lowSubject = data.subjects.find((s) => s.is_shortage || s.attendance_percentage < 75);
+  const overall = data ? Math.round(data.overall_attendance_percentage) : 100;
+  const lowSubject = data?.subjects.find((s) => s.is_shortage || s.attendance_percentage < 75);
 
   return (
     <Screen
@@ -205,7 +175,7 @@ export default function StudentHomeScreen() {
       )}
 
       {/* Subject Attendance Comparison SVG Chart */}
-      {data.subjects.length > 0 && (
+      {data?.subjects && data.subjects.length > 0 && (
         <AttendanceBarChart
           data={data.subjects.map((s) => ({
             label: s.subject_code,
@@ -231,54 +201,62 @@ export default function StudentHomeScreen() {
       </Text>
 
       <View style={styles.subjectsList}>
-        {data.subjects.slice(0, 3).map((s) => (
-          <Pressable
-            key={s.teaching_assignment_id}
-            onPress={() =>
-              router.push({
-                pathname: '/(student)/subject/[id]',
-                params: {
-                  id: s.teaching_assignment_id,
-                  subject: s.subject_name,
-                  code: s.subject_code,
-                  faculty: s.faculty_name,
-                  held: String(s.total_eligible_sessions),
-                  attended: String(s.attended_sessions),
-                  pct: String(s.attendance_percentage),
-                  threshold: String(s.threshold),
-                  toRecover: String(s.classes_to_recover ?? 0),
-                  canMiss: String(s.classes_can_miss),
-                },
-              })
-            }
-          >
-            <Card style={styles.subjectCard}>
-              <View style={styles.subjectTopRow}>
-                <Text style={styles.subjectName}>{s.subject_name}</Text>
-                <Text
-                  style={[
-                    styles.subjectPct,
-                    s.attendance_percentage < 75 && styles.subjectPctLow,
-                  ]}
-                >
-                  {Math.round(s.attendance_percentage)}%
+        {data?.subjects && data.subjects.length > 0 ? (
+          data.subjects.slice(0, 3).map((s) => (
+            <Pressable
+              key={s.teaching_assignment_id}
+              onPress={() =>
+                router.push({
+                  pathname: '/(student)/subject/[id]',
+                  params: {
+                    id: s.teaching_assignment_id,
+                    subject: s.subject_name,
+                    code: s.subject_code,
+                    faculty: s.faculty_name,
+                    held: String(s.total_eligible_sessions),
+                    attended: String(s.attended_sessions),
+                    pct: String(s.attendance_percentage),
+                    threshold: String(s.threshold),
+                    toRecover: String(s.classes_to_recover ?? 0),
+                    canMiss: String(s.classes_can_miss),
+                  },
+                })
+              }
+            >
+              <Card style={styles.subjectCard}>
+                <View style={styles.subjectTopRow}>
+                  <Text style={styles.subjectName}>{s.subject_name}</Text>
+                  <Text
+                    style={[
+                      styles.subjectPct,
+                      s.attendance_percentage < 75 && styles.subjectPctLow,
+                    ]}
+                  >
+                    {Math.round(s.attendance_percentage)}%
+                  </Text>
+                </View>
+
+                <View style={styles.progressBarWrapper}>
+                  <Bar pct={s.attendance_percentage} threshold={75} />
+                </View>
+
+                <Text style={styles.subjectGuidance}>
+                  {s.attendance_percentage < 75
+                    ? `Attend ${s.classes_to_recover ?? 2} more in a row to reach 75%`
+                    : s.classes_can_miss > 0
+                    ? `You can miss ${s.classes_can_miss} and stay above 75%`
+                    : 'Right at the line — keep attending'}
                 </Text>
-              </View>
-
-              <View style={styles.progressBarWrapper}>
-                <Bar pct={s.attendance_percentage} threshold={75} />
-              </View>
-
-              <Text style={styles.subjectGuidance}>
-                {s.attendance_percentage < 75
-                  ? `Attend ${s.classes_to_recover ?? 2} more in a row to reach 75%`
-                  : s.classes_can_miss > 0
-                  ? `You can miss ${s.classes_can_miss} and stay above 75%`
-                  : 'Right at the line — keep attending'}
-              </Text>
-            </Card>
-          </Pressable>
-        ))}
+              </Card>
+            </Pressable>
+          ))
+        ) : (
+          <Card style={styles.subjectCard}>
+            <Text style={[styles.subjectGuidance, { textAlign: 'center', width: '100%' }]}>
+              No subjects enrolled yet.
+            </Text>
+          </Card>
+        )}
       </View>
     </Screen>
   );

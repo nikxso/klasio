@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -32,110 +32,120 @@ import {
   RequestState,
 } from '@/storage/requestRepository';
 import { API_BASE_URL } from '@/config/api';
-
-const DEFAULT_SUBJECTS = [
-  { id: 'ta-01', name: 'Data Structures' },
-  { id: 'ta-02', name: 'Operating Systems' },
-  { id: 'ta-03', name: 'Computer Networks' },
-];
-
-const INITIAL_REQUESTS: CachedStudentRequest[] = [
-  {
-    id: 'r1',
-    studentUserId: 'stu-aarav-21cs037',
-    teachingAssignmentId: 'ta-02',
-    subjectName: 'Operating Systems',
-    sessionDate: 'Mon, 29 Sep',
-    studentNote: 'I was present — sat in the back row.',
-    status: 'Being reviewed',
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-  },
-];
+import { SessionStore } from '@/storage/sessionStore';
 
 export default function StudentRequestsScreen() {
-  const [requests, setRequests] = useState<CachedStudentRequest[]>(INITIAL_REQUESTS);
+  const [requests, setRequests] = useState<CachedStudentRequest[]>([]);
+  const [subjects, setSubjects] = useState<{ id: string; name: string }[]>([]);
   const [sheetVisible, setSheetVisible] = useState(false);
-  const [selectedSubject, setSelectedSubject] = useState(DEFAULT_SUBJECTS[1]);
-  const [selectedDate, setSelectedDate] = useState('Thu, 2 Oct');
+  const [selectedSubject, setSelectedSubject] = useState<{ id: string; name: string } | null>(null);
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [noteText, setNoteText] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    async function loadRequests() {
-      try {
-        const cached = await RequestRepository.getRequests('stu-aarav-21cs037');
-        if (cached.length > 0) {
-          setRequests(cached);
-        } else {
-          await RequestRepository.saveRequests(INITIAL_REQUESTS);
-        }
-
-        // Try syncing from backend
-        const res = await fetch(`${API_BASE_URL}/api/v1/student/requests`, {
-          headers: { Accept: 'application/json' },
-        });
-        if (res.ok) {
-          const live = await res.json();
-          if (Array.isArray(live) && live.length > 0) {
-            const mapped: CachedStudentRequest[] = live.map((r: any) => ({
-              id: r.id,
-              studentUserId: r.student_user_id,
-              teachingAssignmentId: r.teaching_assignment_id,
-              subjectName: r.subject_name || 'Subject',
-              sessionDate: r.session_date,
-              studentNote: r.student_note,
-              status:
-                r.status === 'APPROVED'
-                  ? 'Accepted'
-                  : r.status === 'REJECTED'
-                  ? 'Not accepted'
-                  : r.status === 'UNDER_REVIEW'
-                  ? 'Being reviewed'
-                  : 'Sent',
-              resolutionNote: r.resolution_note,
-              createdAt: r.created_at,
-            }));
-            setRequests(mapped);
-            await RequestRepository.saveRequests(mapped);
-          }
-        }
-      } catch {
-        // Fallback to local SQLite cache
-      }
-    }
-    loadRequests();
-  }, []);
-
-  const handleSendRequest = async () => {
-    if (!noteText.trim()) return;
-    setSubmitting(true);
+  const loadRequests = useCallback(async () => {
+    const user = SessionStore.getUser();
+    const token = SessionStore.getToken();
+    if (!user || !token) return;
 
     try {
-      const created = await RequestRepository.createRequest({
-        studentUserId: 'stu-aarav-21cs037',
-        teachingAssignmentId: selectedSubject.id,
-        subjectName: selectedSubject.name,
-        sessionDate: selectedDate,
-        studentNote: noteText.trim(),
-      });
+      const cached = await RequestRepository.getRequests(user.id);
+      if (cached.length > 0) {
+        setRequests(cached);
+      }
 
-      setRequests((prev) => [created, ...prev]);
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      };
+
+      // 1. Sync live requests from backend
+      const res = await fetch(`${API_BASE_URL}/api/v1/student/requests`, { headers });
+      if (res.ok) {
+        const live = await res.json();
+        if (Array.isArray(live)) {
+          const mapped: CachedStudentRequest[] = live.map((r: any) => ({
+            id: r.id,
+            studentUserId: r.student_user_id,
+            teachingAssignmentId: r.teaching_assignment_id,
+            subjectName: r.subject_name || 'Subject',
+            sessionDate: r.session_date,
+            studentNote: r.student_note,
+            status:
+              r.status === 'APPROVED'
+                ? 'Accepted'
+                : r.status === 'REJECTED'
+                ? 'Not accepted'
+                : r.status === 'UNDER_REVIEW'
+                ? 'Being reviewed'
+                : 'Sent',
+            resolutionNote: r.resolution_note,
+            createdAt: r.created_at,
+          }));
+          setRequests(mapped);
+          await RequestRepository.saveRequests(mapped);
+        }
+      }
+
+      // 2. Fetch student's real enrolled subjects for grievance picker
+      const attRes = await fetch(`${API_BASE_URL}/api/v1/student/attendance`, { headers });
+      if (attRes.ok) {
+        const attData = await attRes.json();
+        if (Array.isArray(attData.subjects)) {
+          const mappedSubs = attData.subjects.map((s: any) => ({
+            id: s.teaching_assignment_id,
+            name: s.subject_name,
+          }));
+          setSubjects(mappedSubs);
+          if (mappedSubs.length > 0 && !selectedSubject) {
+            setSelectedSubject(mappedSubs[0]);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load student requests:', e);
+    }
+  }, [selectedSubject]);
+
+  useEffect(() => {
+    loadRequests();
+  }, [loadRequests]);
+
+  const handleSendRequest = async () => {
+    if (!noteText.trim() || !selectedSubject) return;
+    setSubmitting(true);
+    const user = SessionStore.getUser();
+    const token = SessionStore.getToken();
+
+    try {
+      if (user) {
+        const created = await RequestRepository.createRequest({
+          studentUserId: user.id,
+          teachingAssignmentId: selectedSubject.id,
+          subjectName: selectedSubject.name,
+          sessionDate: selectedDate,
+          studentNote: noteText.trim(),
+        });
+        setRequests((prev) => [created, ...prev]);
+      }
+
       setNoteText('');
       setSheetVisible(false);
 
-      // Attempt background dispatch to backend if available
-      try {
+      if (token) {
         await fetch(`${API_BASE_URL}/api/v1/student/requests`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({
             teaching_assignment_id: selectedSubject.id,
-            session_date: '2026-10-02',
+            session_date: selectedDate,
             student_note: noteText.trim(),
           }),
         });
-      } catch {
-        // Retains local SQLite copy
+        await loadRequests();
       }
     } finally {
       setSubmitting(false);
@@ -252,19 +262,19 @@ export default function StudentRequestsScreen() {
 
         <Text style={styles.inputLabel}>Subject</Text>
         <View style={styles.chipsRow}>
-          {DEFAULT_SUBJECTS.map((s) => (
+          {subjects.map((s) => (
             <Pressable
               key={s.id}
               onPress={() => setSelectedSubject(s)}
               style={[
                 styles.subjectChip,
-                selectedSubject.id === s.id && styles.subjectChipActive,
+                selectedSubject?.id === s.id && styles.subjectChipActive,
               ]}
             >
               <Text
                 style={[
                   styles.subjectChipText,
-                  selectedSubject.id === s.id && styles.subjectChipTextActive,
+                  selectedSubject?.id === s.id && styles.subjectChipTextActive,
                 ]}
               >
                 {s.name}
@@ -273,9 +283,9 @@ export default function StudentRequestsScreen() {
           ))}
         </View>
 
-        <Text style={styles.inputLabel}>Which day?</Text>
+        <Text style={styles.inputLabel}>Date (YYYY-MM-DD)</Text>
         <View style={styles.chipsRow}>
-          {['Wed, 1 Oct', 'Thu, 2 Oct', 'Fri, 3 Oct'].map((d) => (
+          {['2026-11-03', '2026-11-02', '2026-10-31', '2026-10-29'].map((d) => (
             <Pressable
               key={d}
               onPress={() => setSelectedDate(d)}

@@ -51,17 +51,9 @@ export default function StudentProfileScreen() {
       await SessionStore.clearSession(true);
       setShowSignOutSheet(false);
       try {
-        let rootNav = navigation;
-        while (rootNav.getParent && rootNav.getParent()) {
-          rootNav = rootNav.getParent();
-        }
-        rootNav.reset({
-          index: 0,
-          routes: [{ name: 'index' }],
-        });
-      } catch (navErr) {
-        router.replace('/');
-      }
+        router.dismissAll();
+      } catch (_) {}
+      router.replace('/');
     } catch (e) {
       console.warn('Sign out error:', e);
       router.replace('/');

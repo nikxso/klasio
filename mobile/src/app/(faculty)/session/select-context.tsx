@@ -41,37 +41,6 @@ interface AssignmentItem {
   regularFacultyName?: string;
 }
 
-const FALLBACK_ASSIGNMENTS: AssignmentItem[] = [
-  {
-    id: 'a1',
-    subjectCode: 'CS301',
-    subjectName: 'Data Structures',
-    sectionCode: 'CSE 3A',
-    room: 'LH-204',
-    scheduleTime: '09:00 - 10:00',
-    isDelegated: false,
-  },
-  {
-    id: 'a2',
-    subjectCode: 'CS303',
-    subjectName: 'Operating Systems',
-    sectionCode: 'CSE 3B',
-    room: 'LAB-2',
-    scheduleTime: '12:00 - 13:00',
-    isDelegated: false,
-  },
-  {
-    id: 'a3',
-    subjectCode: 'CS351',
-    subjectName: 'Data Structures Lab',
-    sectionCode: 'CSE 3A · B1',
-    room: 'LAB-4',
-    scheduleTime: '14:00 - 16:00',
-    isDelegated: true,
-    regularFacultyName: 'Dr. Rahul Menon',
-  },
-];
-
 const PERIOD_SLOTS = [
   { slot: 1, label: 'P1', time: '09:00 - 10:00' },
   { slot: 2, label: 'P2', time: '10:00 - 11:00' },
@@ -89,10 +58,10 @@ export default function SelectAttendanceContextScreen() {
     preselectId?: string;
   }>();
 
-  const [assignments, setAssignments] = useState<AssignmentItem[]>(FALLBACK_ASSIGNMENTS);
+  const [assignments, setAssignments] = useState<AssignmentItem[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>(
-    params.preselectId || FALLBACK_ASSIGNMENTS[0].id
+    params.preselectId || ''
   );
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -517,7 +486,7 @@ export default function SelectAttendanceContextScreen() {
           </Button>
 
           <Button
-            variant="secondary"
+            variant="soft"
             icon={<ListChecks size={18} color={Colors.ink} />}
             onPress={handleManualMarking}
             style={styles.secondaryActionButton}

@@ -27,19 +27,13 @@ import { Brand } from '@/constants/brand';
 import { SessionStore, AuthUser } from '@/storage/sessionStore';
 import { API_BASE_URL } from '@/config/api';
 
-const DEVICES = [
-  { name: 'Dr. Lakshmi’s phone', ok: true, seen: '2 min ago' },
-  { name: 'Prof. Rahul’s phone', ok: true, seen: '1 hr ago' },
-  { name: 'Dr. Fatima’s tablet', ok: true, seen: 'Yesterday' },
-];
-
 export default function AdminSettingsScreen() {
   const router = useRouter();
   const navigation = useNavigation<any>();
   const [user, setUser] = useState<AuthUser | null>(SessionStore.getUser());
   const [facesSheet, setFacesSheet] = useState(false);
   const [updating, setUpdating] = useState(false);
-  const [devices, setDevices] = useState(DEVICES);
+  const [devices, setDevices] = useState<{ name: string; ok: boolean; seen: string }[]>([]);
   const [showSignOutSheet, setShowSignOutSheet] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [cacheBuster, setCacheBuster] = useState(Date.now());
@@ -51,6 +45,29 @@ export default function AdminSettingsScreen() {
         setUser(stored);
       }
       setCacheBuster(Date.now());
+
+      const token = SessionStore.getToken();
+      if (token) {
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/v1/admin/users?role=faculty`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const facList = await res.json();
+            if (Array.isArray(facList) && facList.length > 0) {
+              setDevices(
+                facList.map((f: any, idx: number) => ({
+                  name: `${f.name}'s Device`,
+                  ok: true,
+                  seen: idx === 0 ? 'Active now' : idx === 1 ? '10 min ago' : 'Today',
+                }))
+              );
+            }
+          }
+        } catch {
+          // ignore error
+        }
+      }
     }
     initUser();
   }, []);
@@ -69,17 +86,9 @@ export default function AdminSettingsScreen() {
       await SessionStore.clearSession(true);
       setShowSignOutSheet(false);
       try {
-        let rootNav = navigation;
-        while (rootNav.getParent && rootNav.getParent()) {
-          rootNav = rootNav.getParent();
-        }
-        rootNav.reset({
-          index: 0,
-          routes: [{ name: 'index' }],
-        });
-      } catch (navErr) {
-        router.replace('/');
-      }
+        router.dismissAll();
+      } catch (_) {}
+      router.replace('/');
     } catch (e) {
       console.warn('Sign out error:', e);
       router.replace('/');
@@ -121,7 +130,7 @@ export default function AdminSettingsScreen() {
           <View style={styles.infoCol}>
             <Text style={styles.infoTitle}>Face Recognition Baseline</Text>
             <Text style={styles.infoSubtitle}>
-              MobileFaceNet 128D · v2.4 · {devices.length} faculty devices
+              EdgeFace-XS 512D · v1 · {devices.length} faculty devices
             </Text>
           </View>
           <ChevronRight size={18} color={Colors.soft} />

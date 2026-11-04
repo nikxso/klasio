@@ -147,6 +147,7 @@ interface ButtonProps {
   children: ReactNode;
   onPress?: () => void;
   variant?: 'primary' | 'soft' | 'ghost';
+  tone?: Tone;
   disabled?: boolean;
   style?: object;
   icon?: ReactNode;
@@ -156,6 +157,7 @@ export function Button({
   children,
   onPress,
   variant = 'primary',
+  tone,
   disabled = false,
   style,
   icon,
@@ -163,13 +165,20 @@ export function Button({
   const isPrimary = variant === 'primary';
   const isSoft = variant === 'soft';
 
-  const containerStyle = isPrimary
+  const toneBg = tone && ToneColors[tone]?.bg;
+  const toneText = tone && ToneColors[tone]?.text;
+
+  const containerStyle = toneBg
+    ? { backgroundColor: tone === 'forest' ? Colors.forest : tone === 'rose' ? Colors.rose : toneBg }
+    : isPrimary
     ? styles.buttonPrimary
     : isSoft
     ? styles.buttonSoft
     : styles.buttonGhost;
 
-  const textStyle = isPrimary
+  const textStyle = toneText
+    ? { color: (tone === 'forest' || tone === 'rose') ? '#FFFFFF' : toneText }
+    : isPrimary
     ? styles.buttonPrimaryText
     : isSoft
     ? styles.buttonSoftText
@@ -201,18 +210,28 @@ export function Button({
 // Section Title
 // ---------------------------------------------------------------------------
 interface SectionTitleProps {
-  children: ReactNode;
+  children?: ReactNode;
+  title?: ReactNode;
+  badge?: ReactNode;
   action?: ReactNode;
 }
 
-export function SectionTitle({ children, action }: SectionTitleProps) {
+export function SectionTitle({ children, title, badge, action }: SectionTitleProps) {
+  const content = children ?? title;
   return (
     <View style={styles.sectionTitleRow}>
-      {React.isValidElement(children) ? (
-        children
-      ) : (
-        <Text style={styles.sectionTitleText}>{children}</Text>
-      )}
+      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+        {React.isValidElement(content) ? (
+          content
+        ) : (
+          <Text style={styles.sectionTitleText}>{content}</Text>
+        )}
+        {badge && (
+          <View style={{ marginLeft: 8 }}>
+            {typeof badge === 'string' ? <Chip tone="soft">{badge}</Chip> : badge}
+          </View>
+        )}
+      </View>
       {action}
     </View>
   );

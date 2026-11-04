@@ -25,76 +25,12 @@ import {
 import { Screen, Card, Ring, Bar, Chip, IconBubble, SectionTitle, Button } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
+import { SessionStore } from '@/storage/sessionStore';
 import {
   StudentRepository,
   StudentSubjectHistoryResponse,
   StudentSessionHistoryItem,
 } from '@/storage/studentRepository';
-
-// Demo fallback history for offline or preview
-const DEFAULT_FALLBACK_HISTORY: StudentSubjectHistoryResponse = {
-  teaching_assignment_id: 'ta-02',
-  subject_id: 'sub-02',
-  subject_code: 'CS303',
-  subject_name: 'Operating Systems',
-  faculty_name: 'Prof Katherine Johnson',
-  total_eligible_sessions: 38,
-  attended_sessions: 27,
-  attendance_percentage: 71.1,
-  classes_to_recover: 6,
-  classes_can_miss: 0,
-  is_shortage: true,
-  is_recoverable: true,
-  threshold: 75.0,
-  records: [
-    {
-      session_id: 'sess-05',
-      session_date: '2026-10-08',
-      period_slot_or_sequence: 1,
-      attendance_status: 'ABSENT',
-      applicability_status: 'COUNTED',
-      mark_source: 'MANUAL_MARK',
-      recorded_at: '2026-10-08T09:30:00Z',
-    },
-    {
-      session_id: 'sess-04',
-      session_date: '2026-10-01',
-      period_slot_or_sequence: 1,
-      attendance_status: 'ABSENT',
-      applicability_status: 'COUNTED',
-      mark_source: 'MANUAL_MARK',
-      recorded_at: '2026-10-01T09:30:00Z',
-    },
-    {
-      session_id: 'sess-03',
-      session_date: '2026-09-24',
-      period_slot_or_sequence: 1,
-      attendance_status: 'EXCUSED',
-      applicability_status: 'CANCELLED',
-      mark_source: 'MANUAL_MARK',
-      status_reason: 'Severe storm and campus flood',
-      recorded_at: '2026-09-24T09:30:00Z',
-    },
-    {
-      session_id: 'sess-02',
-      session_date: '2026-09-17',
-      period_slot_or_sequence: 1,
-      attendance_status: 'PRESENT',
-      applicability_status: 'COUNTED',
-      mark_source: 'AI_VERIFIED',
-      recorded_at: '2026-09-17T09:30:00Z',
-    },
-    {
-      session_id: 'sess-01',
-      session_date: '2026-09-10',
-      period_slot_or_sequence: 1,
-      attendance_status: 'PRESENT',
-      applicability_status: 'COUNTED',
-      mark_source: 'AI_VERIFIED',
-      recorded_at: '2026-09-10T09:30:00Z',
-    },
-  ],
-};
 
 function formatDate(dateStr: string): string {
   try {
@@ -121,8 +57,8 @@ export default function SubjectAttendanceHistoryScreen() {
     studentId?: string;
   }>();
 
-  const teachingAssignmentId = params.id || 'ta-02';
-  const studentId = params.studentId || 'demo-student-01';
+  const teachingAssignmentId = params.id;
+  const studentId = params.studentId || SessionStore.getUser()?.id || '';
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -168,21 +104,29 @@ export default function SubjectAttendanceHistoryScreen() {
           setIsCached(true);
           setCachedTime(new Date(cached.cachedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
         } else {
-          // Provide default fallback with URL params
           setHistory({
-            ...DEFAULT_FALLBACK_HISTORY,
             teaching_assignment_id: teachingAssignmentId,
-            subject_name: params.subjectName || DEFAULT_FALLBACK_HISTORY.subject_name,
-            subject_code: params.subjectCode || DEFAULT_FALLBACK_HISTORY.subject_code,
-            faculty_name: params.facultyName || DEFAULT_FALLBACK_HISTORY.faculty_name,
+            subject_id: teachingAssignmentId,
+            subject_name: params.subjectName || 'Subject History',
+            subject_code: params.subjectCode || 'Course',
+            faculty_name: params.facultyName || 'Faculty',
+            total_eligible_sessions: 0,
+            attended_sessions: 0,
+            attendance_percentage: 100,
+            classes_to_recover: 0,
+            classes_can_miss: 0,
+            is_shortage: false,
+            is_recoverable: true,
+            threshold: 75.0,
+            records: [],
           });
           setIsCached(true);
-          setCachedTime('Default catalog');
+          setCachedTime('Offline');
         }
       } catch {
-        setHistory(DEFAULT_FALLBACK_HISTORY);
+        setHistory(null);
         setIsCached(true);
-        setCachedTime('Offline demo');
+        setCachedTime('Offline');
       }
     } finally {
       setLoading(false);

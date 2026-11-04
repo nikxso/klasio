@@ -20,64 +20,6 @@ import type {
   SessionApplicabilityStatus,
 } from '@/perception/contracts';
 
-// Initial roster matching Figma mockup if offline
-const DEMO_STUDENTS: Array<CachedStudent & { pct: number }> = [
-  {
-    teachingAssignmentId: 'a1',
-    studentUserId: 'stu-1',
-    institutionalId: '21CS031',
-    studentName: 'Aarav Sharma',
-    effectiveStartDate: '2026-09-01',
-    faceRegistrationState: 'REGISTERED',
-    pct: 96,
-  },
-  {
-    teachingAssignmentId: 'a1',
-    studentUserId: 'stu-2',
-    institutionalId: '21CS032',
-    studentName: 'Priya Nair',
-    effectiveStartDate: '2026-09-01',
-    faceRegistrationState: 'REGISTERED',
-    pct: 91,
-  },
-  {
-    teachingAssignmentId: 'a1',
-    studentUserId: 'stu-3',
-    institutionalId: '21CS033',
-    studentName: 'Rohan Mehta',
-    effectiveStartDate: '2026-09-01',
-    faceRegistrationState: 'REGISTERED',
-    pct: 72,
-  },
-  {
-    teachingAssignmentId: 'a1',
-    studentUserId: 'stu-4',
-    institutionalId: '21CS034',
-    studentName: 'Ananya Iyer',
-    effectiveStartDate: '2026-09-01',
-    faceRegistrationState: 'REGISTERED',
-    pct: 98,
-  },
-  {
-    teachingAssignmentId: 'a1',
-    studentUserId: 'stu-5',
-    institutionalId: '21CS035',
-    studentName: 'Diya Patel',
-    effectiveStartDate: '2026-09-01',
-    faceRegistrationState: 'PENDING',
-    pct: 94,
-  },
-  {
-    teachingAssignmentId: 'a1',
-    studentUserId: 'stu-6',
-    institutionalId: '21CS036',
-    studentName: 'Karan Malhotra',
-    effectiveStartDate: '2026-09-01',
-    faceRegistrationState: 'UNREGISTERED',
-    pct: 58,
-  },
-];
-
 export default function ClassDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -97,7 +39,7 @@ export default function ClassDetailScreen() {
     accumulatedCandidatesJson?: string;
   }>();
 
-  const [students, setStudents] = useState(DEMO_STUDENTS);
+  const [students, setStudents] = useState<Array<CachedStudent & { pct: number }>>([]);
   const [markingMode, setMarkingMode] = useState(params.initialMode === 'review');
   const [reviewTab, setReviewTab] = useState<'check' | 'found'>('check');
   const [marks, setMarks] = useState<Record<string, 'PRESENT' | 'ABSENT' | 'EXCUSED'>>({});
@@ -147,9 +89,9 @@ export default function ClassDetailScreen() {
       RosterRepository.getCachedRoster(params.id).then((cached) => {
         if (cached && cached.length > 0) {
           setStudents(
-            cached.map((c, i) => ({
+            cached.map((c) => ({
               ...c,
-              pct: DEMO_STUDENTS[i % DEMO_STUDENTS.length]?.pct ?? 85,
+              pct: 88,
             }))
           );
         }
@@ -162,9 +104,9 @@ export default function ClassDetailScreen() {
           .then((fresh) => {
             if (fresh && fresh.length > 0) {
               setStudents(
-                fresh.map((c, i) => ({
+                fresh.map((c) => ({
                   ...c,
-                  pct: DEMO_STUDENTS[i % DEMO_STUDENTS.length]?.pct ?? 85,
+                  pct: 88,
                 }))
               );
             }
@@ -289,7 +231,7 @@ export default function ClassDetailScreen() {
 
   // Initialize recognised candidates as suggested PRESENT on entering review mode
   useEffect(() => {
-    if (markingMode && !initializedMarksRef.current) {
+    if (markingMode && students.length > 0 && !initializedMarksRef.current) {
       initializedMarksRef.current = true;
       const initialMarks: Record<string, 'PRESENT' | 'ABSENT' | 'EXCUSED'> = {};
       recognisedStudents.forEach((s) => {
@@ -300,7 +242,7 @@ export default function ClassDetailScreen() {
     } else if (!markingMode) {
       initializedMarksRef.current = false;
     }
-  }, [markingMode]);
+  }, [markingMode, students.length, recognisedStudents]);
 
   const presentCount = Object.values(marks).filter((m) => m === 'PRESENT').length;
   const absentCount = Object.values(marks).filter((m) => m === 'ABSENT').length;

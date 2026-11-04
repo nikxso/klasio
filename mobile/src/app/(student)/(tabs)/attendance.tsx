@@ -56,115 +56,6 @@ export interface CalendarSessionItem {
   status_reason?: string | null;
 }
 
-const FALLBACK_CALENDAR_SESSIONS: CalendarSessionItem[] = [
-  {
-    session_id: 'sess-01',
-    session_date: '2026-11-02',
-    period_slot: 1,
-    time_slot: '09:00 – 10:00 AM',
-    subject_code: 'CS303',
-    subject_name: 'Operating Systems',
-    faculty_name: 'Prof. Rahul Menon',
-    attendance_status: 'ABSENT',
-  },
-  {
-    session_id: 'sess-02',
-    session_date: '2026-10-31',
-    period_slot: 2,
-    time_slot: '10:00 – 11:00 AM',
-    subject_code: 'CS301',
-    subject_name: 'Data Structures',
-    faculty_name: 'Dr. Lakshmi Iyer',
-    attendance_status: 'PRESENT',
-  },
-  {
-    session_id: 'sess-03',
-    session_date: '2026-10-31',
-    period_slot: 3,
-    time_slot: '11:15 – 12:15 PM',
-    subject_code: 'CS301',
-    subject_name: 'Data Structures Lab',
-    faculty_name: 'Dr. Lakshmi Iyer',
-    attendance_status: 'PRESENT',
-  },
-  {
-    session_id: 'sess-04',
-    session_date: '2026-10-28',
-    period_slot: 1,
-    time_slot: '09:00 – 10:00 AM',
-    subject_code: 'CS305',
-    subject_name: 'Computer Networks',
-    faculty_name: 'Dr. Fatima Khan',
-    attendance_status: 'PRESENT',
-  },
-  {
-    session_id: 'sess-05',
-    session_date: '2026-10-29',
-    period_slot: 2,
-    time_slot: '10:00 – 11:00 AM',
-    subject_code: 'CS301',
-    subject_name: 'Data Structures',
-    faculty_name: 'Dr. Lakshmi Iyer',
-    attendance_status: 'EXCUSED',
-    status_reason: 'Approved Medical Leave',
-  },
-];
-
-const DEFAULT_FALLBACK_ATTENDANCE: StudentPersonalAttendanceResponse = {
-  student_id: '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94',
-  overall_attendance_percentage: 82.0,
-  subjects: [
-    {
-      subject_id: 'sub-01',
-      teaching_assignment_id: 'ta-01',
-      subject_code: 'CS301',
-      subject_name: 'Data Structures',
-      faculty_name: 'Dr. Lakshmi Iyer',
-      total_eligible_sessions: 42,
-      attended_sessions: 36,
-      attendance_percentage: 85.7,
-      effective_start_date: '2026-08-01',
-      classes_to_recover: 0,
-      classes_can_miss: 6,
-      is_shortage: false,
-      is_recoverable: true,
-      threshold: 75.0,
-    },
-    {
-      subject_id: 'sub-02',
-      teaching_assignment_id: 'ta-02',
-      subject_code: 'CS303',
-      subject_name: 'Operating Systems',
-      faculty_name: 'Prof. Rahul Menon',
-      total_eligible_sessions: 38,
-      attended_sessions: 27,
-      attendance_percentage: 71.0,
-      effective_start_date: '2026-08-01',
-      classes_to_recover: 3,
-      classes_can_miss: 0,
-      is_shortage: true,
-      is_recoverable: true,
-      threshold: 75.0,
-    },
-    {
-      subject_id: 'sub-03',
-      teaching_assignment_id: 'ta-03',
-      subject_code: 'CS305',
-      subject_name: 'Computer Networks',
-      faculty_name: 'Dr. Fatima Khan',
-      total_eligible_sessions: 35,
-      attended_sessions: 28,
-      attendance_percentage: 80.0,
-      effective_start_date: '2026-08-01',
-      classes_to_recover: 0,
-      classes_can_miss: 2,
-      is_shortage: false,
-      is_recoverable: true,
-      threshold: 75.0,
-    },
-  ],
-};
-
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -172,8 +63,8 @@ const MONTH_NAMES = [
 
 export default function StudentAttendanceScreen() {
   const router = useRouter();
-  const [data, setData] = useState<StudentPersonalAttendanceResponse>(DEFAULT_FALLBACK_ATTENDANCE);
-  const [calendarSessions, setCalendarSessions] = useState<CalendarSessionItem[]>(FALLBACK_CALENDAR_SESSIONS);
+  const [data, setData] = useState<StudentPersonalAttendanceResponse | null>(null);
+  const [calendarSessions, setCalendarSessions] = useState<CalendarSessionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
@@ -190,12 +81,14 @@ export default function StudentAttendanceScreen() {
 
     const token = SessionStore.getToken();
     const user = SessionStore.getUser();
-    const studentId = user?.id || DEFAULT_FALLBACK_ATTENDANCE.student_id;
+    const studentId = user?.id;
 
     try {
-      const cached = await StudentRepository.getCachedAttendance(studentId);
-      if (cached && cached.data) {
-        setData(cached.data);
+      if (studentId) {
+        const cached = await StudentRepository.getCachedAttendance(studentId);
+        if (cached && cached.data) {
+          setData(cached.data);
+        }
       }
 
       // 1. Fetch Subject Summary
@@ -210,7 +103,9 @@ export default function StudentAttendanceScreen() {
         const live: StudentPersonalAttendanceResponse = await res.json();
         setData(live);
         setIsOffline(false);
-        await StudentRepository.saveCachedAttendance(studentId, live);
+        if (studentId) {
+          await StudentRepository.saveCachedAttendance(studentId, live);
+        }
       } else {
         setIsOffline(true);
       }
@@ -225,7 +120,7 @@ export default function StudentAttendanceScreen() {
 
       if (calRes.ok) {
         const liveCal: CalendarSessionItem[] = await calRes.json();
-        if (Array.isArray(liveCal) && liveCal.length > 0) {
+        if (Array.isArray(liveCal)) {
           setCalendarSessions(liveCal);
         }
       }
@@ -484,72 +379,79 @@ export default function StudentAttendanceScreen() {
       {/* 3. SUBJECTS BREAKDOWN */}
       <SectionTitle>Subjects Breakdown</SectionTitle>
       <View style={styles.subjectsContainer}>
-        {data.subjects.map((s) => (
-          <Pressable
-            key={s.teaching_assignment_id}
-            onPress={() =>
-              router.push({
-                pathname: '/(student)/subject/[id]',
-                params: {
-                  id: s.teaching_assignment_id,
-                  subject: s.subject_name,
-                  code: s.subject_code,
-                  faculty: s.faculty_name,
-                  held: String(s.total_eligible_sessions),
-                  attended: String(s.attended_sessions),
-                  pct: String(s.attendance_percentage),
-                  threshold: String(s.threshold),
-                  toRecover: String(s.classes_to_recover ?? 0),
-                  canMiss: String(s.classes_can_miss),
-                },
-              })
-            }
-          >
-            <Card style={styles.subjectCard}>
-              <View style={styles.subjectHeader}>
-                <View style={styles.subjectInfo}>
-                  <Text style={styles.subjectName}>{s.subject_name}</Text>
-                  <Text style={styles.subjectFaculty}>{s.faculty_name}</Text>
+        {data?.subjects && data.subjects.length > 0 ? (
+          data.subjects.map((s) => (
+            <Pressable
+              key={s.teaching_assignment_id}
+              onPress={() =>
+                router.push({
+                  pathname: '/(student)/subject/[id]',
+                  params: {
+                    id: s.teaching_assignment_id,
+                    subject: s.subject_name,
+                    code: s.subject_code,
+                    faculty: s.faculty_name,
+                    held: String(s.total_eligible_sessions),
+                    attended: String(s.attended_sessions),
+                    pct: String(s.attendance_percentage),
+                    threshold: String(s.threshold),
+                    toRecover: String(s.classes_to_recover ?? 0),
+                    canMiss: String(s.classes_can_miss),
+                  },
+                })
+              }
+            >
+              <Card style={styles.subjectCard}>
+                <View style={styles.subjectHeader}>
+                  <View style={styles.subjectInfo}>
+                    <Text style={styles.subjectName}>{s.subject_name}</Text>
+                    <Text style={styles.subjectFaculty}>{s.faculty_name}</Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.subjectPct,
+                      s.attendance_percentage < 75 && styles.subjectPctShortage,
+                    ]}
+                  >
+                    {Math.round(s.attendance_percentage)}%
+                  </Text>
                 </View>
-                <Text
-                  style={[
-                    styles.subjectPct,
-                    s.attendance_percentage < 75 && styles.subjectPctShortage,
-                  ]}
-                >
-                  {Math.round(s.attendance_percentage)}%
-                </Text>
-              </View>
 
-              <View style={styles.progressBarWrapper}>
-                <Bar pct={s.attendance_percentage} threshold={75} />
-              </View>
+                <View style={styles.progressBarWrapper}>
+                  <Bar pct={s.attendance_percentage} threshold={75} />
+                </View>
 
-              <View style={styles.subjectFooter}>
-                <Text style={styles.guidanceText}>
-                  {s.attendance_percentage < 75
-                    ? `Attend ${s.classes_to_recover ?? 2} more in a row to reach 75%`
-                    : s.classes_can_miss > 0
-                    ? `You can miss ${s.classes_can_miss} and stay above 75%`
-                    : 'At the minimum threshold'}
-                </Text>
-                <ChevronRight size={16} color={Colors.soft} />
-              </View>
-            </Card>
-          </Pressable>
-        ))}
+                <View style={styles.subjectFooter}>
+                  <Text style={styles.guidanceText}>
+                    {s.attendance_percentage < 75
+                      ? `Attend ${s.classes_to_recover ?? 2} more in a row to reach 75%`
+                      : s.classes_can_miss > 0
+                      ? `You can miss ${s.classes_can_miss} and stay above 75%`
+                      : 'At the minimum threshold'}
+                  </Text>
+                  <ChevronRight size={16} color={Colors.soft} />
+                </View>
+              </Card>
+            </Pressable>
+          ))
+        ) : (
+          <Card style={styles.subjectCard}>
+            <Text style={{ textAlign: 'center', width: '100%', color: Colors.soft, fontSize: 13 }}>
+              No subjects enrolled yet.
+            </Text>
+          </Card>
+        )}
       </View>
 
       {/* 4. OVERALL ATTENDANCE PROGRESSION TREND */}
       <View style={{ marginTop: 14 }}>
         <AttendanceTrendLineChart
           data={[
-            { label: 'Aug', value: 88 },
-            { label: 'Sep W1', value: 85 },
-            { label: 'Sep W3', value: 79 },
-            { label: 'Oct W1', value: 82 },
+            { label: 'Oct W1', value: 85 },
+            { label: 'Oct W2', value: 88 },
             { label: 'Oct W3', value: 84 },
-            { label: 'Now', value: Math.round(data.overall_attendance_percentage) },
+            { label: 'Oct W4', value: 92 },
+            { label: 'Now', value: data ? Math.round(data.overall_attendance_percentage) : 92 },
           ]}
           threshold={75}
           title="Attendance Progression Trend"

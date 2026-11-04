@@ -61,15 +61,9 @@ interface FacultyUserItem {
   identifier: string;
 }
 
-const INITIAL_DEPARTMENTS: DepartmentItem[] = [
-  { id: 'dept-01', code: 'CSE', name: 'Computer Science & Engineering', sections: 2, subjects: 4 },
-  { id: 'dept-02', code: 'ECE', name: 'Electronics & Communication', sections: 1, subjects: 2 },
-  { id: 'dept-03', code: 'MATH', name: 'Mathematics & Basic Sciences', sections: 1, subjects: 1 },
-];
-
 export default function AdminAcademicsScreen() {
   const router = useRouter();
-  const [departments, setDepartments] = useState<DepartmentItem[]>(INITIAL_DEPARTMENTS);
+  const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [rawDepartments, setRawDepartments] = useState<{ id: string; code: string; name: string }[]>([]);
   const [terms, setTerms] = useState<TermItem[]>([]);
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
@@ -340,18 +334,28 @@ export default function AdminAcademicsScreen() {
     >
       {/* Departments Overview */}
       <View style={styles.departmentsList}>
-        {departments.map((d) => (
-          <Card key={d.id} style={styles.deptCard}>
-            <IconBubble icon={Building2} tone="forest" size={42} />
-            <View style={styles.deptTextCol}>
-              <Text style={styles.deptName}>{d.name}</Text>
-              <Text style={styles.deptSub}>
-                {d.code} · {d.sections} sections · {d.subjects} subjects
-              </Text>
-            </View>
-            <ChevronRight size={18} color={Colors.soft} />
+        {loading && departments.length === 0 ? (
+          <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+        ) : departments.length === 0 ? (
+          <Card style={styles.deptCard}>
+            <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
+              No departments configured. Tap "Add department" below.
+            </Text>
           </Card>
-        ))}
+        ) : (
+          departments.map((d) => (
+            <Card key={d.id} style={styles.deptCard}>
+              <IconBubble icon={Building2} tone="forest" size={42} />
+              <View style={styles.deptTextCol}>
+                <Text style={styles.deptName}>{d.name}</Text>
+                <Text style={styles.deptSub}>
+                  {d.code} · {d.sections} sections · {d.subjects} subjects
+                </Text>
+              </View>
+              <ChevronRight size={18} color={Colors.soft} />
+            </Card>
+          ))
+        )}
       </View>
 
       <SectionTitle>Quick Actions</SectionTitle>

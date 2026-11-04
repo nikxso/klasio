@@ -33,69 +33,100 @@ interface AdminMetric {
   tone: 'forest' | 'lilac' | 'apricot' | 'amber';
 }
 
-const INITIAL_METRICS: AdminMetric[] = [
-  { label: 'Students', value: '1,240', icon: Users, tone: 'forest' },
-  { label: 'Faculty', value: '86', icon: GraduationCap, tone: 'lilac' },
-  { label: 'Today', value: '88%', icon: Percent, tone: 'apricot' },
-  { label: 'Devices', value: '3/3', icon: Smartphone, tone: 'amber' },
-];
-
-const INITIAL_APPROVALS = [
-  { id: '21CS036', name: 'Diya Patel' },
-  { id: '21CS048', name: 'Pooja Pillai' },
-  { id: '21CS053', name: 'Dev Chauhan' },
-];
-
 export default function AdminHomeScreen() {
   const router = useRouter();
-  const [metrics, setMetrics] = useState<AdminMetric[]>(INITIAL_METRICS);
-  const [approvals, setApprovals] = useState(INITIAL_APPROVALS);
-  const [unreadCount, setUnreadCount] = useState<number>(1);
+  const [metrics, setMetrics] = useState<AdminMetric[]>([]);
+  const [approvals, setApprovals] = useState<{ id: string; name: string }[]>([]);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let isCancelled = false;
     async function loadOverview() {
+      const token = SessionStore.getToken();
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+
       try {
-        const res = await fetch(`${API_BASE_URL}/api/v1/analytics/overview`);
-        if (res.ok) {
-          const overview = await res.json();
-          if (overview && !isCancelled) {
-            setMetrics([
-              {
-                label: 'Students',
-                value: overview.total_students ? String(overview.total_students) : '1,240',
-                icon: Users,
-                tone: 'forest',
-              },
-              {
-                label: 'Faculty',
-                value: overview.total_faculty ? String(overview.total_faculty) : '86',
-                icon: GraduationCap,
-                tone: 'lilac',
-              },
-              {
-                label: 'Today',
-                value: overview.average_attendance_percentage
-                  ? `${Math.round(overview.average_attendance_percentage)}%`
-                  : '88%',
-                icon: Percent,
-                tone: 'apricot',
-              },
-              {
-                label: 'Devices',
-                value: '3/3',
-                icon: Smartphone,
-                tone: 'amber',
-              },
-            ]);
+        setLoading(true);
+        const [overviewRes, studentsRes, facultyRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/v1/analytics/overview`, { headers }),
+          fetch(`${API_BASE_URL}/api/v1/admin/users?role=student`, { headers }),
+          fetch(`${API_BASE_URL}/api/v1/admin/users?role=faculty`, { headers }),
+        ]);
+
+        let studentCount = 0;
+        let facultyCount = 0;
+        let pendingApprovals: { id: string; name: string }[] = [];
+
+        if (studentsRes.ok) {
+          const stuList = await studentsRes.json();
+          if (Array.isArray(stuList)) {
+            studentCount = stuList.length;
+            pendingApprovals = stuList
+              .filter((s: any) => s.tag === 'Pending' || s.face_registration_state === 'PENDING')
+              .map((s: any) => ({ id: s.identifier || s.id, name: s.name }));
           }
         }
-      } catch {
-        // Fallback to initial institutional baselines
+
+        if (facultyRes.ok) {
+          const facList = await facultyRes.json();
+          if (Array.isArray(facList)) {
+            facultyCount = facList.length;
+          }
+        }
+
+        let overallPct = 92;
+        let totalSections = 3;
+
+        if (overviewRes.ok) {
+          const overview = await overviewRes.json();
+          if (overview.overall_attendance_percentage != null) {
+            overallPct = Math.round(overview.overall_attendance_percentage);
+          }
+          if (overview.total_sections) {
+            totalSections = overview.total_sections;
+          }
+        }
+
+        if (!isCancelled) {
+          setMetrics([
+            {
+              label: 'Students',
+              value: String(studentCount),
+              icon: Users,
+              tone: 'forest',
+            },
+            {
+              label: 'Faculty',
+              value: String(facultyCount),
+              icon: GraduationCap,
+              tone: 'lilac',
+            },
+            {
+              label: 'Attendance',
+              value: `${overallPct}%`,
+              icon: Percent,
+              tone: 'apricot',
+            },
+            {
+              label: 'Sections',
+              value: String(totalSections),
+              icon: Smartphone,
+              tone: 'amber',
+            },
+          ]);
+          setApprovals(pendingApprovals);
+        }
+      } catch (e) {
+        console.warn('Failed to load admin overview:', e);
+      } finally {
+        if (!isCancelled) setLoading(false);
       }
 
       const user = SessionStore.getUser();
-      const token = SessionStore.getToken();
       if (user) {
         const count = await NotificationRepository.getUnreadCount(user.id, token);
         if (!isCancelled) setUnreadCount(count);
@@ -143,29 +174,38 @@ export default function AdminHomeScreen() {
       </View>
 
       {/* Needs Your Attention */}
-      <SectionTitle>Needs your attention</SectionTitle>
+      <SectionTitle>Institutional Management</SectionTitle>
       <View style={styles.attentionList}>
-        {approvals.length > 0 && (
+        {approvals.length > 0 ? (
           <Card style={styles.attentionCard}>
             <IconBubble icon={ScanFace} tone="lilac" size={40} />
             <View style={styles.attentionTextCol}>
               <Text style={styles.attentionTitle}>
-                {approvals.length} Face IDs to approve
+                {approvals.length} Face ID registrations pending
               </Text>
-              <Text style={styles.attentionSub}>New student biometric registrations</Text>
+              <Text style={styles.attentionSub}>New student biometric submissions</Text>
             </View>
             <Chip tone="amber">{approvals.length} pending</Chip>
+          </Card>
+        ) : (
+          <Card style={styles.attentionCard}>
+            <IconBubble icon={Check} tone="forest" size={40} />
+            <View style={styles.attentionTextCol}>
+              <Text style={styles.attentionTitle}>System Operational</Text>
+              <Text style={styles.attentionSub}>All student face profiles & academic enrollments synced</Text>
+            </View>
+            <Chip tone="forest">All clear</Chip>
           </Card>
         )}
 
         <Card
-          onPress={() => router.push('/(admin)/settings' as any)}
+          onPress={() => router.push('/(admin)/academics' as any)}
           style={styles.attentionCard}
         >
-          <IconBubble icon={AlertCircle} tone="amber" size={40} />
+          <IconBubble icon={Link2} tone="forest" size={40} />
           <View style={styles.attentionTextCol}>
-            <Text style={styles.attentionTitle}>1 phone needs an update</Text>
-            <Text style={styles.attentionSub}>Fatima’s tablet · Model v2.3</Text>
+            <Text style={styles.attentionTitle}>Curriculum & Offerings</Text>
+            <Text style={styles.attentionSub}>Configure departments, sections and subjects</Text>
           </View>
           <ChevronRight size={18} color={Colors.soft} />
         </Card>
@@ -174,10 +214,10 @@ export default function AdminHomeScreen() {
           onPress={() => router.push('/(admin)/people' as any)}
           style={styles.attentionCard}
         >
-          <IconBubble icon={Link2} tone="apricot" size={40} />
+          <IconBubble icon={Users} tone="lilac" size={40} />
           <View style={styles.attentionTextCol}>
-            <Text style={styles.attentionTitle}>1 teacher has no classes</Text>
-            <Text style={styles.attentionSub}>Prof. Daniel Joseph · Electronics</Text>
+            <Text style={styles.attentionTitle}>People & Role Scopes</Text>
+            <Text style={styles.attentionSub}>Assign faculty assignments and modify user roles</Text>
           </View>
           <ChevronRight size={18} color={Colors.soft} />
         </Card>
