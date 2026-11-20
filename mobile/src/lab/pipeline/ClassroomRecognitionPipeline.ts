@@ -22,6 +22,7 @@ import type {
   TrackedFace,
 } from '../../perception/contracts.ts';
 import { HeuristicQualityGate } from '../adapters/quality/HeuristicQualityGate.ts';
+import { BIOMETRIC_CONFIG } from '../../config/biometrics.ts';
 
 interface TrackPerceptionState {
   trackId: number;
@@ -51,14 +52,14 @@ export class ClassroomRecognitionPipeline implements IRecognitionPipeline {
   public totalRecognitionRuns: number = 0;
   public totalCandidatesGenerated: number = 0;
 
-  public similarityThreshold: number = 0.65;
-  public marginThreshold: number = 0.10;
+  public similarityThreshold: number = BIOMETRIC_CONFIG.COSINE_SIMILARITY_THRESHOLD;
+  public marginThreshold: number = BIOMETRIC_CONFIG.TOP2_MARGIN_THRESHOLD;
 
   constructor(
     qualityGate: HeuristicQualityGate = new HeuristicQualityGate(),
     detectionCadence: number = 5,
-    similarityThreshold: number = 0.65,
-    marginThreshold: number = 0.10
+    similarityThreshold: number = BIOMETRIC_CONFIG.COSINE_SIMILARITY_THRESHOLD,
+    marginThreshold: number = BIOMETRIC_CONFIG.TOP2_MARGIN_THRESHOLD
   ) {
     this.qualityGate = qualityGate;
     this.detectionCadence = detectionCadence;

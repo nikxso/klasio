@@ -606,6 +606,33 @@ describe('Step I: Faculty Attendance Review & Finalization Invariant Suite', () 
     assert(payload.records.every((r) => r.attendanceStatus === 'EXCUSED'));
   });
 
+  test('[25b] HARD INVARIANT: Unknown or unmatched faces must NEVER be marked absent or unauthorized', () => {
+    const ctrl = new FacultyAttendanceReviewController();
+    const unmatchedObservations = [
+      { studentUserId: null, bestSimilarityScore: 0.22, matchOutcome: 'UNMATCHED', trackId: 101 },
+      { studentUserId: 'stranger_unknown', bestSimilarityScore: 0.15, matchOutcome: 'UNMATCHED', trackId: 102 },
+      { studentUserId: null, bestSimilarityScore: 0.45, matchOutcome: 'AMBIGUOUS', trackId: 103 },
+    ];
+
+    ctrl.initialize(VALID_CONTEXT, SAMPLE_ROSTER, unmatchedObservations);
+
+    // 1. None of the roster students may be marked absent or unauthorized as a default
+    for (const item of ctrl.reviewItems) {
+      assert.notEqual(item.attendanceStatus, 'ABSENT', 'Unmatched observations must NEVER trigger default ABSENT');
+      assert.notEqual(item.attendanceStatus, 'UNAUTHORIZED', 'Unmatched observations must NEVER trigger UNAUTHORIZED');
+      assert.equal(item.attendanceStatus, 'UNDECIDED');
+      assert.equal(item.isRecognized, false);
+    }
+
+    // 2. Unmatched observations must NEVER auto-finalize or permit finalization without review
+    const validation = ctrl.validateFinalization();
+    assert.equal(validation.canFinalize, false, 'Unmatched/unknown faces cannot auto-finalize attendance');
+
+    // 3. Unknown identities never leak into review items
+    const reviewUserIds = ctrl.reviewItems.map((item) => item.studentUserId);
+    assert.equal(reviewUserIds.includes('stranger_unknown'), false, 'Non-roster stranger must NEVER be added to review items');
+  });
+
   test('[26] Sync Queue Lifecycle: Retries update retry_count, acknowledgment marks SYNCED', () => {
     const db = createInMemoryDb();
     const nowIso = new Date().toISOString();

@@ -22,6 +22,7 @@ import type {
   StudentReferenceProfile,
 } from '../../../perception/contracts';
 import { SessionScopedFaceGallery } from '../gallery/SessionScopedGallery.ts';
+import { BIOMETRIC_CONFIG } from '../../../config/biometrics.ts';
 
 export interface MatcherMetrics {
   totalComparisons: number;
@@ -70,8 +71,8 @@ export class CosineGalleryMatcher implements IFaceMatcher {
   public findMatch(
     candidateEmbedding: Float32Array,
     gallery: IFaceGallery | PermittedStudentGallery,
-    similarityThreshold: number = 0.65,
-    marginThreshold: number = 0.10,
+    similarityThreshold: number = BIOMETRIC_CONFIG.COSINE_SIMILARITY_THRESHOLD,
+    marginThreshold: number = BIOMETRIC_CONFIG.TOP2_MARGIN_THRESHOLD,
     activeModelManifest?: ModelManifest
   ): IdentityMatch {
     const startTime = performance.now();
