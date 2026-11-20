@@ -1,12 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
   ActivityIndicator,
-  Platform,
-  findNodeHandle,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -19,7 +17,6 @@ import {
   ArrowLeft,
   ArrowRight,
   AlertCircle,
-  RefreshCw,
 } from 'lucide-react-native';
 import Svg, { Circle } from 'react-native-svg';
 import {
@@ -31,22 +28,8 @@ import {
 import { Screen, Button, IconBubble, Card } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { Brand } from '@/constants/brand';
-import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
-import {
-  GuidedFaceEnrollmentController,
-  EdgeFaceEmbedder,
-  DirectOnDeviceDetector,
-  EDGEFACE_XS_MANIFEST,
-} from '@/lab';
-import type {
-  EnrollmentGuidanceState,
-  StudentEnrollmentContext,
-  RawFrame,
-  FaceDetectionResult,
-} from '@/perception/contracts';
-import { float32ArrayToBase64 } from '@/perception/gallerySync';
-import { capturePhotoFromCamera, uploadProfilePhoto } from '@/services/nativePerception';
+import { useFaceEnrollment } from '@/hooks/useFaceEnrollment';
 
 const POSES = [
   { label: 'Look straight ahead', sublabel: 'Neutral expression', icon: Smile, step: 'FRONTAL' as const },
@@ -59,262 +42,98 @@ export default function StudentEnrollmentScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const frontDevice = useCameraDevice('front');
 
-  // -1: Introduction / Consent screen; 0: Active guided camera registration
-  const [sessionActive, setSessionActive] = useState<boolean>(false);
-  const [sampleIndex, setSampleIndex] = useState<number>(0);
-  const [guidanceState, setGuidanceState] = useState<EnrollmentGuidanceState>('NO_FACE');
-  const [guidanceText, setGuidanceText] = useState<string>('Position your face inside the oval frame');
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [enrollmentComplete, setEnrollmentComplete] = useState<boolean>(false);
-  const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
-
   // Authenticated student context
   const currentUser = SessionStore.getUser();
-  const studentContext = useRef<StudentEnrollmentContext>({
-    studentUserId: currentUser?.id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94',
-    institutionalId: currentUser?.institutionalId || 'S3',
-    studentName: currentUser?.fullName || 'Student S3',
-    academicTermId: '2026-FALL-SEM5',
-  }).current;
+  const studentUserId = currentUser?.id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94';
+  const institutionalId = currentUser?.institutionalId || 'S3';
+  const studentName = currentUser?.fullName || 'Student S3';
 
-  // Perception controller and embedder
-  const cameraRef = useRef<Camera>(null);
-  const embedderRef = useRef<EdgeFaceEmbedder>(new EdgeFaceEmbedder());
-  const controllerRef = useRef<GuidedFaceEnrollmentController | null>(null);
-  const detectorRef = useRef<DirectOnDeviceDetector>(new DirectOnDeviceDetector(null, 0.40));
-  const loopTimerRef = useRef<any>(null);
+  // -1: Introduction / Consent screen; 0: Active guided camera registration
+  const [sessionActive, setSessionActive] = useState<boolean>(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+
+  const {
+    cameraRef,
+    status,
+    sampleIndex,
+    guidanceMessage,
+    isSubmitting,
+    enrollmentComplete,
+    errorMessage,
+    startEnrollment,
+    cancelLoop,
+  } = useFaceEnrollment({
+    studentUserId,
+    studentName,
+    institutionalId,
+    academicTermId: '2026-FALL-SEM5',
+    isFacultyAssisted: false,
+  });
 
   const handleBack = () => {
-    if (loopTimerRef.current) clearInterval(loopTimerRef.current);
+    cancelLoop();
     router.back();
   };
 
   const handleStartRegistration = async () => {
+    setPermissionError(null);
     if (!hasPermission) {
       const granted = await requestPermission();
       if (!granted) {
-        setEnrollmentError('Camera permission is required to enroll your biometric profile.');
+        setPermissionError('Camera permission is required to enroll your biometric profile.');
         return;
       }
     }
 
-    try {
-      await embedderRef.current.initialize();
-      controllerRef.current = new GuidedFaceEnrollmentController(embedderRef.current, {
-        targetSamples: 3,
-        stabilizationRequiredMs: 400,
-        minPairwiseConsistency: 0.60, // Provisional threshold
-        expectedManifest: EDGEFACE_XS_MANIFEST,
-        steps: ['FRONTAL', 'SLIGHT_LEFT', 'SLIGHT_RIGHT'],
-        enforcePoseAngles: true,
-      });
-
-      controllerRef.current.startSession(studentContext);
-      setSessionActive(true);
-      setSampleIndex(0);
-      setGuidanceState('NO_FACE');
-      setGuidanceText('Position your face inside the oval frame');
-      setEnrollmentError(null);
-    } catch (err: any) {
-      setEnrollmentError(`Failed to initialize biometric perception: ${err.message || err}`);
-    }
+    setSessionActive(true);
+    await startEnrollment();
   };
-
-  // Automated submission to backend on completion
-  const submitBiometricProfile = useCallback(async () => {
-    if (!controllerRef.current) return;
-    const profile = controllerRef.current.getCompletedProfile();
-    if (!profile || profile.embeddings.length === 0) {
-      setEnrollmentError('No valid facial embeddings generated');
-      return;
-    }
-
-    setIsSubmitting(true);
-    setEnrollmentError(null);
-
-    try {
-      // Encode primary representative unit embedding to Base64 (RFC 4648)
-      const b64 = float32ArrayToBase64(profile.embeddings[0]);
-      const multiB64 = profile.embeddings.map((emb) => float32ArrayToBase64(emb));
-
-      // Direct API Contract: POST /api/v1/biometrics/enrollment
-      const payload = {
-        student_user_id: profile.studentUserId,
-        active_model_version: 'EdgeFace-XS-v1',
-        embedding_dimension: profile.embeddingDimension,
-        sample_count: profile.embeddings.length,
-        embedding_base64: b64,
-        embeddings_base64: multiB64,
-        quality_score: 0.88,
-      };
-
-      const token = SessionStore.getToken();
-      const res = await fetch(`${API_BASE_URL}/api/v1/biometrics/enrollment`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const errorBody = await res.text();
-        console.warn(`[BIOMETRICS_ENROLLMENT] Backend rejected (${res.status}): ${errorBody}`);
-        throw new Error(`Enrollment failed (${res.status}): ${errorBody}`);
-      }
-
-      // Update local session state for current user
-      const curSession = SessionStore.getSession();
-      if (curSession?.user && curSession.user.id === profile.studentUserId) {
-        await SessionStore.setSession({
-          ...curSession,
-          user: {
-            ...curSession.user,
-            faceRegistrationState: 'REGISTERED',
-          },
-        });
-      }
-
-      // Automatically store the recorded face frame as student's profile photo
-      try {
-        const nodeHandle = findNodeHandle(cameraRef.current);
-        let uploaded = false;
-        if (nodeHandle) {
-          try {
-            const photo = await capturePhotoFromCamera(nodeHandle);
-            if (photo?.base64) {
-              await uploadProfilePhoto(profile.studentUserId, photo.base64, token);
-              uploaded = true;
-            }
-          } catch (photoErr) {
-            console.warn('[ENROLLMENT] capturePhotoFromCamera error:', photoErr);
-          }
-        }
-        if (!uploaded && cameraRef.current) {
-          try {
-            const photo = await cameraRef.current.takePhoto({ enableShutterSound: false });
-            if (photo?.path) {
-              const res = await fetch(photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`);
-              const blob = await res.blob();
-              const reader = new FileReader();
-              reader.readAsDataURL(blob);
-              reader.onloadend = async () => {
-                const b64 = (reader.result as string)?.split(',')[1];
-                if (b64) {
-                  await uploadProfilePhoto(profile.studentUserId, b64, token);
-                }
-              };
-            }
-          } catch (e2) {
-            console.warn('[ENROLLMENT] takePhoto fallback error:', e2);
-          }
-        }
-      } catch (photoErr) {
-        console.warn('Profile photo upload error (biometric template succeeded):', photoErr);
-      }
-
-      setEnrollmentComplete(true);
-    } catch (err: any) {
-      console.error('[BIOMETRICS_ENROLLMENT] Persistence failed:', err);
-      setEnrollmentError(err.message || 'Face registration failed. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, []);
-
-  // Frame processing and guidance loop
-  useEffect(() => {
-    if (!sessionActive || enrollmentComplete || isSubmitting) return;
-
-    const frameInterval = setInterval(async () => {
-      if (!controllerRef.current) return;
-
-      const now = Date.now();
-      const nodeHandle = findNodeHandle(cameraRef.current);
-      if (nodeHandle) {
-        detectorRef.current.setCameraTag(nodeHandle);
-      }
-
-      const rawFrame: RawFrame = {
-        width: 640,
-        height: 640,
-        format: 'rgba',
-        timestampMs: now,
-        captureTimestampMs: now,
-        data: '',
-        rotationDegrees: 0,
-      };
-
-      let liveDetections: FaceDetectionResult[] = [];
-      try {
-        const detResult = await detectorRef.current.detectFacesDetailed(rawFrame);
-        liveDetections = detResult.results || [];
-      } catch (detErr) {
-        // Fallback for simulation if camera preview isn't bound yet
-      }
-
-      try {
-        const state = await controllerRef.current.processFrame(rawFrame, liveDetections, now);
-        setGuidanceState(state);
-        setGuidanceText(controllerRef.current.state?.guidanceMessage || '');
-
-        const captured = controllerRef.current.state?.samplesCaptured.length || 0;
-        setSampleIndex(captured);
-
-        if (state === 'COMPLETED') {
-          clearInterval(frameInterval);
-          await submitBiometricProfile();
-        }
-      } catch (err: any) {
-        console.error('Frame processing error:', err);
-      }
-    }, 280);
-
-    loopTimerRef.current = frameInterval;
-    return () => clearInterval(frameInterval);
-  }, [sessionActive, enrollmentComplete, isSubmitting, submitBiometricProfile]);
 
   // Screen 1: Explanation, Privacy Boundary & Consent
   if (!sessionActive) {
     return (
       <Screen
-        onBack={handleBack}
-        title="Set up Face ID"
-        subtitle={`So you're marked present automatically in ${Brand.name}`}
+        title="Biometric Face Registration"
+        subtitle="Set up facial recognition so attendance can be verified quickly in class."
+        left={
+          <Pressable onPress={handleBack} style={{ padding: 4 }}>
+            <ChevronLeft size={24} color={Colors.ink} />
+          </Pressable>
+        }
         scrollable
       >
+        {/* Animated Face Scanner Hero */}
         <View style={styles.heroCircleWrapper}>
           <View style={styles.heroCircle}>
-            <ScanFace size={60} color={Colors.lilac} strokeWidth={1.5} />
+            <ScanFace size={56} color={Colors.lilac} strokeWidth={1.5} />
           </View>
         </View>
 
-        {enrollmentError && (
+        {permissionError && (
           <View style={styles.errorAlert}>
-            <AlertCircle size={20} color={Colors.rose} />
-            <Text style={styles.errorText}>{enrollmentError}</Text>
+            <AlertCircle size={18} color={Colors.rose} />
+            <Text style={styles.errorText}>{permissionError}</Text>
           </View>
         )}
 
-        <View style={styles.guidanceItems}>
+        {/* Informative Step-by-Step Card */}
+        <Card style={styles.guidanceItems}>
           <View style={styles.guidanceRow}>
-            <IconBubble icon={Sparkles} tone="apricot" size={40} />
+            <IconBubble icon={ScanFace} tone="lilac" size={40} />
             <View style={styles.guidanceTextCol}>
-              <Text style={styles.guidanceTitle}>Find good lighting</Text>
+              <Text style={styles.guidanceTitle}>Guided Multi-Angle Verification</Text>
               <Text style={styles.guidanceDesc}>
-                Face a window or bright light. Avoid strong backlighting or shadows.
+                You will be prompted to look forward, slightly left, and slightly right to capture consistent reference angles.
               </Text>
             </View>
           </View>
 
           <View style={styles.guidanceRow}>
-            <IconBubble icon={Smile} tone="apricot" size={40} />
+            <IconBubble icon={Sparkles} tone="apricot" size={40} />
             <View style={styles.guidanceTextCol}>
-              <Text style={styles.guidanceTitle}>Three quick poses</Text>
+              <Text style={styles.guidanceTitle}>Immediate On-Device Processing</Text>
               <Text style={styles.guidanceDesc}>
-                You will be guided to look straight ahead, turn slightly left, and turn slightly right with neutral expressions.
+                Our lightweight edge neural network processes frames locally on your device without transmitting raw camera video.
               </Text>
             </View>
           </View>
@@ -328,7 +147,7 @@ export default function StudentEnrollmentScreen() {
               </Text>
             </View>
           </View>
-        </View>
+        </Card>
 
         <Button onPress={handleStartRegistration} style={styles.readyButton}>
           <Text style={styles.buttonText}>I'm ready</Text>
@@ -337,14 +156,15 @@ export default function StudentEnrollmentScreen() {
     );
   }
 
-  // Screen 2: Active Guided Camera Viewfinder
+  // Screen 2: Live Vision Camera Viewfinder with Circular SVG Ring
   const currentPose = POSES[Math.min(sampleIndex, POSES.length - 1)];
   const PoseIcon = currentPose.icon;
   const progressPercent = Math.min((sampleIndex / POSES.length) * 100, 100);
 
   return (
     <View style={styles.cameraContainer}>
-      <Pressable onPress={handleBack} style={styles.closeButton}>
+      {/* Top Controls */}
+      <Pressable onPress={handleBack} style={styles.closeButton} accessibilityLabel="Cancel enrollment">
         <ChevronLeft size={24} color="#ffffff" />
       </Pressable>
 
@@ -380,7 +200,6 @@ export default function StudentEnrollmentScreen() {
               style={StyleSheet.absoluteFill}
               device={frontDevice}
               isActive={sessionActive && !enrollmentComplete}
-              photo={true}
             />
           ) : null}
 
@@ -407,18 +226,22 @@ export default function StudentEnrollmentScreen() {
         <Text style={styles.feedbackHeadline}>
           {enrollmentComplete
             ? 'All set!'
+            : errorMessage
+            ? 'Registration Failed'
             : isSubmitting
             ? 'Validating template...'
             : currentPose.label}
         </Text>
         <Text style={styles.feedbackSub}>
           {enrollmentComplete
-            ? 'Your biometric profile and photo are verified. Faculty will see your genuine face photo on class rosters.'
+            ? 'Your biometric profile is mathematically verified and registered.'
+            : errorMessage
+            ? errorMessage
             : isSubmitting
             ? 'Verifying unit L2 normalization and intra-student consistency...'
-            : guidanceText}
+            : guidanceMessage}
         </Text>
-        {!enrollmentComplete && !isSubmitting && (
+        {!enrollmentComplete && !isSubmitting && !errorMessage && (
           <Text style={styles.stepBadge}>
             Step {Math.min(sampleIndex + 1, POSES.length)} of {POSES.length} · {currentPose.sublabel}
           </Text>
@@ -432,8 +255,11 @@ export default function StudentEnrollmentScreen() {
         </Pressable>
       )}
 
-      {enrollmentError && (
-        <Pressable onPress={handleStartRegistration} style={[styles.finishButton, { backgroundColor: Colors.rose }]}>
+      {errorMessage && (
+        <Pressable
+          onPress={handleStartRegistration}
+          style={[styles.finishButton, { backgroundColor: Colors.rose }]}
+        >
           <Text style={[styles.finishButtonText, { color: '#ffffff' }]}>Recapture</Text>
         </Pressable>
       )}

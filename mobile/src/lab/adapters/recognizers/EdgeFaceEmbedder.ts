@@ -101,6 +101,52 @@ export class EdgeFaceEmbedder implements IFaceEmbedder, IFaceRecognizer {
 
     // Priority 2: Live on-device camera extraction via DirectPerception native module
     const directPerception = getDirectPerceptionModule();
+    if (!this.isTestFixtureMode) {
+      if (!directPerception || typeof directPerception.computeEmbedding !== 'function') {
+        throw new Error(
+          '[EdgeFaceEmbedder] Native DirectPerception module is unavailable on this device. Refusing artificial embedding synthesis in production.'
+        );
+      }
+      if (input.cameraTag == null) {
+        throw new Error(
+          '[EdgeFaceEmbedder] Missing camera view tag for native DirectPerception inference. Refusing artificial embedding synthesis in production.'
+        );
+      }
+      try {
+        const res = await directPerception.computeEmbedding(
+          input.cameraTag,
+          input.box,
+          input.landmarks || null
+        );
+        if (res?.embedding && res.embedding.length === this.embeddingDimension) {
+          const arr = new Float32Array(res.embedding);
+          const normalizedVector = EdgeFaceEmbedder.l2Normalize(arr);
+          const totalMs = performance.now() - tStart;
+          return {
+            embedding: normalizedVector,
+            rawDimension: this.embeddingDimension,
+            isNormalized: true,
+            manifest: this.manifest,
+            timings: {
+              cropAndAlignmentMs: res.alignmentMs || 0,
+              preprocessingMs: res.preprocessMs || 0,
+              inferenceMs: res.inferenceMs || 0,
+              normalizationMs: 0,
+              totalMs,
+            },
+          };
+        }
+        throw new Error(
+          `[EdgeFaceEmbedder] Native DirectPerception returned invalid embedding output (expected ${this.embeddingDimension} floats).`
+        );
+      } catch (nativeErr: any) {
+        throw new Error(
+          `[EdgeFaceEmbedder] Native DirectPerception embedding computation failed: ${nativeErr?.message || nativeErr}`
+        );
+      }
+    }
+
+    // Priority 3: Offline / Node.js test environment deterministic simulation
     if (directPerception && input.cameraTag != null && typeof directPerception.computeEmbedding === 'function') {
       try {
         const res = await directPerception.computeEmbedding(
@@ -127,15 +173,8 @@ export class EdgeFaceEmbedder implements IFaceEmbedder, IFaceRecognizer {
           };
         }
       } catch (nativeErr) {
-        console.warn('[EdgeFaceEmbedder] DirectPerception computeEmbedding failed, falling back:', nativeErr);
+        console.warn('[EdgeFaceEmbedder] DirectPerception computeEmbedding failed in test mode, falling back to simulation:', nativeErr);
       }
-    }
-
-    // Priority 3: Offline / Node.js test environment deterministic simulation
-    if (!this.isTestFixtureMode) {
-      throw new Error(
-        '[EdgeFaceEmbedder] On-device neural inference failed or was unavailable. Refusing artificial embedding synthesis in production.'
-      );
     }
 
     // 1. Face Crop & 5-Point Alignment

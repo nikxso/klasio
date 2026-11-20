@@ -46,6 +46,25 @@ def test_validate_payload_success_edgeface():
     assert len(raw_bytes) == 512 * 4
 
 
+def test_validate_payload_multi_sample_embeddings_base64():
+    db = MagicMock()
+    service = BiometricService(db)
+
+    # 3 identical unit vectors have cosine similarity == 1.0 (satisfies >= 0.60 pairwise gate)
+    b64_vec = create_base64_vector(512)
+    payload = FaceEnrollmentRequest(
+        student_user_id=uuid.uuid4(),
+        active_model_version="EdgeFace-XS-v1",
+        embedding_dimension=512,
+        sample_count=3,
+        embeddings_base64=[b64_vec, b64_vec, b64_vec],
+        quality_score=0.91,
+    )
+
+    raw_bytes = service.validate_biometric_payload(payload)
+    assert len(raw_bytes) == 3 * 512 * 4
+
+
 def test_validate_payload_success_mobilefacenet():
     db = MagicMock()
     service = BiometricService(db)
@@ -324,4 +343,6 @@ def test_configurable_provisional_thresholds():
 
     raw_bytes = service.validate_biometric_payload(payload)
     assert len(raw_bytes) == 512 * 4
+
+
 

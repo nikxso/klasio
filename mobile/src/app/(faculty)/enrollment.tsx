@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   ScrollView,
   SafeAreaView,
-  findNodeHandle,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,7 +26,6 @@ import {
   RotateCcw,
   ScanFace,
   ShieldCheck,
-  UserCheck,
   RefreshCw,
   Smile,
   ArrowRight,
@@ -35,24 +33,7 @@ import {
 } from 'lucide-react-native';
 
 import { Colors, Radii } from '@/theme/tokens';
-import { API_BASE_URL } from '@/config/api';
-import { SessionStore } from '@/storage/sessionStore';
-import { RosterRepository } from '@/storage/rosterRepository';
-import { capturePhotoFromCamera, uploadProfilePhoto } from '@/services/nativePerception';
-import {
-  GuidedFaceEnrollmentController,
-  EdgeFaceEmbedder,
-  DirectOnDeviceDetector,
-  EDGEFACE_XS_MANIFEST,
-} from '@/lab';
-import type {
-  RawFrame,
-  FaceDetectionResult,
-  StudentEnrollmentContext,
-} from '@/perception/contracts';
-import { float32ArrayToBase64, GallerySyncService } from '@/perception/gallerySync';
-
-type EnrollmentStatus = 'READY' | 'GUIDING' | 'UPLOADING' | 'SUCCESS' | 'FAILURE';
+import { useFaceEnrollment } from '@/hooks/useFaceEnrollment';
 
 const POSES = [
   { label: 'Look straight ahead', sublabel: 'Neutral expression', icon: Smile, step: 'FRONTAL' as const },
@@ -81,17 +62,25 @@ export default function FacultyEnrollmentScreen() {
   const [cameraPosition, setCameraPosition] = useState<'front' | 'back'>('back');
   const device = useCameraDevice(cameraPosition);
 
-  const [status, setStatus] = useState<EnrollmentStatus>('READY');
-  const [sampleIndex, setSampleIndex] = useState<number>(0);
-  const [guidanceMessage, setGuidanceMessage] = useState<string>('Center face inside the oval');
-  const [qualityScore, setQualityScore] = useState<number>(0.90);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const controllerRef = useRef<GuidedFaceEnrollmentController | null>(null);
-  const cameraRef = useRef<Camera>(null);
-  const embedderRef = useRef<EdgeFaceEmbedder>(new EdgeFaceEmbedder());
-  const detectorRef = useRef<DirectOnDeviceDetector>(new DirectOnDeviceDetector(null, 0.40));
-  const loopTimerRef = useRef<any>(null);
+  const {
+    cameraRef,
+    status,
+    sampleIndex,
+    guidanceMessage,
+    qualityScore,
+    isSubmitting,
+    enrollmentComplete,
+    errorMessage,
+    startEnrollment,
+    cancelLoop,
+  } = useFaceEnrollment({
+    studentUserId,
+    studentName,
+    institutionalId,
+    academicTermId: '2026-FALL-SEM5',
+    teachingAssignmentId,
+    isFacultyAssisted: true,
+  });
 
   useEffect(() => {
     if (!hasPermission) {
@@ -100,10 +89,7 @@ export default function FacultyEnrollmentScreen() {
   }, [hasPermission]);
 
   const handleBack = () => {
-    if (loopTimerRef.current) {
-      clearInterval(loopTimerRef.current);
-      loopTimerRef.current = null;
-    }
+    cancelLoop();
     router.back();
   };
 
@@ -111,212 +97,15 @@ export default function FacultyEnrollmentScreen() {
     setCameraPosition((prev) => (prev === 'front' ? 'back' : 'front'));
   };
 
-  const startEnrollment = async () => {
-    if (!studentUserId) {
-      setErrorMessage('Missing required student identity context.');
-      setStatus('FAILURE');
-      return;
-    }
-
+  const handleStartCapture = async () => {
+    if (!studentUserId) return;
     if (!hasPermission) {
       const granted = await requestPermission();
-      if (!granted) {
-        setErrorMessage('Camera permission is required for face registration.');
-        setStatus('FAILURE');
-        return;
-      }
+      if (!granted) return;
     }
-
-    try {
-      await embedderRef.current.initialize();
-      const controller = new GuidedFaceEnrollmentController(embedderRef.current, {
-        targetSamples: 3,
-        stabilizationRequiredMs: 400,
-        minPairwiseConsistency: 0.60,
-        expectedManifest: EDGEFACE_XS_MANIFEST,
-        steps: ['FRONTAL', 'SLIGHT_LEFT', 'SLIGHT_RIGHT'],
-        enforcePoseAngles: true,
-      });
-
-      const studentContext: StudentEnrollmentContext = {
-        studentUserId,
-        institutionalId,
-        studentName,
-        academicTermId: '2026-FALL-SEM5',
-      };
-
-      controller.startSession(studentContext);
-      controllerRef.current = controller;
-      setStatus('GUIDING');
-      setSampleIndex(0);
-      setGuidanceMessage('Look directly at the camera (Frontal pose)');
-      setErrorMessage(null);
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to start enrollment session');
-      setStatus('FAILURE');
-    }
+    await startEnrollment();
   };
 
-  const submitBiometricProfile = useCallback(async () => {
-    if (!controllerRef.current) return;
-    const profile = controllerRef.current.getCompletedProfile();
-    if (!profile || profile.embeddings.length === 0) {
-      setErrorMessage('No valid facial embeddings generated');
-      setStatus('FAILURE');
-      return;
-    }
-
-    setStatus('UPLOADING');
-    setErrorMessage(null);
-
-    try {
-      const b64 = float32ArrayToBase64(profile.embeddings[0]);
-      const multiB64 = profile.embeddings.map((emb) => float32ArrayToBase64(emb));
-
-      const payload = {
-        student_user_id: profile.studentUserId,
-        active_model_version: 'EdgeFace-XS-v1',
-        embedding_dimension: profile.embeddingDimension,
-        sample_count: profile.embeddings.length,
-        embedding_base64: b64,
-        embeddings_base64: multiB64,
-        quality_score: 0.90,
-      };
-
-      const token = SessionStore.getToken();
-      const res = await fetch(`${API_BASE_URL}/api/v1/biometrics/enrollment`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const errorBody = await res.text();
-        throw new Error(`Enrollment rejected (${res.status}): ${errorBody}`);
-      }
-
-      const resData = await res.json();
-      console.log('[FACULTY_ENROLL] Backend confirmed enrollment:', resData);
-
-      // Decoupled student profile photo capture & upload
-      if (cameraRef.current) {
-        try {
-          const nodeHandle = findNodeHandle(cameraRef.current);
-          let uploaded = false;
-          if (nodeHandle) {
-            try {
-              const photo = await capturePhotoFromCamera(nodeHandle);
-              if (photo?.base64) {
-                await uploadProfilePhoto(profile.studentUserId, photo.base64, token);
-                uploaded = true;
-              }
-            } catch (photoErr) {
-              console.warn('[FACULTY_ENROLL] capturePhotoFromCamera error:', photoErr);
-            }
-          }
-          if (!uploaded && cameraRef.current) {
-            try {
-              const photo = await cameraRef.current.takePhoto({ enableShutterSound: false });
-              if (photo?.path) {
-                const pRes = await fetch(photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`);
-                const blob = await pRes.blob();
-                const reader = new FileReader();
-                reader.readAsDataURL(blob);
-                reader.onloadend = async () => {
-                  const b64Photo = (reader.result as string)?.split(',')[1];
-                  if (b64Photo) {
-                    await uploadProfilePhoto(profile.studentUserId, b64Photo, token);
-                  }
-                };
-              }
-            } catch (e2) {
-              console.warn('[FACULTY_ENROLL] takePhoto fallback error:', e2);
-            }
-          }
-        } catch (photoErr) {
-          console.warn('[FACULTY_ENROLL] Profile photo upload warning:', photoErr);
-        }
-      }
-
-      // Purge stale local cache for this student & refresh teaching assignment gallery
-      try {
-        await RosterRepository.clearCachedEmbeddingsForStudents([profile.studentUserId]);
-        if (teachingAssignmentId && token) {
-          await GallerySyncService.syncAssignmentGallery(teachingAssignmentId, token);
-        }
-      } catch (cacheErr) {
-        console.warn('[FACULTY_ENROLL] Local cache synchronization warning:', cacheErr);
-      }
-
-      setQualityScore(0.91);
-      setStatus('SUCCESS');
-    } catch (err: any) {
-      console.error('[FACULTY_ENROLL] Enrollment error:', err);
-      setErrorMessage(err.message || 'Face registration failed. Please try again.');
-      setStatus('FAILURE');
-    }
-  }, [teachingAssignmentId]);
-
-  // Frame processing loop for guided perception
-  useEffect(() => {
-    if (status !== 'GUIDING' || !controllerRef.current) return;
-
-    const frameInterval = setInterval(async () => {
-      if (!controllerRef.current) return;
-
-      const now = Date.now();
-      const nodeHandle = findNodeHandle(cameraRef.current);
-      if (nodeHandle) {
-        detectorRef.current.setCameraTag(nodeHandle);
-      }
-
-      const rawFrame: RawFrame = {
-        width: 640,
-        height: 640,
-        format: 'rgba',
-        timestampMs: now,
-        captureTimestampMs: now,
-        data: '',
-        rotationDegrees: 0,
-      };
-
-      let liveDetections: FaceDetectionResult[] = [];
-      try {
-        const detResult = await detectorRef.current.detectFacesDetailed(rawFrame);
-        liveDetections = detResult.results || [];
-      } catch (detErr) {
-        // Camera preview not bound yet
-      }
-
-      try {
-        const state = await controllerRef.current.processFrame(rawFrame, liveDetections, now);
-        setGuidanceMessage(controllerRef.current.state?.guidanceMessage || '');
-
-        const captured = controllerRef.current.state?.samplesCaptured.length || 0;
-        setSampleIndex(captured);
-
-        if (state === 'COMPLETED') {
-          clearInterval(frameInterval);
-          loopTimerRef.current = null;
-          await submitBiometricProfile();
-        }
-      } catch (err: any) {
-        console.error('[FACULTY_ENROLL] Frame processing error:', err);
-      }
-    }, 280);
-
-    loopTimerRef.current = frameInterval;
-    return () => {
-      clearInterval(frameInterval);
-      loopTimerRef.current = null;
-    };
-  }, [status, submitBiometricProfile]);
-
-  // Viewfinder Circular Progress Ring State
   const currentPose = POSES[Math.min(sampleIndex, POSES.length - 1)];
   const PoseIcon = currentPose.icon;
   const progressPercent = Math.min((sampleIndex / POSES.length) * 100, 100);
@@ -381,191 +170,186 @@ export default function FacultyEnrollmentScreen() {
             </View>
           </View>
 
-          {errorMessage && (
-            <View style={styles.errorAlert}>
-              <AlertCircle size={20} color={Colors.rose} />
-              <Text style={styles.errorAlertText}>{errorMessage}</Text>
-            </View>
-          )}
+          <TouchableOpacity style={styles.primaryButton} onPress={handleStartCapture}>
+            <CameraIcon size={20} color="#fff" />
+            <Text style={styles.primaryButtonText}>Begin Guided Registration</Text>
+          </TouchableOpacity>
 
-          <TouchableOpacity style={styles.primaryButton} onPress={startEnrollment}>
-            <CameraIcon size={20} color={Colors.card} />
-            <Text style={styles.primaryButtonText}>Start Guided Capture</Text>
+          <TouchableOpacity style={styles.secondaryButton} onPress={handleBack}>
+            <Text style={styles.secondaryButtonText}>Cancel</Text>
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     );
   }
 
-  // Screen 2: Active Guided Camera Viewfinder with Circular SVG Ring
+  // Screen 2: Guided Vision Camera Viewfinder with SVG Circular Ring
   if (status === 'GUIDING' || status === 'UPLOADING') {
-    const isUploading = status === 'UPLOADING';
-
     return (
-      <View style={styles.cameraContainer}>
-        {/* Top Control Bar */}
-        <View style={styles.topControlBar}>
-          <Pressable onPress={handleBack} style={styles.controlIconBtn}>
-            <ChevronLeft size={24} color="#ffffff" />
-          </Pressable>
+      <View style={styles.cameraWrapper}>
+        <StatusBar style="light" />
 
-          <View style={styles.studentBadge}>
-            <Text style={styles.studentBadgeText} numberOfLines={1}>
-              {studentName} ({institutionalId || 'ID'})
-            </Text>
+        {device && hasPermission ? (
+          <Camera
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            device={device}
+            isActive={status === 'GUIDING'}
+          />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, styles.cameraPlaceholder]}>
+            <ScanFace size={64} color="#666" />
+            <Text style={styles.placeholderText}>Camera not available</Text>
           </View>
+        )}
 
-          <Pressable onPress={handleToggleCamera} style={styles.controlIconBtn}>
-            <RefreshCw size={20} color="#ffffff" />
-          </Pressable>
+        {/* Viewfinder Overlay with Circular SVG Ring */}
+        <View style={styles.overlayContainer}>
+          <View style={styles.viewfinderWrapper}>
+            <Svg width={260} height={260} viewBox="0 0 100 100" style={styles.svgRing}>
+              <Circle
+                cx="50"
+                cy="50"
+                r="46"
+                stroke="rgba(255, 255, 255, 0.2)"
+                strokeWidth="4"
+                fill="none"
+              />
+              <Circle
+                cx="50"
+                cy="50"
+                r="46"
+                stroke={status === 'UPLOADING' ? '#7fd1ad' : Colors.apricot}
+                strokeWidth="4"
+                strokeDasharray="289"
+                strokeDashoffset={289 - (289 * progressPercent) / 100}
+                strokeLinecap="round"
+                fill="none"
+              />
+            </Svg>
+            <View style={styles.cameraOval} />
+          </View>
         </View>
 
-        {/* Viewfinder Wrapper occupying ~70% screen height with semi-transparent oval face guide */}
-        <View style={styles.viewfinderWrapper}>
-          {device && hasPermission ? (
-            <Camera
-              ref={cameraRef}
-              style={StyleSheet.absoluteFill}
-              device={device}
-              isActive={status === 'GUIDING' || status === 'UPLOADING'}
-              photo={true}
-            />
-          ) : null}
+        {/* Top Header & Camera Toggle */}
+        <SafeAreaView style={styles.topHeaderOverlay}>
+          <TouchableOpacity style={styles.iconCircleBtn} onPress={handleBack}>
+            <ChevronLeft size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconCircleBtn} onPress={handleToggleCamera}>
+            <RotateCcw size={20} color="#fff" />
+          </TouchableOpacity>
+        </SafeAreaView>
 
-          {/* Semi-transparent dark overlay around centered oval guide */}
-          <View style={styles.darkOverlayTop} pointerEvents="none" />
-          <View style={styles.darkOverlayMiddle} pointerEvents="none">
-            <View style={styles.darkOverlaySide} />
-            <View style={styles.ovalGuideCutout}>
-              <Svg width={250} height={330} viewBox="0 0 250 330" style={styles.svgRing}>
-                <Circle
-                  cx="125"
-                  cy="165"
-                  r="120"
-                  stroke="rgba(255, 255, 255, 0.25)"
-                  strokeWidth="4"
-                  fill="none"
-                />
-                <Circle
-                  cx="125"
-                  cy="165"
-                  r="120"
-                  stroke={Colors.apricot}
-                  strokeWidth="4"
-                  strokeDasharray="754"
-                  strokeDashoffset={754 - (754 * progressPercent) / 100}
-                  strokeLinecap="round"
-                  fill="none"
-                />
-              </Svg>
-
-              <View style={styles.faceSilhouette}>
-                {isUploading ? (
-                  <ActivityIndicator size="large" color={Colors.apricot} />
-                ) : (
-                  <ScanFace size={72} color="rgba(255,255,255,0.7)" strokeWidth={1.5} />
-                )}
-              </View>
-            </View>
-            <View style={styles.darkOverlaySide} />
-          </View>
-          <View style={styles.darkOverlayBottom} pointerEvents="none" />
+        {/* Dynamic Real-time Guidance Banner */}
+        <View style={styles.guidanceBanner}>
+          <Text style={styles.guidanceBannerText}>
+            {status === 'UPLOADING' ? 'Uploading template vectors...' : guidanceMessage}
+          </Text>
         </View>
 
-        {/* Dynamic Pose Guidance Feedback */}
-        <View style={styles.feedbackBlock}>
-          {!isUploading && (
-            <View style={styles.poseIconBox}>
-              <PoseIcon size={32} color={Colors.apricot} />
+        {/* Bottom Poses Step Indicator */}
+        <View style={styles.progressFooter}>
+          <View style={styles.stepsRow}>
+            {POSES.map((p, idx) => {
+              const isDone = idx < sampleIndex;
+              const isCurrent = idx === sampleIndex && status === 'GUIDING';
+              return (
+                <View
+                  key={p.step}
+                  style={[
+                    styles.stepChip,
+                    isCurrent && styles.stepChipActive,
+                    isDone && styles.stepChipDone,
+                  ]}
+                >
+                  <Text style={[styles.stepChipText, isCurrent && styles.stepChipTextActive]}>
+                    {idx + 1}
+                  </Text>
+                  <Text style={[styles.stepChipLabel, isDone && styles.stepChipLabelDone]}>
+                    {p.step === 'FRONTAL' ? 'Front' : p.step === 'SLIGHT_LEFT' ? 'Left' : 'Right'}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+
+          {status === 'UPLOADING' && (
+            <View style={styles.uploadingBox}>
+              <ActivityIndicator color={Colors.apricot} size="small" />
+              <Text style={styles.uploadingText}>Verifying unit normalization...</Text>
             </View>
-          )}
-
-          <Text style={styles.feedbackHeadline}>
-            {isUploading ? 'Securing Face Profile...' : currentPose.label}
-          </Text>
-
-          <Text style={styles.feedbackSub}>
-            {isUploading
-              ? 'Transmitting 512-D multi-sample EdgeFace-XS templates to central backend...'
-              : guidanceMessage}
-          </Text>
-
-          {!isUploading && (
-            <Text style={styles.stepBadge}>
-              Step {Math.min(sampleIndex + 1, POSES.length)} of {POSES.length} · {currentPose.sublabel}
-            </Text>
           )}
         </View>
       </View>
     );
   }
 
-  // Screen 3: Verified Success Screen
+  // Screen 3: Success Result State
   if (status === 'SUCCESS') {
     return (
       <SafeAreaView style={[styles.container, { paddingTop: insets.top }]}>
         <StatusBar style="dark" />
         <View style={styles.resultContainer}>
           <View style={styles.successIconCircle}>
-            <CheckCircle2 size={56} color={Colors.forest} />
+            <CheckCircle2 size={56} color={Colors.forest} strokeWidth={2.5} />
           </View>
-          <Text style={styles.resultTitle}>Enrollment Complete</Text>
+          <Text style={styles.resultTitle}>Registration Complete</Text>
           <Text style={styles.resultSubtitle}>
-            Face profile for {studentName} has been validated, persisted, and added to the classroom gallery.
+            {studentName} is now registered for biometric attendance verification.
           </Text>
 
           <View style={styles.summaryCard}>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Student Identity</Text>
-              <Text style={styles.summaryValue}>{studentName} ({institutionalId})</Text>
+              <Text style={styles.summaryLabel}>Student Name</Text>
+              <Text style={styles.summaryValue}>{studentName}</Text>
             </View>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Model Version</Text>
-              <Text style={styles.summaryValue}>EdgeFace-XS-v1 (512-D)</Text>
+              <Text style={styles.summaryLabel}>Institutional ID</Text>
+              <Text style={styles.summaryValue}>{institutionalId || studentUserId.slice(0, 8)}</Text>
             </View>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Quality Score</Text>
-              <Text style={styles.summaryValue}>{(qualityScore * 100).toFixed(0)}% (Passed)</Text>
+              <Text style={styles.summaryLabel}>Multi-Sample Poses</Text>
+              <Text style={styles.summaryValue}>3 of 3 (Frontal, Left, Right)</Text>
             </View>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Samples Accumulated</Text>
-              <Text style={styles.summaryValue}>3 poses (L2 normalized)</Text>
+              <Text style={styles.summaryLabel}>Measured Quality Score</Text>
+              <Text style={styles.summaryValue}>{(qualityScore * 100).toFixed(1)}%</Text>
             </View>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Central Status</Text>
-              <Text style={[styles.summaryValue, { color: Colors.forest }]}>REGISTERED</Text>
+              <Text style={styles.summaryLabel}>Model Manifest</Text>
+              <Text style={styles.summaryValue}>EdgeFace-XS (512-D)</Text>
             </View>
           </View>
 
           <TouchableOpacity style={styles.primaryButton} onPress={handleBack}>
-            <UserCheck size={20} color={Colors.card} />
-            <Text style={styles.primaryButtonText}>Return to Section Roster</Text>
+            <Text style={styles.primaryButtonText}>Return to Class Roster</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
-  // Screen 4: Failure & Retry Screen
+  // Screen 4: Failure State
   return (
     <SafeAreaView style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar style="dark" />
       <View style={styles.resultContainer}>
         <View style={styles.failureIconCircle}>
-          <AlertCircle size={56} color={Colors.rose} />
+          <AlertCircle size={56} color={Colors.rose} strokeWidth={2.5} />
         </View>
-        <Text style={styles.resultTitle}>Enrollment Incomplete</Text>
+        <Text style={styles.resultTitle}>Enrollment Failed</Text>
         <Text style={styles.resultSubtitle}>
-          {errorMessage || 'Face capture did not satisfy quality standards.'}
+          {errorMessage || 'The server rejected or could not complete biometric registration.'}
         </Text>
 
-        <TouchableOpacity style={styles.primaryButton} onPress={startEnrollment}>
-          <RotateCcw size={20} color={Colors.card} />
-          <Text style={styles.primaryButtonText}>Retry Capture</Text>
+        <TouchableOpacity style={styles.primaryButton} onPress={handleStartCapture}>
+          <RefreshCw size={20} color="#fff" />
+          <Text style={styles.primaryButtonText}>Try Again</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.secondaryButton} onPress={handleBack}>
-          <Text style={styles.secondaryButtonText}>Cancel</Text>
+          <Text style={styles.secondaryButtonText}>Cancel & Go Back</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -581,31 +365,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: Colors.line,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
+    padding: 8,
   },
   headerTitleContainer: {
     alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
     color: Colors.ink,
   },
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 13,
     color: Colors.soft,
-    marginTop: 2,
   },
   contentContainer: {
     padding: 20,
@@ -613,16 +391,16 @@ const styles = StyleSheet.create({
   profileCard: {
     backgroundColor: Colors.card,
     borderRadius: Radii.card,
-    padding: 24,
+    padding: 20,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: Colors.line,
     marginBottom: 20,
   },
   avatarBubble: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: Colors.lilac50,
     alignItems: 'center',
     justifyContent: 'center',
@@ -630,7 +408,7 @@ const styles = StyleSheet.create({
   },
   studentNameText: {
     fontSize: 20,
-    fontWeight: '700',
+    fontWeight: '800',
     color: Colors.ink,
     marginBottom: 4,
   },
@@ -689,22 +467,6 @@ const styles = StyleSheet.create({
     color: Colors.ink,
     flex: 1,
   },
-  errorAlert: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(214, 95, 87, 0.1)',
-    borderRadius: Radii.card,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(214, 95, 87, 0.3)',
-  },
-  errorAlertText: {
-    color: Colors.rose,
-    fontSize: 13,
-    flex: 1,
-  },
   primaryButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -714,6 +476,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: Radii.button,
     marginVertical: 8,
+    width: '100%',
   },
   primaryButtonText: {
     fontSize: 16,
@@ -725,121 +488,141 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 14,
     borderRadius: Radii.button,
+    width: '100%',
   },
   secondaryButtonText: {
     fontSize: 15,
     fontWeight: '600',
     color: Colors.soft,
   },
-  // Circular SVG Camera Experience (Matches Student Enrollment Screen)
-  cameraContainer: {
+  cameraWrapper: {
     flex: 1,
-    backgroundColor: '#1f1a29',
-    alignItems: 'center',
-    paddingTop: 50,
-    paddingHorizontal: 24,
+    backgroundColor: '#000',
+    position: 'relative',
   },
-  topControlBar: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  controlIconBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  cameraPlaceholder: {
+    backgroundColor: '#1a1820',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  studentBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: Radii.pill,
+  placeholderText: {
+    color: '#8b8496',
+    marginTop: 12,
+    fontSize: 14,
   },
-  studentBadgeText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
+  overlayContainer: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   viewfinderWrapper: {
-    height: '68%',
-    width: '100%',
-    overflow: 'hidden',
-    position: 'relative',
-    backgroundColor: '#000000',
-  },
-  darkOverlayTop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    width: '100%',
-  },
-  darkOverlayMiddle: {
-    flexDirection: 'row',
-    height: 330,
-    width: '100%',
-  },
-  darkOverlaySide: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-  },
-  ovalGuideCutout: {
-    width: 250,
-    height: 330,
-    borderRadius: 125,
-    borderWidth: 2,
-    borderColor: Colors.apricot,
-    backgroundColor: 'transparent',
+    width: 260,
+    height: 260,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  darkOverlayBottom: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    width: '100%',
   },
   svgRing: {
     position: 'absolute',
     transform: [{ rotate: '-90deg' }],
   },
-  faceSilhouette: {
+  cameraOval: {
+    width: 230,
+    height: 230,
+    borderRadius: 115,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    backgroundColor: 'transparent',
+  },
+  topHeaderOverlay: {
     position: 'absolute',
+    top: 20,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    zIndex: 10,
+  },
+  iconCircleBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  feedbackBlock: {
+  guidanceBanner: {
+    position: 'absolute',
+    top: 90,
+    left: 24,
+    right: 24,
+    backgroundColor: 'rgba(42, 35, 56, 0.85)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: Radii.pill,
     alignItems: 'center',
-    marginTop: 40,
-    paddingHorizontal: 16,
   },
-  poseIconBox: {
-    marginBottom: 10,
-  },
-  feedbackHeadline: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#ffffff',
-    textAlign: 'center',
-  },
-  feedbackSub: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginTop: 6,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  stepBadge: {
-    marginTop: 12,
-    fontSize: 12,
+  guidanceBannerText: {
+    color: '#fff',
+    fontSize: 15,
     fontWeight: '600',
-    color: Colors.apricot,
-    backgroundColor: 'rgba(240, 168, 104, 0.15)',
+    textAlign: 'center',
+  },
+  progressFooter: {
+    position: 'absolute',
+    bottom: 40,
+    left: 20,
+    right: 20,
+    alignItems: 'center',
+  },
+  stepsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  stepChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
     paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingVertical: 8,
+    borderRadius: Radii.pill,
+  },
+  stepChipActive: {
+    backgroundColor: Colors.apricot,
+  },
+  stepChipDone: {
+    backgroundColor: Colors.forest50,
+  },
+  stepChipText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  stepChipTextActive: {
+    color: Colors.ink,
+  },
+  stepChipLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  stepChipLabelDone: {
+    color: Colors.forest,
+  },
+  uploadingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: Radii.pill,
+  },
+  uploadingText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   resultContainer: {
     flex: 1,

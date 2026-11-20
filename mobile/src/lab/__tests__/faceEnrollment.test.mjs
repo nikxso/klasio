@@ -28,7 +28,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GuidedFaceEnrollmentController } from '../adapters/enrollment/GuidedFaceEnrollmentController.ts';
-import { EDGEFACE_XS_MANIFEST } from '../adapters/recognizers/EdgeFaceEmbedder.ts';
+import { EdgeFaceEmbedder, EDGEFACE_XS_MANIFEST } from '../adapters/recognizers/EdgeFaceEmbedder.ts';
 import { SessionScopedFaceGallery } from '../adapters/gallery/SessionScopedGallery.ts';
 
 // Deterministic synthetic unit vector generator in R^512
@@ -539,5 +539,24 @@ test('Step H: Guided Face Enrollment & Biometric Validation Test Suite', async (
     g = await controller.processFrame(frame, [detection], 1700);
     assert.equal(g, 'VALIDATION_FAILED');
     assert.equal(controller.state.failureReason?.includes('consistency'), true);
+  });
+
+  await t.test('[20] EdgeFaceEmbedder Refuses Synthetic Fallback in Production Mode', async () => {
+    const embedder = new EdgeFaceEmbedder();
+    await embedder.initialize();
+    embedder.isTestFixtureMode = false;
+
+    const frame = createMockFrame(1000);
+    const box = { x: 0.35, y: 0.25, width: 0.30, height: 0.40 };
+
+    await assert.rejects(
+      async () => {
+        await embedder.embed({ frame, box });
+      },
+      (err) => {
+        assert.match(err.message, /Native DirectPerception/);
+        return true;
+      }
+    );
   });
 });
