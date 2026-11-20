@@ -307,6 +307,9 @@ class BiometricService:
             )
             self.db.add(profile)
 
+        profile.student_user = student
+        student.face_profile = profile
+
         await self.db.flush()
         await self.db.refresh(profile)
 
@@ -507,6 +510,7 @@ class BiometricService:
         )
         enr_res = await self.db.execute(enr_stmt)
         enrollments = enr_res.scalars().all()
+
 
         templates: List[GalleryStudentTemplate] = []
         hash_parts: List[str] = [str(teaching_assignment_id)]

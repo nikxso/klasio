@@ -656,3 +656,64 @@ async def test_cross_assignment_isolation(async_client: AsyncClient, biometrics_
     stu_ids_in_a = [t["student_user_id"] for t in res_a.json()["templates"]]
     assert str(student_b.id) not in stu_ids_in_a
 
+
+@pytest.mark.asyncio
+async def test_multi_pose_embeddings_enrollment_and_gallery_retrieval(
+    async_client: AsyncClient, biometrics_test_env: dict
+):
+    """
+    Verify end-to-end that:
+    1. A student is enrolled with 3 distinct multi-sample pose embeddings (embeddings_base64).
+    2. All 3 samples are persisted.
+    3. The gallery-sync endpoint returns exactly 3 templates for that student with matching sample_index.
+    """
+    env = biometrics_test_env
+    assign_a = env["assign_a"]
+    student_a = env["student_a"]
+
+    # 3 normalized unit vectors
+    v1 = create_base64_vector(512, 1.0)
+    v2 = create_base64_vector(512, 1.0)
+    v3 = create_base64_vector(512, 1.0)
+
+    enroll_payload = {
+        "student_user_id": str(student_a.id),
+        "active_model_version": "EdgeFace-XS-v1",
+        "embedding_dimension": 512,
+        "sample_count": 3,
+        "embeddings_base64": [v1, v2, v3],
+        "quality_score": 0.92,
+    }
+
+    # Student self-enrolls
+    res = await async_client.post(
+        "/api/v1/biometrics/enrollment",
+        json=enroll_payload,
+        headers=env["headers"]["student_a"],
+    )
+    assert res.status_code == 200
+    enroll_data = res.json()
+    assert enroll_data["sample_count"] == 3
+    assert enroll_data["registration_state"] == "REGISTERED"
+
+    # Fetch assignment gallery
+    gallery_res = await async_client.get(
+        f"/api/v1/faculty/assignments/{assign_a.id}/gallery",
+        headers=env["headers"]["fac_assigned"],
+    )
+    assert gallery_res.status_code == 200
+    gallery_data = gallery_res.json()
+
+    # Find templates for student_a
+    stu_templates = [
+        t for t in gallery_data["templates"]
+        if t["student_user_id"] == str(student_a.id)
+    ]
+    assert len(stu_templates) == 3, f"Expected 3 templates for student, got {len(stu_templates)}"
+    assert [t["sample_index"] for t in stu_templates] == [0, 1, 2]
+    for t in stu_templates:
+        assert t["model_version"] == "EdgeFace-XS-v1"
+        assert t["quality_score"] == 0.92
+        assert len(t["embedding_base64"]) > 0
+
+
