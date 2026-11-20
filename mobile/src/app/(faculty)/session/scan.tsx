@@ -64,7 +64,6 @@ import { DetailedPerceptionTimings } from '@/perception/perceptionClient';
 import { Brand } from '@/constants/brand';
 import {
   YuNetDetector,
-  SCRFDDetector,
   DirectOnDeviceDetector,
   TemporalCentroidTracker,
   FaceQualityGate,
@@ -153,7 +152,7 @@ export default function FacultyScanningScreen() {
   const isCameraActive = isForeground && hasPermission && !isPaused && cameraError === null;
 
   // Perception / Detector state
-  const [activeDetector, setActiveDetector] = useState<'YuNet' | 'SCRFD-500M' | 'YuNet-InMemory'>('YuNet-InMemory');
+  const [activeDetector, setActiveDetector] = useState<'YuNet' | 'YuNet-InMemory'>('YuNet-InMemory');
 
   const [analysisPreference, setAnalysisPreference] = useState<'STANDARD_640' | 'LIGHTWEIGHT_320'>('STANDARD_640');
   const [detectedFaces, setDetectedFaces] = useState<DetectedFaceBox[]>([]);
@@ -408,17 +407,6 @@ export default function FacultyScanningScreen() {
     [policyDecision]
   );
 
-  const scrfdDetector = useMemo(
-    () =>
-      new SCRFDDetector(
-        0.30,
-        0.4,
-        policyDecision?.analysisConfig.targetWidth || 640,
-        policyDecision?.analysisConfig.targetHeight || 640
-      ),
-    [policyDecision]
-  );
-
   const directDetector = useMemo(
     () => new DirectOnDeviceDetector(null, 0.35),
     []
@@ -637,7 +625,7 @@ export default function FacultyScanningScreen() {
                 frameId: currentFrameId,
               };
 
-              const detector = activeDetector === 'YuNet' ? yunetDetector : scrfdDetector;
+              const detector = yunetDetector;
               const res = await detector.detectFacesDetailed(rawFrame);
               detections = res.results;
               timings = res.timings;
@@ -912,7 +900,7 @@ export default function FacultyScanningScreen() {
       if (activeTimerRef.current) clearTimeout(activeTimerRef.current);
       if (staleClearTimerRef.current) clearTimeout(staleClearTimerRef.current);
     };
-  }, [isCameraActive, activeDetector, cameraPosition, yunetDetector, scrfdDetector, directDetector, viewfinderLayout]);
+  }, [isCameraActive, activeDetector, cameraPosition, yunetDetector, directDetector, viewfinderLayout]);
 
   const handleDone = () => {
     const candidates = accumulatorRef.current.getAccumulatedCandidates();
@@ -1062,9 +1050,7 @@ export default function FacultyScanningScreen() {
                     <Text style={styles.confidenceText} numberOfLines={1}>
                       {face.trackId != null
                         ? `Track #${face.trackId} [${face.quality?.state || (face.isConfirmed ? 'CONF' : 'TENT')}${face.quality?.primaryReason ? `: ${face.quality.primaryReason}` : ''}]`
-                        : activeDetector === 'YuNet'
-                        ? 'YuNet'
-                        : 'SCRFD'}
+                        : 'YuNet'}
                       {` · ${Math.round(face.confidence * 100)}%`}
                     </Text>
                   </View>
@@ -1391,7 +1377,7 @@ export default function FacultyScanningScreen() {
               <View style={styles.diagRow}>
                 <Text style={styles.diagLabel}>Detector Candidate:</Text>
                 <View style={styles.pillGroup}>
-                  {(['YuNet-InMemory', 'YuNet', 'SCRFD-500M'] as const).map((det) => (
+                  {(['YuNet-InMemory', 'YuNet'] as const).map((det) => (
                     <TouchableOpacity
                       key={det}
                       style={[
@@ -1406,7 +1392,7 @@ export default function FacultyScanningScreen() {
                           activeDetector === det && styles.diagPillTextActive,
                         ]}
                       >
-                        {det === 'YuNet-InMemory' ? 'YuNet (In-Mem)' : det === 'YuNet' ? 'YuNet (HTTP)' : 'SCRFD (HTTP)'}
+                        {det === 'YuNet-InMemory' ? 'YuNet (In-Mem)' : 'YuNet (HTTP)'}
                       </Text>
                     </TouchableOpacity>
                   ))}

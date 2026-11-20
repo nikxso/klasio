@@ -68,8 +68,6 @@ check_remote_file "${REMOTE_DEX}"
 check_remote_file "${REMOTE_LIB}/libonnxruntime.so"
 check_remote_file "${REMOTE_LIB}/libonnxruntime4j_jni.so"
 check_remote_file "${REMOTE_MODELS}/yunet_2023mar.onnx"
-check_remote_file "${REMOTE_MODELS}/det_500m.onnx"
-check_remote_file "${REMOTE_MODELS}/w600k_mbf.onnx"
 check_remote_file "${REMOTE_MODELS}/edgeface_xs.onnx"
 echo "      All on-device DEX, native libraries, and ONNX models verified."
 

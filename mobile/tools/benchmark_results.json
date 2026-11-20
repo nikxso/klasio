@@ -33,37 +33,11 @@
         ]
       },
       {
-        "name": "SCRFD-500M",
-        "version": "500M",
-        "file": "det_500m.onnx",
-        "sha256": "5e4447f50245bbd7966bd6c0fa52938c61474a04ec7def48753668a9d8b4ea3a",
-        "size_bytes": 2524817,
-        "input_dimensions": [
-          1,
-          3,
-          640,
-          640
-        ]
-      },
-      {
         "name": "EdgeFace-XS",
         "version": "gamma_0.6",
         "file": "edgeface_xs.onnx",
         "sha256": "9206e2eb13a2761d7b5b76e13016d4b9acd3fa3535a9a09939f3adacd139a5ff",
         "size_bytes": 7277264,
-        "input_dimensions": [
-          1,
-          3,
-          112,
-          112
-        ]
-      },
-      {
-        "name": "MobileFaceNet",
-        "version": "w600k_mbf",
-        "file": "w600k_mbf.onnx",
-        "sha256": "9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f",
-        "size_bytes": 13616099,
         "input_dimensions": [
           1,
           3,

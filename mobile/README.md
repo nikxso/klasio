@@ -30,7 +30,7 @@ Target Device: **Motorola Moto G54 5G** (Android 15 / API 35, MediaTek Dimensity
 
 ## 2. On-Device Native Perception Engine
 
-Implemented via native Kotlin JNI module (`com.attendly.mobile.perception.DirectPerceptionModule`) and ONNX Runtime:
+Implemented via native Kotlin JNI module (`com.klasio.app.perception.DirectPerceptionModule`) and ONNX Runtime:
 
 1. **In-Memory Frame Grab**: Zero-copy bitmap extraction from CameraX `PreviewView.getBitmap()` in memory, eliminating JPEG compression and flash I/O bottlenecks.
 2. **YuNet Face Detector (`models/face_detection_yunet_2023mar.onnx`)**: Multi-scale edge face detector evaluating frames at 640x640 with confidence threshold 0.35, extracting bounding boxes and 5 canonical facial landmarks.

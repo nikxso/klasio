@@ -30,8 +30,6 @@ from contextlib import asynccontextmanager
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 YUNET_PATH = os.path.join(BASE_DIR, "src", "lab", "models", "yunet_2023mar.onnx")
-SCRFD_PATH = os.path.join(BASE_DIR, "src", "lab", "models", "det_500m.onnx")
-MBF_PATH = os.path.join(BASE_DIR, "src", "lab", "models", "w600k_mbf.onnx")
 EDGEFACE_PATH = os.path.join(BASE_DIR, "src", "lab", "models", "edgeface_xs.onnx")
 
 CANONICAL_5PT = np.array([
@@ -59,19 +57,13 @@ app.add_middleware(
 
 
 def init_sessions():
-    global sess_yunet, sess_scrfd, sess_mbf, sess_edgeface
+    global sess_yunet, sess_edgeface
     opts = ort.SessionOptions()
     opts.intra_op_num_threads = 4
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     logger.info("Initializing YuNet session from %s", YUNET_PATH)
     sess_yunet = ort.InferenceSession(YUNET_PATH, sess_options=opts, providers=["CPUExecutionProvider"])
-
-    logger.info("Initializing SCRFD-500M session from %s", SCRFD_PATH)
-    sess_scrfd = ort.InferenceSession(SCRFD_PATH, sess_options=opts, providers=["CPUExecutionProvider"])
-
-    logger.info("Initializing MobileFaceNet session from %s", MBF_PATH)
-    sess_mbf = ort.InferenceSession(MBF_PATH, sess_options=opts, providers=["CPUExecutionProvider"])
 
     logger.info("Initializing EdgeFace-XS session from %s", EDGEFACE_PATH)
     sess_edgeface = ort.InferenceSession(EDGEFACE_PATH, sess_options=opts, providers=["CPUExecutionProvider"])
@@ -221,129 +213,6 @@ def detect_yunet(image: Image.Image, target_w: int, target_h: int, conf_thresh: 
     }
 
 
-def detect_scrfd(image: Image.Image, target_w: int, target_h: int, conf_thresh: float) -> Dict[str, Any]:
-    global sess_scrfd
-    t0 = time.perf_counter()
-
-    # Decouple resolution: resize in memory to target analysis resolution
-    resized = image.resize((target_w, target_h), Image.Resampling.BILINEAR)
-    arr = np.array(resized, dtype=np.float32)
-    # Normalize: (x - 127.5) / 128.0
-    arr = (arr - 127.5) / 128.0
-    # HWC -> CHW -> NCHW
-    arr = np.transpose(arr, (2, 0, 1))
-    arr = np.expand_dims(arr, 0)
-
-    # Run inference
-    t_infer_0 = time.perf_counter()
-    preprocess_latency_ms = (t_infer_0 - t0) * 1000.0
-    out = sess_scrfd.run(None, {"input.1": arr})
-    t_infer_1 = time.perf_counter()
-    inference_latency_ms = (t_infer_1 - t_infer_0) * 1000.0
-
-    output_names = [o.name for o in sess_scrfd.get_outputs()]
-    out_dict = dict(zip(output_names, out))
-
-    strides = [8, 16, 32]
-    score_keys = ["443", "468", "493"]
-    bbox_keys = ["446", "471", "496"]
-    kps_keys = ["449", "474", "499"]
-
-    raw_boxes = []
-    raw_scores = []
-    raw_kps = []
-
-    for s_idx, stride in enumerate(strides):
-        scores = out_dict[score_keys[s_idx]]  # [N, 1]
-        bboxes = out_dict[bbox_keys[s_idx]]  # [N, 4]
-        kps = out_dict[kps_keys[s_idx]]  # [N, 10]
-
-        feat_w = target_w // stride
-        feat_h = target_h // stride
-
-        shift_x = np.arange(0, feat_w) * stride
-        shift_y = np.arange(0, feat_h) * stride
-        grid_x, grid_y = np.meshgrid(shift_x, shift_y)
-        grid_x = grid_x.reshape(-1)
-        grid_y = grid_y.reshape(-1)
-
-        anchor_centers = np.stack([grid_x, grid_y], axis=-1)
-        # 2 anchors per cell
-        anchor_centers = np.repeat(anchor_centers, 2, axis=0)
-
-        valid = np.where(scores[:, 0] >= conf_thresh)[0]
-        for idx in valid:
-            cx = anchor_centers[idx, 0]
-            cy = anchor_centers[idx, 1]
-            x1 = cx - bboxes[idx, 0] * stride
-            y1 = cy - bboxes[idx, 1] * stride
-            x2 = cx + bboxes[idx, 2] * stride
-            y2 = cy + bboxes[idx, 3] * stride
-            w = max(0.0, x2 - x1)
-            h = max(0.0, y2 - y1)
-            raw_boxes.append([x1, y1, w, h])
-            raw_scores.append(float(scores[idx, 0]))
-
-            # 5 landmarks
-            landmarks = []
-            for k in range(5):
-                kx = cx + kps[idx, 2 * k] * stride
-                ky = cy + kps[idx, 2 * k + 1] * stride
-                landmarks.append([float(kx), float(ky)])
-            raw_kps.append(landmarks)
-
-    faces = []
-    if len(raw_boxes) > 0:
-        boxes_np = np.array(raw_boxes, dtype=np.float32)
-        scores_np = np.array(raw_scores, dtype=np.float32)
-        keep = nms(boxes_np, scores_np, thresh=0.4)
-
-        for i, k_idx in enumerate(keep):
-            bx, by, bw, bh = float(boxes_np[k_idx][0]), float(boxes_np[k_idx][1]), float(boxes_np[k_idx][2]), float(boxes_np[k_idx][3])
-            conf = float(scores_np[k_idx])
-            kps = raw_kps[k_idx]
-
-            norm_x = max(0.0, min(1.0, bx / float(target_w)))
-            norm_y = max(0.0, min(1.0, by / float(target_h)))
-            norm_w = max(0.0, min(1.0 - norm_x, bw / float(target_w)))
-            norm_h = max(0.0, min(1.0 - norm_y, bh / float(target_h)))
-
-            faces.append({
-                "id": f"scrfd_face_{i + 1}",
-                "box": {
-                    "x": float(round(norm_x, 4)),
-                    "y": float(round(norm_y, 4)),
-                    "width": float(round(norm_w, 4)),
-                    "height": float(round(norm_h, 4)),
-                },
-                "confidence": float(round(conf, 4)),
-                "landmarks": {
-                    "rightEye": {"x": float(round(float(kps[0][0]) / target_w, 4)), "y": float(round(float(kps[0][1]) / target_h, 4))},
-                    "leftEye": {"x": float(round(float(kps[1][0]) / target_w, 4)), "y": float(round(float(kps[1][1]) / target_h, 4))},
-                    "noseTip": {"x": float(round(float(kps[2][0]) / target_w, 4)), "y": float(round(float(kps[2][1]) / target_h, 4))},
-                    "rightMouth": {"x": float(round(float(kps[3][0]) / target_w, 4)), "y": float(round(float(kps[3][1]) / target_h, 4))},
-                    "leftMouth": {"x": float(round(float(kps[4][0]) / target_w, 4)), "y": float(round(float(kps[4][1]) / target_h, 4))},
-                },
-            })
-
-    t_post_end = time.perf_counter()
-    postprocess_latency_ms = (t_post_end - t_infer_1) * 1000.0
-    total_latency_ms = (t_post_end - t0) * 1000.0
-
-    return {
-        "success": True,
-        "detector": "SCRFD-500M",
-        "modelVersion": "500M",
-        "preprocessLatencyMs": float(round(preprocess_latency_ms, 2)),
-        "inferenceLatencyMs": float(round(inference_latency_ms, 2)),
-        "postprocessLatencyMs": float(round(postprocess_latency_ms, 2)),
-        "totalLatencyMs": float(round(total_latency_ms, 2)),
-        "analysisResolution": {"width": int(target_w), "height": int(target_h)},
-        "facesCount": int(len(faces)),
-        "faces": faces,
-    }
-
-
 @app.get("/health")
 def health():
     return {
@@ -352,7 +221,7 @@ def health():
         "deviceTarget": "Motorola Moto G54 5G",
         "models": {
             "YuNet": {"loaded": sess_yunet is not None, "path": YUNET_PATH},
-            "SCRFD-500M": {"loaded": sess_scrfd is not None, "path": SCRFD_PATH},
+            "EdgeFace-XS": {"loaded": sess_edgeface is not None, "path": EDGEFACE_PATH},
         },
     }
 
@@ -382,8 +251,6 @@ async def detect(
 
     if detector == "YuNet":
         res = detect_yunet(image, analysisWidth, analysisHeight, confidenceThreshold)
-    elif detector == "SCRFD-500M":
-        res = detect_scrfd(image, analysisWidth, analysisHeight, confidenceThreshold)
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported detector candidate: {detector}")
 
@@ -420,12 +287,12 @@ async def detect(
     return res
 
 
-@app.get("/health")
+@app.get("/health_check")
 def health_check():
     return {
         "status": "ok",
-        "detectors": ["YuNet", "SCRFD-500M"],
-        "embedders": ["MobileFaceNet", "EdgeFace-XS"],
+        "detectors": ["YuNet"],
+        "embedders": ["EdgeFace-XS"],
         "timestamp": time.time(),
     }
 
@@ -467,13 +334,7 @@ async def embed_endpoint(
     t1 = time.perf_counter()
     crop_ms = (t1 - t0) * 1000.0
 
-    if model == "MobileFaceNet":
-        normed = (crop_112.astype(np.float32) - 127.5) / 127.5
-        sess = sess_mbf
-        input_name = sess.get_inputs()[0].name
-        output_name = sess.get_outputs()[0].name
-        norm_mode = "MINUS_127_5_DIV_127_5"
-    elif model == "EdgeFace-XS":
+    if model == "EdgeFace-XS":
         normed = (crop_112.astype(np.float32) - 127.5) / 128.0
         sess = sess_edgeface
         input_name = sess.get_inputs()[0].name

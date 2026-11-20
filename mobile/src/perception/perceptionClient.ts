@@ -3,7 +3,7 @@
  * Feature: 001-academic-roles-enrollment / Core Face Perception (Step B)
  *
  * Connects the mobile camera perception stream to the on-device/USB bridge
- * neural detector service (running YuNet and SCRFD-500M with ONNX Runtime).
+ * neural detector service (running YuNet with ONNX Runtime).
  */
 
 import { FaceDetectionResult, RawFrame } from './contracts';
@@ -84,7 +84,7 @@ export class PerceptionClient {
 
   public static async detect(
     frame: RawFrame,
-    detector: 'YuNet' | 'SCRFD-500M',
+    detector: 'YuNet',
     analysisWidth: number = 640,
     analysisHeight: number = 640,
     confidenceThreshold: number = 0.4

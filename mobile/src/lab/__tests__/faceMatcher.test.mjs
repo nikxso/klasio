@@ -21,7 +21,6 @@ import { SessionScopedFaceGallery } from '../adapters/gallery/SessionScopedGalle
 import { CosineGalleryMatcher } from '../adapters/matchers/CosineGalleryMatcher.ts';
 import { TemporalConfirmationBuffer } from '../adapters/matchers/TemporalConfirmationBuffer.ts';
 import { EDGEFACE_XS_MANIFEST } from '../adapters/recognizers/EdgeFaceEmbedder.ts';
-import { MOBILEFACENET_MANIFEST } from '../adapters/recognizers/MobileFaceNetEmbedder.ts';
 
 // Deterministic unit vector generator in R^512
 function createSyntheticUnitVector(seed = 1, dim = 512) {
@@ -222,8 +221,18 @@ test('Session-Scoped Face Matcher — Unit & Invariant Test Suite', async (t) =>
   await t.test('[7] Model Compatibility: Rejects mismatched dimension or model with explicit diagnostic reasons', async () => {
     const gallery = new SessionScopedFaceGallery();
     const mbfVec = createSyntheticUnitVector(60, 512);
-    // Profile created with MobileFaceNet manifest
-    const mbfProfile = createStudentProfile('001', 'MobileFace Student', [mbfVec], MOBILEFACENET_MANIFEST);
+    // Profile created with incompatible manifest
+    const incompatibleManifest = {
+      modelName: 'Incompatible-Legacy',
+      modelVersion: 'v1.0',
+      embeddingDimension: 512,
+      normalization: 'L2',
+      quantization: 'FP32',
+      inputShape: [1, 3, 112, 112],
+      inputColorSpace: 'BGR',
+      outputTensorName: 'output',
+    };
+    const mbfProfile = createStudentProfile('001', 'Incompatible Student', [mbfVec], incompatibleManifest);
     gallery.initialize(createDummySessionScope(), [mbfProfile]);
 
     // Matcher validates against active model manifest (EdgeFace-XS)

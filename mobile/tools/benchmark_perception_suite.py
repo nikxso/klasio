@@ -34,8 +34,6 @@ PROJECT_ROOT = os.path.dirname(TOOLS_DIR)
 MODELS_DIR = os.path.join(PROJECT_ROOT, "src", "lab", "models")
 
 YUNET_PATH = os.path.join(MODELS_DIR, "yunet_2023mar.onnx")
-SCRFD_PATH = os.path.join(MODELS_DIR, "det_500m.onnx")
-MBF_PATH = os.path.join(MODELS_DIR, "w600k_mbf.onnx")
 EDGEFACE_PATH = os.path.join(MODELS_DIR, "edgeface_xs.onnx")
 
 RESULTS_JSON_PATH = os.path.join(TOOLS_DIR, "benchmark_results.json")
@@ -188,8 +186,6 @@ class PerceptionSuiteRunner:
 
         print(">>> Initializing ONNX Runtime Sessions with 4 intra-op threads...")
         self.sess_yunet = ort.InferenceSession(YUNET_PATH, sess_options=self.session_opts, providers=["CPUExecutionProvider"])
-        self.sess_scrfd = ort.InferenceSession(SCRFD_PATH, sess_options=self.session_opts, providers=["CPUExecutionProvider"])
-        self.sess_mbf = ort.InferenceSession(MBF_PATH, sess_options=self.session_opts, providers=["CPUExecutionProvider"])
         self.sess_edgeface = ort.InferenceSession(EDGEFACE_PATH, sess_options=self.session_opts, providers=["CPUExecutionProvider"])
 
     # -------------------------------------------------------------------------
@@ -199,9 +195,7 @@ class PerceptionSuiteRunner:
         models_meta = []
         for name, ver, path, shape in [
             ("YuNet", "2023mar", YUNET_PATH, [1, 3, 640, 640]),
-            ("SCRFD-500M", "500M", SCRFD_PATH, [1, 3, 640, 640]),
             ("EdgeFace-XS", "gamma_0.6", EDGEFACE_PATH, [1, 3, 112, 112]),
-            ("MobileFaceNet", "w600k_mbf", MBF_PATH, [1, 3, 112, 112]),
         ]:
             models_meta.append({
                 "name": name,

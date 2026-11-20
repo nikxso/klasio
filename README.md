@@ -208,7 +208,7 @@ npx expo start --localhost
 5. **Offline Attendance & Subsequent Sync**:
    - Disconnect USB / stop API server (`adb reverse --remove tcp:8000`).
    - Finalize a new attendance session. Notice the badge: `"Session saved locally (Pending Sync)"`.
-   - Force-close and reopen the mobile app (`adb shell am force-stop com.attendly.mobile`).
+   - Force-close and reopen the mobile app (`adb shell am force-stop com.klasio.app`).
    - Navigate to Faculty Profile $\rightarrow$ Observe `Pending Sync Queue: 1 item`.
    - Re-enable backend connectivity (`adb reverse tcp:8000 tcp:8000`) $\rightarrow$ Tap **Sync Now**.
    - The queued session synchronizes idempotently with the backend.

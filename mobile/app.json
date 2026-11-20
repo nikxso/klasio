@@ -11,7 +11,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
-      "package": "com.attendly.mobile",
+      "package": "com.klasio.app",
       "permissions": [
         "android.permission.CAMERA"
       ],
@@ -28,6 +28,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "./plugins/withDirectPerception",
       "expo-router",
       [
         "expo-splash-screen",

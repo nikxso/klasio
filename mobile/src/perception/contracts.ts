@@ -6,7 +6,7 @@
  * and Notion Section 24.6 ("Architecture should remain replaceable").
  *
  * Isolates Camera, Detection, Tracking, Recognition, and Matching behind stable contracts
- * so Level 3 candidates (YuNet vs. SCRFD, MobileFaceNet vs. EdgeFace-XS, ONNX Runtime vs. LiteRT)
+ * so perception engines (YuNet, EdgeFace-XS, ONNX Runtime)
  * can be swapped or benchmarked without altering attendance domain logic.
  */
 
@@ -414,7 +414,7 @@ export interface ICameraFrameSource {
 
 /**
  * Face Detector Interface: Replaceable face detection engine.
- * Candidate implementations: YuNet, SCRFD-500M, ML Kit Face Detector.
+ * Implementations: YuNet, DirectOnDeviceDetector.
  */
 export interface IFaceDetector {
   readonly modelName: string;
@@ -553,7 +553,7 @@ export interface FaceEmbeddingResult {
 
 /**
  * Face Embedder Interface: Extracts identity embeddings from quality-approved face observations (Step E).
- * Modular abstraction isolating model implementations (MobileFaceNet, EdgeFace-XS).
+ * Modular abstraction isolating model implementations (EdgeFace-XS).
  */
 export interface IFaceEmbedder {
   readonly modelName: string;
@@ -571,7 +571,7 @@ export interface IFaceEmbedder {
 
 /**
  * Face Recognizer Interface: Extracts identity embeddings from aligned crops.
- * Candidate implementations: MobileFaceNet, EdgeFace-XS, FaceLiVT.
+ * Implementations: EdgeFace-XS.
  */
 export interface IFaceRecognizer {
   readonly modelName: string;

@@ -1,6 +1,6 @@
 """
 Step E: Face Embeddings & Model Selection Benchmark Experiment
-Evaluates MobileFaceNet (w600k_mbf.onnx) vs EdgeFace-XS (edgeface_xs.onnx).
+Evaluates EdgeFace-XS (edgeface_xs.onnx).
 
 Strict privacy boundary:
 - Operates strictly in-memory
@@ -20,7 +20,6 @@ import cv2
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(BASE_DIR, "src", "lab", "models")
-MBF_PATH = os.path.join(MODELS_DIR, "w600k_mbf.onnx")
 EDGEFACE_PATH = os.path.join(MODELS_DIR, "edgeface_xs.onnx")
 
 CANONICAL_5PT = np.array([
@@ -185,21 +184,13 @@ class ModelRunner:
 def run_benchmark():
     print("=" * 70)
     print("STEP E: FACE EMBEDDINGS & MODEL SELECTION BENCHMARK")
-    print("Evaluating MobileFaceNet vs EdgeFace-XS on CPU (4 Threads)")
+    print("Evaluating EdgeFace-XS on CPU (4 Threads)")
     print("=" * 70)
 
-    mbf = ModelRunner("MobileFaceNet", MBF_PATH, "MINUS_127_5_DIV_127_5")
     edgeface = ModelRunner("EdgeFace-XS", EDGEFACE_PATH, "MINUS_127_5_DIV_128_0")
 
     print(f"\n[1] MODEL SPECIFICATIONS:")
-    print(f"Candidate A: {mbf.name}")
-    print(f"  File: {MBF_PATH}")
-    print(f"  Size: {mbf.file_size:,} bytes ({mbf.file_size / (1024*1024):.2f} MB)")
-    print(f"  SHA256: {mbf.sha256}")
-    print(f"  Input: {mbf.input_name} [1, 3, 112, 112] (RGB, (x-127.5)/127.5)")
-    print(f"  Output: {mbf.output_name} [1, 512]")
-
-    print(f"\nCandidate B: {edgeface.name}")
+    print(f"Selected Model: {edgeface.name}")
     print(f"  File: {EDGEFACE_PATH}")
     print(f"  Size: {edgeface.file_size:,} bytes ({edgeface.file_size / (1024*1024):.2f} MB)")
     print(f"  SHA256: {edgeface.sha256}")
@@ -208,7 +199,7 @@ def run_benchmark():
 
     # [2] LATENCY BENCHMARK (Warmup + 50 iterations)
     print(f"\n[2] INFERENCE LATENCY BENCHMARK (5 warmups, 50 measured iterations):")
-    for runner in [mbf, edgeface]:
+    for runner in [edgeface]:
         dummy_crop = np.random.randint(0, 255, (112, 112, 3), dtype=np.uint8)
 
         # Warmup

@@ -49,7 +49,7 @@ export interface CameraPolicyDecision {
 
 /**
  * Standard ML Analysis Resolution Configurations.
- * ML models (e.g. YuNet / SCRFD / EdgeFace) operate on normalized dimensions,
+ * ML models (e.g. YuNet / EdgeFace) operate on normalized dimensions,
  * typically 320x320 or 640x640, completely decoupled from preview resolution.
  */
 export const ANALYSIS_RESOLUTIONS: Record<string, MLAnalysisResolutionConfig> = {

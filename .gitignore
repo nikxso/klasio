@@ -87,6 +87,8 @@ expo-env.d.ts
 # ------------------------------------------------------------------------------
 android/
 **/android/
+!mobile/native/android/
+!mobile/native/android/**
 ios/
 **/ios/
 
@@ -152,6 +154,8 @@ ehthumbs.db
 **/*.log
 uploads/
 **/uploads/
+screenshots/
+**/screenshots/
 
 # Worktrees & Git internals
 .worktrees/

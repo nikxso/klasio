@@ -122,7 +122,7 @@ export default function FacultyProfileScreen() {
           <IconBubble icon={Cpu} tone="lilac" size={40} />
           <View style={styles.infoCol}>
             <Text style={styles.infoTitle}>Edge Perception Engine</Text>
-            <Text style={styles.infoSubtitle}>MobileFaceNet 128D · v2.4-live</Text>
+            <Text style={styles.infoSubtitle}>EdgeFace-XS 512D · v1-live</Text>
           </View>
           <Chip tone="forest">Active</Chip>
         </View>

@@ -53,13 +53,13 @@ describe('Faculty Navigation Architecture & Profile Contract', () => {
       designation: 'Associate Professor',
       department: 'Computer Science & Engineering',
       staffId: 'FAC-0142',
-      modelVersion: 'MobileFaceNet 128D (v2.4-live)',
+      modelVersion: 'EdgeFace-XS 512D (v1-live)',
       syncStatus: 'ONLINE_SYNCED',
     };
 
     assert.equal(typeof facultyProfile.name, 'string');
     assert.equal(facultyProfile.staffId, 'FAC-0142');
-    assert.match(facultyProfile.modelVersion, /MobileFaceNet/);
+    assert.match(facultyProfile.modelVersion, /EdgeFace-XS/);
     assert.equal(facultyProfile.syncStatus, 'ONLINE_SYNCED');
   });
 });

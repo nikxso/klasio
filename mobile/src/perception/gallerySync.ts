@@ -240,7 +240,7 @@ export class GallerySyncService {
         studentUserId: studentId,
         institutionalId: studentInfo?.institutionalId || '',
         studentName: studentInfo?.studentName || '',
-        modelName: modelVersion.startsWith('EdgeFace') ? 'EdgeFace-XS' : 'MobileFaceNet',
+        modelName: 'EdgeFace-XS',
         activeModelVersion: modelVersion,
         embeddingDimension: detectedDim,
         normalization: 'L2',

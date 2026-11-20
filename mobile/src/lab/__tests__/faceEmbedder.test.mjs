@@ -1,11 +1,10 @@
 /**
  * Step E — Face Embedder & Model Selection Unit & Invariant Test Suite
- * Automated tests for MobileFaceNetEmbedder, EdgeFaceEmbedder, and FaceAligner.
+ * Automated tests for EdgeFaceEmbedder and FaceAligner.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MobileFaceNetEmbedder } from '../adapters/recognizers/MobileFaceNetEmbedder.ts';
 import { EdgeFaceEmbedder } from '../adapters/recognizers/EdgeFaceEmbedder.ts';
 import { FaceAligner } from '../adapters/aligners/FaceAligner.ts';
 
@@ -50,7 +49,7 @@ function cosineSim(v1, v2) {
 
 test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
   await t.test('[1] Initialization & Lifecycle: Throws before init, succeeds after init', async () => {
-    const embedder = new MobileFaceNetEmbedder();
+    const embedder = new EdgeFaceEmbedder();
     const input = {
       frame: createDummyFrame(),
       box: { x: 0.2, y: 0.2, width: 0.3, height: 0.4 },
@@ -74,15 +73,8 @@ test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
     );
   });
 
-  await t.test('[2] Manifest & Model Specifications: Validates manifests for both candidates', async () => {
-    const mbf = new MobileFaceNetEmbedder();
+  await t.test('[2] Manifest & Model Specifications: Validates manifests for EdgeFace-XS', async () => {
     const ef = new EdgeFaceEmbedder();
-
-    assert.equal(mbf.modelName, 'MobileFaceNet');
-    assert.equal(mbf.embeddingDimension, 512);
-    assert.equal(mbf.manifest.inputWidth, 112);
-    assert.equal(mbf.manifest.inputHeight, 112);
-    assert.equal(mbf.manifest.normalization, 'MINUS_127_5_DIV_127_5');
 
     assert.equal(ef.modelName, 'EdgeFace-XS');
     assert.equal(ef.embeddingDimension, 512);
@@ -92,8 +84,8 @@ test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
   });
 
   await t.test('[3] Output Dimensions & L2 Normalization: Embeddings are strictly unit vectors in R^512', async () => {
-    const mbf = new MobileFaceNetEmbedder();
-    await mbf.initialize();
+    const ef = new EdgeFaceEmbedder();
+    await ef.initialize();
 
     const input = {
       frame: createDummyFrame(),
@@ -101,14 +93,14 @@ test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
       landmarks: createCanonicalLandmarks(),
     };
 
-    const res = await mbf.embed(input, true);
+    const res = await ef.embed(input, true);
     assert.equal(res.embedding.length, 512, 'Embedding vector must be exactly 512-dimensional');
     assert.equal(res.rawDimension, 512);
     assert.equal(res.isNormalized, true);
 
     const norm = l2Norm(res.embedding);
     assert.ok(Math.abs(norm - 1.0) < 1e-5, `L2 norm must equal 1.0, got ${norm}`);
-    await mbf.dispose();
+    await ef.dispose();
   });
 
   await t.test('[4] FaceAligner 5-Point Transform: Maps canonical landmarks with near-zero RMSE', async () => {
@@ -133,8 +125,8 @@ test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
     assert.equal(crop.mode, 'NONE', 'Missing landmarks must fall back to NONE alignment');
   });
 
-  await t.test('[6] Model Switching: Both candidates satisfy IFaceEmbedder & IFaceRecognizer polymorphically', async () => {
-    const models = [new MobileFaceNetEmbedder(), new EdgeFaceEmbedder()];
+  await t.test('[6] Model Architecture: EdgeFace-XS satisfies IFaceEmbedder & IFaceRecognizer polymorphically', async () => {
+    const models = [new EdgeFaceEmbedder()];
 
     const input = {
       frame: createDummyFrame(),
@@ -177,7 +169,7 @@ test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
   });
 
   await t.test('[8] Spatial Sensitivity: Different face locations produce distinct embeddings', async () => {
-    const embedder = new MobileFaceNetEmbedder();
+    const embedder = new EdgeFaceEmbedder();
     await embedder.initialize();
 
     const face1 = {
@@ -223,7 +215,7 @@ test('FaceEmbedder — Unit & Invariant Test Suite', async (t) => {
   });
 
   await t.test('[10] HARD INVARIANT: Embeddings are transient anonymous vectors (Zero Identity Leakage)', async () => {
-    const embedder = new MobileFaceNetEmbedder();
+    const embedder = new EdgeFaceEmbedder();
     await embedder.initialize();
 
     const input = {

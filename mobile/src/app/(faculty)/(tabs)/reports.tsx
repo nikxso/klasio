@@ -210,13 +210,13 @@ export default function FacultyReportsScreen() {
         isRecoverable: s.is_recoverable,
       }));
     }
-    return currentAssignment.studentsNeedingAttention;
+    return currentAssignment?.studentsNeedingAttention || [];
   }, [dynamicAnalytics, currentAssignment]);
 
   const displayedStudents = useMemo(() => {
     let list = activeAttentionStudents;
     if (shortageOnly) {
-      list = list.filter((s) => s.isShortage || (s.pct !== null && s.pct < currentAssignment.threshold));
+      list = list.filter((s) => s.isShortage || (s.pct !== null && s.pct < (currentAssignment?.threshold ?? 75)));
     }
     if (searchQuery.trim().length > 0) {
       const q = searchQuery.toLowerCase().trim();
@@ -225,7 +225,7 @@ export default function FacultyReportsScreen() {
       );
     }
     return list;
-  }, [activeAttentionStudents, shortageOnly, searchQuery, currentAssignment.threshold]);
+  }, [activeAttentionStudents, shortageOnly, searchQuery, currentAssignment?.threshold]);
 
   const trendLineData = useMemo(() => {
     if (dynamicAnalytics?.trend && dynamicAnalytics.trend.length > 0) {
@@ -234,7 +234,7 @@ export default function FacultyReportsScreen() {
         value: t.attendance_percentage != null ? Math.round(t.attendance_percentage) : 80,
       }));
     }
-    return (currentAssignment.trend || []).map((t) => ({
+    return (currentAssignment?.trend || []).map((t) => ({
       label: t.label,
       value: t.pct ?? 80,
     }));
@@ -259,7 +259,7 @@ export default function FacultyReportsScreen() {
         { range: '90-100%', count: b5, label: 'Top', tone: 'forest' },
       ];
     }
-    const avg = currentAssignment.avgPct ?? 85;
+    const avg = currentAssignment?.avgPct ?? 85;
     return [
       { range: '<50%', count: avg < 75 ? 3 : 1, label: 'Critical', tone: 'rose' },
       { range: '50-64%', count: avg < 75 ? 6 : 2, label: 'Severe', tone: 'amber' },

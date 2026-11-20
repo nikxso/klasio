@@ -240,7 +240,7 @@ export default function AdminSettingsScreen() {
         <Card style={styles.modelCard}>
           <IconBubble icon={ScanFace} tone="lilac" size={40} />
           <View style={styles.modelTextCol}>
-            <Text style={styles.modelTitle}>Version 2.4 (MobileFaceNet 128D)</Text>
+            <Text style={styles.modelTitle}>Version 1.0 (EdgeFace-XS 512D)</Text>
             <Text style={styles.modelSub}>Calibrated Cosine Threshold: 0.65</Text>
           </View>
           <Chip tone="forest">Live</Chip>
