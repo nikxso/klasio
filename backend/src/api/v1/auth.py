@@ -1,19 +1,151 @@
-from fastapi import APIRouter, Depends, status
+from typing import List, Optional, Set
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
 from src.core.exceptions import AuthenticationError
-from src.core.permissions import get_current_user
+from src.core.permissions import (
+    ensure_legacy_role_mapping,
+    get_current_user,
+    resolve_tenant_and_membership,
+)
 from src.core.security import create_access_token, verify_password
 from src.database import get_db_session
-from src.models.user import AccountStatus, User
-from src.schemas.auth import LoginRequest, TokenResponse, UserContextResponse
+from src.models.access_control import (
+    AssignmentStatus,
+    RoleAssignment,
+    RoleAssignmentScope,
+    RoleTemplate,
+)
+from src.models.user import AccountStatus, User, UserRole
+from src.schemas.auth import (
+    LoginRequest,
+    RoleAssignmentSummary,
+    TokenResponse,
+    UserContextResponse,
+)
 
 settings = get_settings()
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication & Context"])
+
+
+def compute_legacy_role(user: User, role_assignments: List[RoleAssignment]) -> UserRole:
+    """Compute backward-compatible UserRole (ADMIN, FACULTY, STUDENT)."""
+    if user.role:
+        return user.role
+    for ra in role_assignments:
+        if ra.role_template:
+            code = ra.role_template.code
+            if code in (
+                "INSTITUTION_OWNER",
+                "CENTRAL_INSTITUTION_ADMIN",
+                "CAMPUS_ADMIN",
+                "ACCESS_ADMIN",
+                "IT_ADMIN",
+                "PRIVACY_BIOMETRIC_OFFICER",
+            ):
+                return UserRole.ADMIN
+            if code in (
+                "ACADEMIC_REGISTRAR",
+                "ADMISSIONS_OFFICER",
+                "ENROLLMENT_OFFICER",
+                "STUDENT_RECORDS_OFFICER",
+                "DEPARTMENT_HEAD",
+                "PROGRAM_COORDINATOR",
+                "TIMETABLE_COORDINATOR",
+                "FACULTY",
+                "TEACHING_ASSISTANT",
+                "CLASS_ADVISOR",
+            ):
+                return UserRole.FACULTY
+            if code == "STUDENT":
+                return UserRole.STUDENT
+    return UserRole.STUDENT
+
+
+async def build_user_context(
+    user: User,
+    db: AsyncSession,
+    request: Optional[Request] = None,
+) -> UserContextResponse:
+    """Assemble UserContextResponse with IAC v1 assignments, scoping, and permissions."""
+    face_state = "UNREGISTERED"
+    if user.face_profile and user.face_profile.registration_state:
+        face_state = user.face_profile.registration_state.value
+
+    # Resolve active tenant and membership context
+    inst_id, membership = await resolve_tenant_and_membership(request, user, db)
+
+    # Ensure legacy role mapping if membership has no active role assignment
+    await ensure_legacy_role_mapping(user, membership, db)
+
+    # Query active role assignments with template, permissions, and scopes
+    assignment_stmt = (
+        select(RoleAssignment)
+        .options(
+            selectinload(RoleAssignment.role_template).selectinload(RoleTemplate.permissions),
+            selectinload(RoleAssignment.scopes).selectinload(RoleAssignmentScope.department),
+        )
+        .where(
+            RoleAssignment.membership_id == membership.id,
+            RoleAssignment.status == AssignmentStatus.ACTIVE,
+        )
+    )
+    result = await db.execute(assignment_stmt)
+    assignments = result.scalars().all()
+
+    role_assignments_summary: List[RoleAssignmentSummary] = []
+    permissions_set: Set[str] = set()
+
+    for assignment in assignments:
+        tpl = assignment.role_template
+        if not tpl or not tpl.is_active:
+            continue
+
+        for perm in tpl.permissions:
+            permissions_set.add(perm.code)
+
+        if assignment.scopes:
+            for scope in assignment.scopes:
+                dept_code = scope.department.code if scope.department else None
+                role_assignments_summary.append(
+                    RoleAssignmentSummary(
+                        role_template_code=tpl.code,
+                        role_template_name=tpl.name,
+                        scope_type=scope.scope_type.value if hasattr(scope.scope_type, "value") else str(scope.scope_type),
+                        department_code=dept_code,
+                        valid_from=assignment.valid_from,
+                        valid_until=assignment.valid_until,
+                    )
+                )
+        else:
+            role_assignments_summary.append(
+                RoleAssignmentSummary(
+                    role_template_code=tpl.code,
+                    role_template_name=tpl.name,
+                    scope_type="INSTITUTION",
+                    department_code=None,
+                    valid_from=assignment.valid_from,
+                    valid_until=assignment.valid_until,
+                )
+            )
+
+    computed_role = compute_legacy_role(user, assignments)
+
+    return UserContextResponse(
+        id=user.id,
+        institutional_id=user.institutional_id,
+        email=user.email,
+        full_name=user.full_name,
+        role=computed_role,
+        face_registration_state=face_state,
+        institution_id=inst_id,
+        role_assignments=role_assignments_summary,
+        permissions=sorted(list(permissions_set)),
+    )
 
 
 @router.post(
@@ -24,6 +156,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication & Context"])
 )
 async def login(
     payload: LoginRequest,
+    request: Request = None,
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -62,36 +195,20 @@ async def login(
         institutional_id=user.institutional_id,
     )
 
-    face_state = "UNREGISTERED"
-    if user.face_profile and user.face_profile.registration_state:
-        face_state = user.face_profile.registration_state.value
+    user_context = await build_user_context(user, db, request)
 
     return TokenResponse(
         access_token=token,
         token_type="bearer",
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        user=UserContextResponse(
-            id=user.id,
-            institutional_id=user.institutional_id,
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            face_registration_state=face_state,
-        ),
+        user=user_context,
     )
 
 
 @router.get("/me", response_model=UserContextResponse, summary="Retrieve authenticated user profile")
-async def get_current_user_context(current_user: User = Depends(get_current_user)):
-    face_state = "UNREGISTERED"
-    if current_user.face_profile and current_user.face_profile.registration_state:
-        face_state = current_user.face_profile.registration_state.value
-
-    return UserContextResponse(
-        id=current_user.id,
-        institutional_id=current_user.institutional_id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        role=current_user.role,
-        face_registration_state=face_state,
-    )
+async def get_current_user_context(
+    request: Request = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await build_user_context(current_user, db, request)

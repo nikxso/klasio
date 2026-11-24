@@ -1,9 +1,21 @@
-from typing import Optional
+from datetime import datetime
+from typing import List, Optional
 import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.models.user import UserRole
 from src.schemas.assignment import FaceRegistrationState
+
+
+class RoleAssignmentSummary(BaseModel):
+    role_template_code: str
+    role_template_name: str
+    scope_type: str
+    department_code: Optional[str] = None
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LoginRequest(BaseModel):
@@ -18,6 +30,9 @@ class UserContextResponse(BaseModel):
     full_name: str
     role: UserRole
     face_registration_state: FaceRegistrationState = FaceRegistrationState.UNREGISTERED
+    institution_id: Optional[uuid.UUID] = None
+    role_assignments: List[RoleAssignmentSummary] = Field(default_factory=list)
+    permissions: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
