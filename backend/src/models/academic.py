@@ -7,6 +7,7 @@ from sqlalchemy import (
     Date,
     Enum as SQLEnum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     SmallInteger,
     String,
@@ -14,7 +15,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, foreign
 
 from src.models.base import Base, TimestampMixin
 
@@ -34,6 +35,7 @@ class Department(Base, TimestampMixin):
     __tablename__ = "departments"
     __table_args__ = (
         UniqueConstraint("institution_id", "code", name="uq_department_institution_code"),
+        UniqueConstraint("institution_id", "id", name="uq_departments_inst_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -60,7 +62,13 @@ class Department(Base, TimestampMixin):
     )
 
     institution = relationship("Institution", back_populates="departments")
-    campuses = relationship("Campus", secondary="department_campuses", back_populates="departments")
+    campuses = relationship(
+        "Campus",
+        secondary="department_campuses",
+        primaryjoin="and_(Department.institution_id == foreign(department_campuses.c.institution_id), Department.id == foreign(department_campuses.c.department_id))",
+        secondaryjoin="and_(foreign(department_campuses.c.institution_id) == Campus.institution_id, foreign(department_campuses.c.campus_id) == Campus.id)",
+        back_populates="departments",
+    )
     subjects = relationship("Subject", back_populates="department", passive_deletes="all")
     sections = relationship("ClassSection", back_populates="department", passive_deletes="all")
 
@@ -73,6 +81,7 @@ class AcademicTerm(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("end_date >= start_date", name="chk_term_date_range"),
         UniqueConstraint("institution_id", "code", name="uq_term_institution_code"),
+        UniqueConstraint("institution_id", "id", name="uq_academic_terms_inst_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -127,6 +136,13 @@ class Subject(Base, TimestampMixin):
     __tablename__ = "subjects"
     __table_args__ = (
         UniqueConstraint("institution_id", "code", name="uq_subject_institution_code"),
+        UniqueConstraint("institution_id", "id", name="uq_subjects_inst_id"),
+        ForeignKeyConstraint(
+            ["institution_id", "department_id"],
+            ["departments.institution_id", "departments.id"],
+            name="fk_subjects_inst_department",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -153,7 +169,6 @@ class Subject(Base, TimestampMixin):
     )
     department_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("departments.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
@@ -168,8 +183,8 @@ class Subject(Base, TimestampMixin):
         default=True,
     )
 
-    institution = relationship("Institution", back_populates="subjects")
-    department = relationship("Department", back_populates="subjects")
+    institution = relationship("Institution", back_populates="subjects", foreign_keys=[institution_id])
+    department = relationship("Department", back_populates="subjects", foreign_keys=[institution_id, department_id])
     teaching_assignments = relationship("TeachingAssignment", back_populates="subject", passive_deletes="all")
 
     def __repr__(self) -> str:
@@ -180,7 +195,26 @@ class ClassSection(Base, TimestampMixin):
     __tablename__ = "class_sections"
     __table_args__ = (
         UniqueConstraint("academic_term_id", "section_code", name="uq_term_section_code"),
+        UniqueConstraint("institution_id", "id", name="uq_class_sections_inst_id"),
         Index("ix_class_sections_institution_campus", "institution_id", "campus_id"),
+        ForeignKeyConstraint(
+            ["institution_id", "campus_id"],
+            ["campuses.institution_id", "campuses.id"],
+            name="fk_class_sections_inst_campus",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "department_id"],
+            ["departments.institution_id", "departments.id"],
+            name="fk_class_sections_inst_department",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "academic_term_id"],
+            ["academic_terms.institution_id", "academic_terms.id"],
+            name="fk_class_sections_inst_term",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -198,7 +232,6 @@ class ClassSection(Base, TimestampMixin):
     )
     campus_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("campuses.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
         default=DEFAULT_CAMPUS_ID,
@@ -210,13 +243,11 @@ class ClassSection(Base, TimestampMixin):
     )
     department_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("departments.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     academic_term_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("academic_terms.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
@@ -225,10 +256,10 @@ class ClassSection(Base, TimestampMixin):
         nullable=False,
     )
 
-    institution = relationship("Institution", back_populates="sections")
-    campus = relationship("Campus", back_populates="sections")
-    department = relationship("Department", back_populates="sections")
-    academic_term = relationship("AcademicTerm", back_populates="sections")
+    institution = relationship("Institution", back_populates="sections", foreign_keys=[institution_id])
+    campus = relationship("Campus", back_populates="sections", foreign_keys=[institution_id, campus_id])
+    department = relationship("Department", back_populates="sections", foreign_keys=[institution_id, department_id])
+    academic_term = relationship("AcademicTerm", back_populates="sections", foreign_keys=[institution_id, academic_term_id])
     teaching_assignments = relationship("TeachingAssignment", back_populates="class_section", passive_deletes="all")
 
     def __repr__(self) -> str:

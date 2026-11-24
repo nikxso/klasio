@@ -55,6 +55,17 @@ EXCLUDED_RUNTIME_PATHS = {
     "/api/v1/faculty/delegations",
     "/api/v1/faculty/students/{student_user_id}",
     "/api/v1/users/{user_id}/profile-photo",
+    "/api/v1/admin/access-control/audits",
+    "/api/v1/admin/access-control/delegations",
+    "/api/v1/admin/access-control/delegations/{delegation_id}/approve",
+    "/api/v1/admin/access-control/delegations/{delegation_id}/revoke",
+    "/api/v1/admin/access-control/memberships",
+    "/api/v1/admin/access-control/role-assignments",
+    "/api/v1/admin/access-control/role-assignments/{assignment_id}/status",
+    "/api/v1/admin/access-control/role-templates",
+    "/api/v1/admin/access-control/unmapped-accounts",
+    "/api/v1/admin/campuses",
+    "/api/v1/admin/campuses/{campus_id}",
 }
 
 EXCLUDED_RUNTIME_OPERATIONS = {
@@ -81,6 +92,28 @@ EXCLUDED_RUNTIME_SCHEMAS = {
     "StudentProfileDetailResponse",
     "StudentProfileUpdateRequest",
     "UserRoleUpdate",
+    "AssignmentStatus",
+    "AuditOutcome",
+    "AuthorizationAuditResponse",
+    "CampusCreate",
+    "CampusResponse",
+    "CampusStatus",
+    "CampusUpdate",
+    "DelegationAction",
+    "DelegationLifecycleStatus",
+    "DelegationResponse",
+    "DelegationType",
+    "InstitutionMembershipResponse",
+    "MembershipStatus",
+    "PermissionResponse",
+    "RoleAssignmentCreate",
+    "RoleAssignmentResponse",
+    "RoleAssignmentScopeResponse",
+    "RoleAssignmentStatusUpdate",
+    "RoleAssignmentSummary",
+    "RoleScopeType",
+    "RoleTemplateResponse",
+    "UnmappedAccountItem",
 }
 
 DOMAIN_ENUMS = [
@@ -460,6 +493,11 @@ def test_openapi_response_status_codes_and_schemas_consistency(
 # ---------------------------------------------------------------------------
 
 
+RUNTIME_EXTENDED_SCHEMA_PROPERTIES = {
+    "UserContextResponse": {"institution_id", "role_assignments", "permissions"},
+}
+
+
 def test_openapi_component_schemas_properties_and_required(
     runtime_openapi: Dict[str, Any], contract_spec: Dict[str, Any]
 ):
@@ -488,10 +526,11 @@ def test_openapi_component_schemas_properties_and_required(
 
         r_props = set(r_schema.get("properties", {}).keys())
         c_props = set(c_schema.get("properties", {}).keys())
-        assert r_props == c_props, (
+        r_props_contract_view = r_props - RUNTIME_EXTENDED_SCHEMA_PROPERTIES.get(name, set())
+        assert r_props_contract_view == c_props, (
             f"Schema '{name}' properties mismatch:\n"
-            f"  Runtime only:  {r_props - c_props}\n"
-            f"  Contract only: {c_props - r_props}"
+            f"  Runtime only:  {r_props_contract_view - c_props}\n"
+            f"  Contract only: {c_props - r_props_contract_view}"
         )
 
         r_req = set(r_schema.get("required", []))

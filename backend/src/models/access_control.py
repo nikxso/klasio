@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Enum as SQLEnum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     Table,
@@ -17,7 +18,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, foreign
 
 from src.models.base import Base, TimestampMixin
 
@@ -84,9 +85,21 @@ department_campuses = Table(
     "department_campuses",
     Base.metadata,
     Column("institution_id", Uuid(as_uuid=True), ForeignKey("institutions.id", ondelete="CASCADE"), default=uuid.UUID(DEFAULT_INSTITUTION_ID), server_default=text(f"'{DEFAULT_INSTITUTION_ID}'"), nullable=False),
-    Column("department_id", Uuid(as_uuid=True), ForeignKey("departments.id", ondelete="CASCADE"), primary_key=True),
-    Column("campus_id", Uuid(as_uuid=True), ForeignKey("campuses.id", ondelete="CASCADE"), primary_key=True),
+    Column("department_id", Uuid(as_uuid=True), primary_key=True),
+    Column("campus_id", Uuid(as_uuid=True), primary_key=True),
     Column("created_at", DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP"), nullable=False),
+    ForeignKeyConstraint(
+        ["institution_id", "department_id"],
+        ["departments.institution_id", "departments.id"],
+        name="fk_dept_campuses_inst_department",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["institution_id", "campus_id"],
+        ["campuses.institution_id", "campuses.id"],
+        name="fk_dept_campuses_inst_campus",
+        ondelete="CASCADE",
+    ),
 )
 
 # Association table for RoleTemplate <-> Permission (Many-to-Many)
@@ -147,6 +160,7 @@ class Campus(Base, TimestampMixin):
     __tablename__ = "campuses"
     __table_args__ = (
         UniqueConstraint("institution_id", "code", name="uq_campus_institution_code"),
+        UniqueConstraint("institution_id", "id", name="uq_campuses_inst_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -175,7 +189,13 @@ class Campus(Base, TimestampMixin):
     )
 
     institution = relationship("Institution", back_populates="campuses")
-    departments = relationship("Department", secondary=department_campuses, back_populates="campuses")
+    departments = relationship(
+        "Department",
+        secondary=department_campuses,
+        primaryjoin="and_(Campus.institution_id == foreign(department_campuses.c.institution_id), Campus.id == foreign(department_campuses.c.campus_id))",
+        secondaryjoin="and_(foreign(department_campuses.c.institution_id) == Department.institution_id, foreign(department_campuses.c.department_id) == Department.id)",
+        back_populates="campuses",
+    )
     sections = relationship("ClassSection", back_populates="campus")
 
     def __repr__(self) -> str:
@@ -186,6 +206,7 @@ class InstitutionMembership(Base, TimestampMixin):
     __tablename__ = "institution_memberships"
     __table_args__ = (
         UniqueConstraint("institution_id", "user_id", name="uq_membership_institution_user"),
+        UniqueConstraint("institution_id", "id", name="uq_memberships_inst_id"),
         Index("ix_membership_user_status", "user_id", "status"),
     )
 
@@ -315,7 +336,14 @@ class RoleAssignment(Base, TimestampMixin):
             "valid_until IS NULL OR valid_until > valid_from",
             name="chk_role_assignment_validity",
         ),
+        UniqueConstraint("institution_id", "id", name="uq_role_assignments_inst_id"),
         Index("ix_role_assignments_membership_status", "membership_id", "status"),
+        ForeignKeyConstraint(
+            ["institution_id", "membership_id"],
+            ["institution_memberships.institution_id", "institution_memberships.id"],
+            name="fk_role_assignments_inst_membership",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -333,7 +361,6 @@ class RoleAssignment(Base, TimestampMixin):
     )
     membership_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("institution_memberships.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -372,7 +399,7 @@ class RoleAssignment(Base, TimestampMixin):
         nullable=True,
     )
 
-    membership = relationship("InstitutionMembership", foreign_keys=[membership_id], back_populates="role_assignments")
+    membership = relationship("InstitutionMembership", foreign_keys=[institution_id, membership_id], back_populates="role_assignments")
     role_template = relationship("RoleTemplate", back_populates="assignments")
     granted_by = relationship("InstitutionMembership", foreign_keys=[granted_by_membership_id])
     approved_by = relationship("InstitutionMembership", foreign_keys=[approved_by_membership_id])
@@ -399,6 +426,42 @@ class RoleAssignmentScope(Base, TimestampMixin):
             name="chk_role_scope_resource_consistency",
         ),
         Index("ix_role_assignment_scope_assignment_type", "role_assignment_id", "scope_type"),
+        ForeignKeyConstraint(
+            ["institution_id", "role_assignment_id"],
+            ["role_assignments.institution_id", "role_assignments.id"],
+            name="fk_role_scopes_inst_assignment",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "campus_id"],
+            ["campuses.institution_id", "campuses.id"],
+            name="fk_role_scopes_inst_campus",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "department_id"],
+            ["departments.institution_id", "departments.id"],
+            name="fk_role_scopes_inst_department",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "academic_term_id"],
+            ["academic_terms.institution_id", "academic_terms.id"],
+            name="fk_role_scopes_inst_term",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "class_section_id"],
+            ["class_sections.institution_id", "class_sections.id"],
+            name="fk_role_scopes_inst_section",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "student_user_id"],
+            ["institution_memberships.institution_id", "institution_memberships.user_id"],
+            name="fk_role_scopes_inst_student_membership",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -408,7 +471,6 @@ class RoleAssignmentScope(Base, TimestampMixin):
     )
     role_assignment_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("role_assignments.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -424,25 +486,21 @@ class RoleAssignmentScope(Base, TimestampMixin):
     )
     campus_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("campuses.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
     department_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("departments.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
     academic_term_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("academic_terms.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
     class_section_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("class_sections.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -454,19 +512,18 @@ class RoleAssignmentScope(Base, TimestampMixin):
     )
     student_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
 
-    role_assignment = relationship("RoleAssignment", back_populates="scopes")
-    institution = relationship("Institution")
-    campus = relationship("Campus")
-    department = relationship("Department")
-    academic_term = relationship("AcademicTerm")
-    class_section = relationship("ClassSection")
-    teaching_assignment = relationship("TeachingAssignment")
-    student_user = relationship("User")
+    role_assignment = relationship("RoleAssignment", back_populates="scopes", foreign_keys=[institution_id, role_assignment_id])
+    institution = relationship("Institution", foreign_keys=[institution_id])
+    campus = relationship("Campus", foreign_keys=[institution_id, campus_id])
+    department = relationship("Department", foreign_keys=[institution_id, department_id])
+    academic_term = relationship("AcademicTerm", foreign_keys=[institution_id, academic_term_id])
+    class_section = relationship("ClassSection", foreign_keys=[institution_id, class_section_id])
+    teaching_assignment = relationship("TeachingAssignment", foreign_keys=[teaching_assignment_id])
+    student_user = relationship("User", foreign_keys=[student_user_id], primaryjoin="RoleAssignmentScope.student_user_id == User.id")
 
     def __repr__(self) -> str:
         return f"<RoleAssignmentScope {self.id} Type: {self.scope_type} Assignment: {self.role_assignment_id}>"
@@ -479,8 +536,21 @@ class Delegation(Base, TimestampMixin):
             "valid_until > valid_from",
             name="chk_delegation_validity",
         ),
+        UniqueConstraint("institution_id", "id", name="uq_delegations_inst_id"),
         Index("ix_delegations_grantee_status", "grantee_membership_id", "status"),
         Index("ix_delegations_grantor_status", "grantor_role_assignment_id", "status"),
+        ForeignKeyConstraint(
+            ["institution_id", "grantor_role_assignment_id"],
+            ["role_assignments.institution_id", "role_assignments.id"],
+            name="fk_delegations_inst_grantor",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "grantee_membership_id"],
+            ["institution_memberships.institution_id", "institution_memberships.id"],
+            name="fk_delegations_inst_grantee",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -498,13 +568,11 @@ class Delegation(Base, TimestampMixin):
     )
     grantor_role_assignment_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("role_assignments.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     grantee_membership_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("institution_memberships.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -554,8 +622,8 @@ class Delegation(Base, TimestampMixin):
         nullable=True,
     )
 
-    grantor_assignment = relationship("RoleAssignment", back_populates="granted_delegations", foreign_keys=[grantor_role_assignment_id])
-    grantee_membership = relationship("InstitutionMembership", foreign_keys=[grantee_membership_id])
+    grantor_assignment = relationship("RoleAssignment", back_populates="granted_delegations", foreign_keys=[institution_id, grantor_role_assignment_id])
+    grantee_membership = relationship("InstitutionMembership", foreign_keys=[institution_id, grantee_membership_id])
     approved_by = relationship("InstitutionMembership", foreign_keys=[approved_by_membership_id])
     revoked_by = relationship("InstitutionMembership", foreign_keys=[revoked_by_membership_id])
     permissions = relationship("Permission", secondary=delegation_permissions)
@@ -584,6 +652,42 @@ class DelegationScope(Base, TimestampMixin):
             """,
             name="chk_delegation_scope_resource_consistency",
         ),
+        ForeignKeyConstraint(
+            ["institution_id", "delegation_id"],
+            ["delegations.institution_id", "delegations.id"],
+            name="fk_delegation_scopes_inst_delegation",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "campus_id"],
+            ["campuses.institution_id", "campuses.id"],
+            name="fk_delegation_scopes_inst_campus",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "department_id"],
+            ["departments.institution_id", "departments.id"],
+            name="fk_delegation_scopes_inst_department",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "academic_term_id"],
+            ["academic_terms.institution_id", "academic_terms.id"],
+            name="fk_delegation_scopes_inst_term",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "class_section_id"],
+            ["class_sections.institution_id", "class_sections.id"],
+            name="fk_delegation_scopes_inst_section",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "student_user_id"],
+            ["institution_memberships.institution_id", "institution_memberships.user_id"],
+            name="fk_delg_scopes_inst_student_membership",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -593,7 +697,6 @@ class DelegationScope(Base, TimestampMixin):
     )
     delegation_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("delegations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -609,22 +712,18 @@ class DelegationScope(Base, TimestampMixin):
     )
     campus_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("campuses.id", ondelete="CASCADE"),
         nullable=True,
     )
     department_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("departments.id", ondelete="CASCADE"),
         nullable=True,
     )
     academic_term_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("academic_terms.id", ondelete="CASCADE"),
         nullable=True,
     )
     class_section_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("class_sections.id", ondelete="CASCADE"),
         nullable=True,
     )
     teaching_assignment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -634,18 +733,17 @@ class DelegationScope(Base, TimestampMixin):
     )
     student_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
     )
 
-    delegation = relationship("Delegation", back_populates="scopes")
-    institution = relationship("Institution")
-    campus = relationship("Campus")
-    department = relationship("Department")
-    academic_term = relationship("AcademicTerm")
-    class_section = relationship("ClassSection")
-    teaching_assignment = relationship("TeachingAssignment")
-    student_user = relationship("User")
+    delegation = relationship("Delegation", back_populates="scopes", foreign_keys=[institution_id, delegation_id])
+    institution = relationship("Institution", foreign_keys=[institution_id])
+    campus = relationship("Campus", foreign_keys=[institution_id, campus_id])
+    department = relationship("Department", foreign_keys=[institution_id, department_id])
+    academic_term = relationship("AcademicTerm", foreign_keys=[institution_id, academic_term_id])
+    class_section = relationship("ClassSection", foreign_keys=[institution_id, class_section_id])
+    teaching_assignment = relationship("TeachingAssignment", foreign_keys=[teaching_assignment_id])
+    student_user = relationship("User", foreign_keys=[student_user_id], primaryjoin="DelegationScope.student_user_id == User.id")
 
     def __repr__(self) -> str:
         return f"<DelegationScope {self.id} Type: {self.scope_type} Delegation: {self.delegation_id}>"
