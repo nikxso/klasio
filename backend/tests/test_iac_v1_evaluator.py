@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.user import User, UserRole, AccountStatus
-from src.models.academic import Department, AcademicTerm, ClassSection, Subject
+from src.models.academic import Department, AcademicTerm, ClassSection, Subject, DEFAULT_INSTITUTION_ID
 from src.models.assignment import TeachingAssignment
 from src.models.access_control import (
     Institution,
@@ -28,13 +28,32 @@ from src.services.iac_seed_service import seed_canonical_role_templates
 from src.services.authorization_evaluator import AuthorizationEvaluator, AuthorizationDecision
 
 
+async def _get_or_create_membership(session: AsyncSession, inst_id: uuid.UUID, user_id: uuid.UUID) -> InstitutionMembership:
+    res = await session.execute(
+        select(InstitutionMembership).where(
+            InstitutionMembership.institution_id == inst_id,
+            InstitutionMembership.user_id == user_id,
+        )
+    )
+    mem = res.scalar_one_or_none()
+    if not mem:
+        mem = InstitutionMembership(institution_id=inst_id, user_id=user_id, status=MembershipStatus.ACTIVE)
+        session.add(mem)
+        await session.flush()
+    return mem
+
+
 async def _setup_test_context(db_session: AsyncSession):
     """Seed catalog and create institution, campus, departments, and academic terms."""
     await seed_canonical_role_templates(db_session)
 
     uid = uuid.uuid4().hex[:6]
-    inst_id = uuid.uuid4()
-    inst = Institution(id=inst_id, code=f"INST_{uid}", name=f"Test Institution {uid}")
+    res_inst = await db_session.execute(select(Institution).where(Institution.id == DEFAULT_INSTITUTION_ID))
+    inst = res_inst.scalar_one_or_none()
+    if not inst:
+        inst = Institution(id=DEFAULT_INSTITUTION_ID, code="KLASIO_MAIN", name=f"Test Institution {uid}")
+        db_session.add(inst)
+    inst_id = DEFAULT_INSTITUTION_ID
     campus_id = uuid.uuid4()
     campus = Campus(id=campus_id, institution_id=inst_id, code=f"CAMP_{uid}", name=f"Campus {uid}")
     dept_a_id = uuid.uuid4()
@@ -137,11 +156,9 @@ async def test_substitute_delegation_requires_approval(db_session: AsyncSession)
     db_session.add_all([fac_grantor, fac_sub, hod_user])
     await db_session.flush()
 
-    m_grantor = InstitutionMembership(institution_id=inst.id, user_id=fac_grantor.id, status=MembershipStatus.ACTIVE)
-    m_sub = InstitutionMembership(institution_id=inst.id, user_id=fac_sub.id, status=MembershipStatus.ACTIVE)
-    m_hod = InstitutionMembership(institution_id=inst.id, user_id=hod_user.id, status=MembershipStatus.ACTIVE)
-    db_session.add_all([m_grantor, m_sub, m_hod])
-    await db_session.flush()
+    m_grantor = await _get_or_create_membership(db_session, inst.id, fac_grantor.id)
+    m_sub = await _get_or_create_membership(db_session, inst.id, fac_sub.id)
+    m_hod = await _get_or_create_membership(db_session, inst.id, hod_user.id)
 
     # Assign FACULTY role to grantor scoped to sec_a
     faculty_tpl = (await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "FACULTY"))).scalar_one()
@@ -288,11 +305,9 @@ async def test_substitute_delegation_expired_and_revoked_denied(db_session: Asyn
     db_session.add_all([fac_grantor, fac_sub, hod_user])
     await db_session.flush()
 
-    m_grantor = InstitutionMembership(institution_id=inst.id, user_id=fac_grantor.id, status=MembershipStatus.ACTIVE)
-    m_sub = InstitutionMembership(institution_id=inst.id, user_id=fac_sub.id, status=MembershipStatus.ACTIVE)
-    m_hod = InstitutionMembership(institution_id=inst.id, user_id=hod_user.id, status=MembershipStatus.ACTIVE)
-    db_session.add_all([m_grantor, m_sub, m_hod])
-    await db_session.flush()
+    m_grantor = await _get_or_create_membership(db_session, inst.id, fac_grantor.id)
+    m_sub = await _get_or_create_membership(db_session, inst.id, fac_sub.id)
+    m_hod = await _get_or_create_membership(db_session, inst.id, hod_user.id)
 
     faculty_tpl = (await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "FACULTY"))).scalar_one()
     grantor_assign = RoleAssignment(
@@ -394,9 +409,7 @@ async def test_biometrics_template_read_strictly_prohibited(db_session: AsyncSes
     db_session.add(owner_user)
     await db_session.flush()
 
-    m_owner = InstitutionMembership(institution_id=inst.id, user_id=owner_user.id, status=MembershipStatus.ACTIVE)
-    db_session.add(m_owner)
-    await db_session.flush()
+    m_owner = await _get_or_create_membership(db_session, inst.id, owner_user.id)
 
     owner_tpl = (await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "INSTITUTION_OWNER"))).scalar_one()
     owner_assign = RoleAssignment(
@@ -459,9 +472,14 @@ async def test_department_isolation_and_scope_containment(db_session: AsyncSessi
     db_session.add(dept_user)
     await db_session.flush()
 
-    m_user = InstitutionMembership(institution_id=inst.id, user_id=dept_user.id, status=MembershipStatus.ACTIVE)
-    db_session.add(m_user)
-    await db_session.flush()
+    mem_res = await db_session.execute(
+        select(InstitutionMembership).where(InstitutionMembership.user_id == dept_user.id)
+    )
+    m_user = mem_res.scalar_one_or_none()
+    if not m_user:
+        m_user = InstitutionMembership(institution_id=inst.id, user_id=dept_user.id, status=MembershipStatus.ACTIVE)
+        db_session.add(m_user)
+        await db_session.flush()
 
     # Create teaching assignments in Sec A and Sec B
     ta_a = TeachingAssignment(
@@ -566,9 +584,7 @@ async def test_legacy_permission_mapping(db_session: AsyncSession):
     db_session.add(fac_user)
     await db_session.flush()
 
-    m_fac = InstitutionMembership(institution_id=inst.id, user_id=fac_user.id, status=MembershipStatus.ACTIVE)
-    db_session.add(m_fac)
-    await db_session.flush()
+    m_fac = await _get_or_create_membership(db_session, inst.id, fac_user.id)
 
     faculty_tpl = (await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "FACULTY"))).scalar_one()
     assign = RoleAssignment(

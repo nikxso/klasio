@@ -166,6 +166,39 @@ async def build_user_context(
 
     computed_role = compute_legacy_role(user, assignments)
 
+    from datetime import timedelta
+    snapshot = {
+        "membership_id": str(membership.id) if membership else None,
+        "user_id": str(user.id),
+        "institution_id": str(inst_id) if inst_id else None,
+        "authorization_version": "v1.0",
+        "validated_at": now.isoformat(),
+        "expires_at": (now + timedelta(days=7)).isoformat(),
+        "role_assignments": [
+            {
+                "id": str(assignment.id),
+                "role_template_code": assignment.role_template.code,
+                "role_template_name": assignment.role_template.name,
+                "scopes": [
+                    {
+                        "scope_type": s.scope_type.value if hasattr(s.scope_type, "value") else str(s.scope_type),
+                        "campus_id": str(s.campus_id) if s.campus_id else None,
+                        "department_id": str(s.department_id) if s.department_id else None,
+                        "department_code": s.department.code if s.department else None,
+                        "program_id": str(s.program_id) if s.program_id else None,
+                        "class_section_id": str(s.class_section_id) if s.class_section_id else None,
+                    }
+                    for s in assignment.scopes
+                ] if assignment.scopes else [{"scope_type": "INSTITUTION"}],
+                "permissions": [p.code for p in assignment.role_template.permissions] if assignment.role_template else [],
+                "valid_from": assignment.valid_from.isoformat() if assignment.valid_from else None,
+                "valid_until": assignment.valid_until.isoformat() if assignment.valid_until else None,
+            }
+            for assignment in assignments if assignment.role_template and assignment.role_template.is_active
+        ],
+        "effective_permissions": sorted(list(permissions_set)),
+    }
+
     return UserContextResponse(
         id=user.id,
         institutional_id=user.institutional_id,
@@ -174,6 +207,9 @@ async def build_user_context(
         role=computed_role,
         face_registration_state=face_state,
         institution_id=inst_id,
+        membership_id=membership.id if membership else None,
+        authorization_version="v1.0",
+        authorization_snapshot=snapshot,
         role_assignments=role_assignments_summary,
         permissions=sorted(list(permissions_set)),
     )

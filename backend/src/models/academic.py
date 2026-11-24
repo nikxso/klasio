@@ -1,4 +1,5 @@
 import enum
+from typing import Optional
 import uuid
 from datetime import date
 from sqlalchemy import (
@@ -22,6 +23,110 @@ from src.models.base import Base, TimestampMixin
 # Default legacy tenant identifiers for backward compatibility
 DEFAULT_INSTITUTION_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 DEFAULT_CAMPUS_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+
+class DeploymentConfig(Base, TimestampMixin):
+    __tablename__ = "deployment_config"
+    __table_args__ = (
+        CheckConstraint("singleton_id = 1", name="chk_deployment_config_singleton"),
+        CheckConstraint(
+            "deployment_mode = 'SINGLE_INSTITUTION_SELF_HOSTED'",
+            name="chk_deployment_config_mode",
+        ),
+        CheckConstraint(
+            "attendance_shortage_threshold >= 0.0 AND attendance_shortage_threshold <= 100.0",
+            name="chk_deployment_config_threshold",
+        ),
+        UniqueConstraint("institution_id", name="uq_deployment_config_institution"),
+    )
+
+    singleton_id: Mapped[int] = mapped_column(
+        SmallInteger,
+        primary_key=True,
+        default=1,
+        server_default=text("1"),
+    )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("institutions.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    deployment_mode: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="SINGLE_INSTITUTION_SELF_HOSTED",
+        server_default=text("'SINGLE_INSTITUTION_SELF_HOSTED'"),
+    )
+    attendance_shortage_threshold: Mapped[float] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=75,
+        server_default=text("75.0"),
+    )
+
+    institution = relationship("Institution")
+
+    def __repr__(self) -> str:
+        return f"<DeploymentConfig Inst: {self.institution_id} Mode: {self.deployment_mode}>"
+
+
+class Program(Base, TimestampMixin):
+    __tablename__ = "programs"
+    __table_args__ = (
+        UniqueConstraint("institution_id", "id", name="uq_programs_institution_id"),
+        UniqueConstraint("institution_id", "department_id", "code", name="uq_programs_department_code"),
+        UniqueConstraint("institution_id", "department_id", "id", name="uq_programs_institution_department_id"),
+        ForeignKeyConstraint(
+            ["institution_id"],
+            ["deployment_config.institution_id"],
+            name="fk_programs_deployment_institution",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "department_id"],
+            ["departments.institution_id", "departments.id"],
+            name="fk_programs_department",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        index=True,
+        default=DEFAULT_INSTITUTION_ID,
+        server_default=text("'00000000-0000-0000-0000-000000000001'"),
+    )
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+
+    department = relationship("Department", foreign_keys=[institution_id, department_id])
+
+    def __repr__(self) -> str:
+        return f"<Program {self.code}: {self.name} (Dept: {self.department_id})>"
 
 
 class TermStatus(str, enum.Enum):
@@ -255,11 +360,17 @@ class ClassSection(Base, TimestampMixin):
         SmallInteger,
         nullable=False,
     )
+    program_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
 
     institution = relationship("Institution", back_populates="sections", foreign_keys=[institution_id])
     campus = relationship("Campus", back_populates="sections", foreign_keys=[institution_id, campus_id])
     department = relationship("Department", back_populates="sections", foreign_keys=[institution_id, department_id])
     academic_term = relationship("AcademicTerm", back_populates="sections", foreign_keys=[institution_id, academic_term_id])
+    program = relationship("Program", foreign_keys=[institution_id, department_id, program_id], primaryjoin="and_(ClassSection.institution_id == foreign(Program.institution_id), ClassSection.department_id == foreign(Program.department_id), ClassSection.program_id == foreign(Program.id))")
     teaching_assignments = relationship("TeachingAssignment", back_populates="class_section", passive_deletes="all")
 
     def __repr__(self) -> str:

@@ -31,6 +31,9 @@ class UserContextResponse(BaseModel):
     role: UserRole
     face_registration_state: FaceRegistrationState = FaceRegistrationState.UNREGISTERED
     institution_id: Optional[uuid.UUID] = None
+    membership_id: Optional[uuid.UUID] = None
+    authorization_version: str = "v1.0"
+    authorization_snapshot: Optional[dict] = None
     role_assignments: List[RoleAssignmentSummary] = Field(default_factory=list)
     permissions: List[str] = Field(default_factory=list)
 

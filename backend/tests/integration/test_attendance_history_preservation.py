@@ -10,10 +10,11 @@ Verifies:
 from datetime import date, datetime, timezone
 import uuid
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.academic import AcademicTerm, ClassSection, Department, Subject, TermStatus
+from src.models.academic import AcademicTerm, ClassSection, Department, Subject, TermStatus, DEFAULT_INSTITUTION_ID
 from src.models.access_control import Campus, Institution
 from src.models.assignment import TeachingAssignment
 from src.models.attendance import (
@@ -29,7 +30,11 @@ from src.models.user import AccountStatus, User, UserRole
 
 
 async def _create_attendance_test_hierarchy(db_session: AsyncSession):
-    inst = Institution(code=f"I_HIST_{uuid.uuid4().hex[:6]}", name="Hist Inst")
+    res_inst = await db_session.execute(select(Institution).where(Institution.id == DEFAULT_INSTITUTION_ID))
+    inst = res_inst.scalar_one_or_none()
+    if not inst:
+        inst = Institution(id=DEFAULT_INSTITUTION_ID, code="KLASIO_MAIN", name="Hist Inst")
+        db_session.add(inst)
     faculty = User(
         institutional_id=f"FAC_H_{uuid.uuid4().hex[:6]}",
         email=f"fach_{uuid.uuid4().hex[:6]}@inst.edu",

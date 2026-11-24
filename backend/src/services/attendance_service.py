@@ -13,6 +13,7 @@ from src.core.exceptions import (
     EntityNotFoundError,
     OutOfScopeError,
 )
+from src.models.access_control import InstitutionMembership
 from src.models.assignment import TeachingAssignment, SubstituteDelegation, DelegationStatus
 from src.models.attendance import (
     AttendanceRecord,
@@ -194,8 +195,28 @@ class AttendanceService:
 
         # 6. Atomic Database Transaction Commit
         try:
+            # Resolve memberships for provenance
+            actor_mem_id = getattr(session_req, "actor_membership_id", None)
+            if not actor_mem_id:
+                m_res = await self.db.execute(
+                    select(InstitutionMembership.id).where(InstitutionMembership.user_id == current_user.id)
+                )
+                actor_mem_id = m_res.scalar_one_or_none()
+
+            cond_mem_id = None
+            if conducting_faculty_id == current_user.id and actor_mem_id:
+                cond_mem_id = actor_mem_id
+            else:
+                m_res = await self.db.execute(
+                    select(InstitutionMembership.id).where(InstitutionMembership.user_id == conducting_faculty_id)
+                )
+                cond_mem_id = m_res.scalar_one_or_none()
+
+            effective_delegation_id = getattr(session_req, "delegation_id", None) or delegation_id
+
             new_session = AttendanceSession(
                 id=uuid.uuid4(),
+                institution_id=assignment.institution_id if hasattr(assignment, "institution_id") and assignment.institution_id else None,
                 client_session_uuid=session_req.client_session_uuid,
                 teaching_assignment_id=session_req.teaching_assignment_id,
                 session_date=session_req.session_date,
@@ -205,6 +226,13 @@ class AttendanceService:
                 regular_faculty_user_id=regular_faculty_id,
                 conducting_faculty_user_id=conducting_faculty_id,
                 substitute_delegation_id=delegation_id,
+                delegation_id=effective_delegation_id,
+                authorizing_role_assignment_id=getattr(session_req, "authorizing_role_assignment_id", None),
+                finalizing_actor_membership_id=actor_mem_id,
+                conducting_faculty_membership_id=cond_mem_id,
+                permission_code="attendance.session.record",
+                matched_scope_type="TEACHING_ASSIGNMENT",
+                matched_scope_id=session_req.teaching_assignment_id,
                 session_status=AttendanceSessionStatus.FINALIZED,
                 finalized_at=session_req.finalized_at,
                 payload_hash=computed_hash,

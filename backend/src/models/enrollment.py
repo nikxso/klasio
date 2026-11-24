@@ -59,6 +59,13 @@ class StudentEnrollment(Base, TimestampMixin):
         primary_key=True,
         default=uuid.uuid4,
     )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_config.institution_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        default=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    )
     student_user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -109,6 +116,13 @@ class StudentFaceProfile(Base, TimestampMixin):
         Uuid(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
+    )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_config.institution_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        default=uuid.UUID("00000000-0000-0000-0000-000000000001"),
     )
     student_user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),

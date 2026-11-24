@@ -16,15 +16,49 @@ class ReportExportAudit(Base, TimestampMixin):
         primary_key=True,
         default=uuid.uuid4,
     )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_config.institution_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        default=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
-    user_role: Mapped[str] = mapped_column(
+    user_role: Mapped[Optional[str]] = mapped_column(
         String(32),
-        nullable=False,
+        nullable=True,
+    )
+    actor_membership_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    authorizing_role_assignment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    delegation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    permission_code: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        nullable=True,
+    )
+    scope_type: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+    scope_resource_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
     )
     export_format: Mapped[str] = mapped_column(
         String(16),

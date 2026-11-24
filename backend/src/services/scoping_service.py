@@ -214,6 +214,22 @@ class ScopingService:
         self.db.add(delegation)
         await self.db.flush()
         await self.db.refresh(delegation)
+
+        # Authority Notification Matrix Rule 3: Delegation granted
+        try:
+            from src.services.notification_service import NotificationRoutingService
+            await NotificationRoutingService.notify_delegation_granted_or_revoked(
+                db=self.db,
+                delegation_id=delegation.id,
+                regular_faculty_user_id=assignment.faculty_user_id,
+                substitute_faculty_user_id=payload.substitute_faculty_user_id,
+                is_granted=True,
+                reason=payload.delegation_reason or "",
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("klasio.notifications").warning(f"Failed to route delegation creation notification: {e}")
+
         return delegation
 
     async def revoke_delegation(
@@ -243,4 +259,20 @@ class ScopingService:
 
         await self.db.flush()
         await self.db.refresh(delegation)
+
+        # Authority Notification Matrix Rule 3: Delegation revoked
+        try:
+            from src.services.notification_service import NotificationRoutingService
+            await NotificationRoutingService.notify_delegation_granted_or_revoked(
+                db=self.db,
+                delegation_id=delegation.id,
+                regular_faculty_user_id=delegation.regular_faculty_user_id,
+                substitute_faculty_user_id=delegation.substitute_faculty_user_id,
+                is_granted=False,
+                reason=payload.revocation_reason or "",
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("klasio.notifications").warning(f"Failed to route delegation revocation notification: {e}")
+
         return delegation

@@ -14,10 +14,11 @@ from datetime import date, datetime, timedelta, timezone
 import uuid
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import create_access_token, get_password_hash
-from src.models.academic import AcademicTerm, ClassSection, Department, Subject, TermStatus
+from src.models.academic import AcademicTerm, ClassSection, Department, Subject, TermStatus, DEFAULT_INSTITUTION_ID
 from src.models.access_control import (
     Campus,
     Institution,
@@ -42,10 +43,14 @@ def _synthetic_embedding(seed: float = 0.5) -> bytes:
 
 @pytest.fixture
 async def gallery_sec_env(db_session: AsyncSession):
-    # Setup Institution A
-    inst_a = Institution(code=f"INST_A_{uuid.uuid4().hex[:6]}", name="Institution A")
+    # Setup Institution A (Configured Deployment Institution) and Institution B (Foreign)
+    res = await db_session.execute(select(Institution).where(Institution.id == DEFAULT_INSTITUTION_ID))
+    inst_a = res.scalar_one_or_none()
+    if not inst_a:
+        inst_a = Institution(id=DEFAULT_INSTITUTION_ID, code="KLASIO_MAIN", name="Institution A")
+        db_session.add(inst_a)
     inst_b = Institution(code=f"INST_B_{uuid.uuid4().hex[:6]}", name="Institution B")
-    db_session.add_all([inst_a, inst_b])
+    db_session.add(inst_b)
     await db_session.flush()
 
     campus_a = Campus(institution_id=inst_a.id, code="CA", name="Campus A")

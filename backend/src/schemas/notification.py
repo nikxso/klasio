@@ -14,6 +14,8 @@ class NotificationResponse(BaseModel):
     priority: str
     link_type: Optional[str] = None
     link_id: Optional[str] = None
+    payload_json: Optional[str] = None
+    action_route: Optional[str] = None
     is_read: bool
     read_at: Optional[datetime] = None
     created_at: datetime

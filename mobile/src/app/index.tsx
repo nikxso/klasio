@@ -130,6 +130,9 @@ export default function LoginScreen() {
           role: data.user.role,
           faceRegistrationState: data.user.face_registration_state,
           institutionId: data.user.institution_id,
+          membershipId: data.user.membership_id,
+          authorizationVersion: data.user.authorization_version,
+          authorizationSnapshot: data.user.authorization_snapshot,
           permissions: Array.isArray(data.user.permissions) ? data.user.permissions : undefined,
           roleAssignments,
         };

@@ -190,6 +190,25 @@ class AmendmentService:
         await self.db.flush()
         setattr(audit, "is_already_synced", False)
 
+        # 10. Authority Notification Routing (Matrix Rule 1)
+        try:
+            from src.services.notification_service import NotificationRoutingService
+            await NotificationRoutingService.notify_attendance_amendment(
+                db=self.db,
+                session_id=session.id,
+                record_id=record.id,
+                student_user_id=student_user_id,
+                amending_user_id=current_user.id,
+                old_status=previous_status.value if hasattr(previous_status, "value") else str(previous_status),
+                new_status=new_status.value if hasattr(new_status, "value") else str(new_status),
+                reason=cleaned_reason,
+                conducting_faculty_user_id=session.created_by_faculty_user_id,
+                teaching_assignment_id=session.teaching_assignment_id,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("klasio.notifications").warning(f"Failed to route amendment notification: {e}")
+
         return audit
 
     async def get_session_amendments(

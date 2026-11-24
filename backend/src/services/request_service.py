@@ -56,33 +56,20 @@ class RequestService:
         await self.db.flush()
         await self.db.refresh(req)
 
-        # Notify student of resolution
-        from src.services.notification_service import NotificationService
-        notif_service = NotificationService(self.db)
-        await notif_service.create_notification(
-            user_id=req.student_user_id,
-            title=f"Attendance Request {payload.status.value}",
-            message=f"Your request for {subject_name} ({req.session_date}) was marked {payload.status.value.lower()}.",
-            category="REQUEST",
-            priority="HIGH" if payload.status == AttendanceRequestStatus.ACCEPTED else "NORMAL",
-            link_type="REQUEST",
-            link_id=str(req.id),
-            deduplication_key=f"req_{req.id}_{payload.status.value}",
-        )
-
-        # Notify assigned faculty
-        from src.services.notification_service import NotificationService
-        notif_service = NotificationService(self.db)
-        await notif_service.create_notification(
-            user_id=assignment.faculty_user_id,
-            title="New Attendance Dispute",
-            message=f"Student submitted an attendance correction request for {subject_name} on {payload.session_date}.",
-            category="REQUEST",
-            priority="NORMAL",
-            link_type="REQUEST",
-            link_id=str(req.id),
-            deduplication_key=f"req_{req.id}_created",
-        )
+        # Notify conducting/assigned faculty via Authority Notification Engine
+        try:
+            from src.services.notification_service import NotificationRoutingService
+            await NotificationRoutingService.notify_grievance_submitted(
+                db=self.db,
+                request_id=req.id,
+                student_user_id=student_user.id,
+                conducting_faculty_user_id=assignment.faculty_user_id,
+                session_id=getattr(req, "attendance_session_id", None),
+                reason=payload.student_note or "Attendance grievance submitted",
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("klasio.notifications").warning(f"Failed to route grievance submission notification: {e}")
 
         return StudentAttendanceRequestResponse(
             id=req.id,
@@ -215,19 +202,24 @@ class RequestService:
         await self.db.flush()
         await self.db.refresh(req)
 
-        # Notify student of resolution
-        from src.services.notification_service import NotificationService
-        notif_service = NotificationService(self.db)
-        await notif_service.create_notification(
-            user_id=req.student_user_id,
-            title=f"Attendance Request {payload.status.value}",
-            message=f"Your request for {subject_name} ({req.session_date}) was marked {payload.status.value.lower()}.",
-            category="REQUEST",
-            priority="HIGH" if payload.status == AttendanceRequestStatus.ACCEPTED else "NORMAL",
-            link_type="REQUEST",
-            link_id=str(req.id),
-            deduplication_key=f"req_{req.id}_{payload.status.value}",
-        )
+        # Authority Notification Matrix Rule 5: Grievance accepted/rejected
+        try:
+            from src.services.notification_service import NotificationRoutingService
+            ta_res = await self.db.execute(select(TeachingAssignment).where(TeachingAssignment.id == req.teaching_assignment_id))
+            ta = ta_res.scalar_one_or_none()
+            regular_fac = ta.faculty_user_id if ta else reviewer_user.id
+            await NotificationRoutingService.notify_grievance_resolved(
+                db=self.db,
+                request_id=req.id,
+                student_user_id=req.student_user_id,
+                regular_faculty_user_id=regular_fac,
+                conducting_faculty_user_id=reviewer_user.id if reviewer_user.id != regular_fac else None,
+                status=payload.status.value,
+                resolution_notes=payload.resolution_note or "",
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("klasio.notifications").warning(f"Failed to route grievance resolution notification: {e}")
 
         return StudentAttendanceRequestResponse(
             id=req.id,

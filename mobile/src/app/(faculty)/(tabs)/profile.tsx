@@ -13,13 +13,15 @@ import {
   ShieldCheck,
   Smartphone,
   Cpu,
-  CloudCheck,
   RefreshCw,
   LogOut,
   ChevronRight,
-  HelpCircle,
   Clock,
-  CheckCircle2,
+  BookOpen,
+  Users,
+  GraduationCap,
+  Bell,
+  UserCheck,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button } from '@/components/ui/kit';
@@ -96,9 +98,16 @@ export default function FacultyProfileScreen() {
     }
   };
 
-  const facultyName = user?.fullName || 'Dr. Lakshmi Iyer';
-  const facultyStaffId = user?.institutionalId || 'FAC-0142';
+  const facultyName = user?.fullName || 'Faculty Member';
+  const facultyStaffId = user?.institutionalId || 'FACULTY';
   const facultyId = user?.id;
+
+  const roleSummaryText =
+    user?.roleAssignments && user.roleAssignments.length > 0
+      ? user.roleAssignments
+          .map((ra) => ra.roleTemplateName || ra.roleTemplateCode.replace(/_/g, ' '))
+          .join(' · ')
+      : 'Faculty Member';
 
   return (
     <Screen scrollable>
@@ -110,50 +119,114 @@ export default function FacultyProfileScreen() {
           size={76}
         />
         <Text style={styles.userName}>{facultyName}</Text>
-        <Text style={styles.userRole}>Faculty · Computer Science</Text>
+        <Text style={styles.userRole} numberOfLines={2}>
+          {roleSummaryText}
+        </Text>
         <View style={styles.badgesRow}>
           <Chip tone="forest">Staff ID: {facultyStaffId}</Chip>
           {user?.roleAssignments && user.roleAssignments.length > 1 && (
-            <Chip tone="lilac">{user.roleAssignments.length} Roles Assigned</Chip>
+            <Chip tone="lilac">{user.roleAssignments.length} Roles Active</Chip>
           )}
         </View>
       </View>
 
+      {/* Institutional & Departmental Management Tools (Unified UX - No Workspace Switching) */}
       {SessionStore.canAccessAdmin() && (
-        <Pressable
-          onPress={() => router.replace('/(admin)' as any)}
-          style={({ pressed }) => [
-            styles.workspaceSwitcherCard,
-            pressed && { opacity: 0.85, transform: [{ scale: 0.99 }] },
-          ]}
-        >
-          <View style={styles.infoRow}>
-            <IconBubble icon={ShieldCheck} tone="forest" size={40} />
-            <View style={styles.infoCol}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={styles.infoTitle}>Administrator Console</Text>
-                <Chip tone="forest">Dual Role</Chip>
+        <>
+          <Text style={styles.sectionHeader}>Departmental & Institutional Oversight</Text>
+          <Card style={styles.cardGroup}>
+            <Pressable
+              onPress={() => router.push('/(admin)/(tabs)/people' as any)}
+              style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
+            >
+              <View style={styles.actionLeft}>
+                <IconBubble icon={Users} tone="forest" size={36} />
+                <View>
+                  <Text style={styles.actionTitle}>People & Student Rosters</Text>
+                  <Text style={styles.actionSubtitle}>Department faculty, staff, and enrolled students</Text>
+                </View>
               </View>
-              <Text style={styles.infoSubtitle}>
-                Tap to switch to institutional administration & governance
-              </Text>
-            </View>
-            <ChevronRight size={18} color={Colors.forest} />
-          </View>
-        </Pressable>
+              <ChevronRight size={18} color={Colors.soft} />
+            </Pressable>
+
+            <View style={styles.divider} />
+
+            <Pressable
+              onPress={() => router.push('/(admin)/(tabs)/academics' as any)}
+              style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
+            >
+              <View style={styles.actionLeft}>
+                <IconBubble icon={GraduationCap} tone="lilac" size={36} />
+                <View>
+                  <Text style={styles.actionTitle}>Academics & Class Sections</Text>
+                  <Text style={styles.actionSubtitle}>Curriculum, terms, sections, and assignments</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color={Colors.soft} />
+            </Pressable>
+
+            <View style={styles.divider} />
+
+            <Pressable
+              onPress={() => router.push('/(faculty)/delegations' as any)}
+              style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
+            >
+              <View style={styles.actionLeft}>
+                <IconBubble icon={UserCheck} tone="apricot" size={36} />
+                <View>
+                  <Text style={styles.actionTitle}>Substitute Delegations</Text>
+                  <Text style={styles.actionSubtitle}>Request or approve faculty classroom substitutions</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color={Colors.soft} />
+            </Pressable>
+
+            <View style={styles.divider} />
+
+            <Pressable
+              onPress={() => router.push('/notifications' as any)}
+              style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
+            >
+              <View style={styles.actionLeft}>
+                <IconBubble icon={Bell} tone="amber" size={36} />
+                <View>
+                  <Text style={styles.actionTitle}>In-App Notification Center</Text>
+                  <Text style={styles.actionSubtitle}>Authority alerts, amendments, and governance</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color={Colors.soft} />
+            </Pressable>
+          </Card>
+        </>
       )}
 
       {user?.roleAssignments && user.roleAssignments.length > 0 && (
         <>
-          <Text style={styles.sectionHeader}>Assigned Institutional Roles</Text>
+          <Text style={styles.sectionHeader}>Active Canonical Role Assignments</Text>
           <Card style={styles.cardGroup}>
             <View style={styles.rolesGrid}>
-              {user.roleAssignments.map((ra) => (
-                <View key={ra.roleTemplateCode} style={styles.roleTag}>
-                  <ShieldCheck size={14} color={Colors.forest} />
-                  <Text style={styles.roleTagText}>
-                    {ra.roleTemplateName || ra.roleTemplateCode.replace(/_/g, ' ')}
-                  </Text>
+              {user.roleAssignments.map((ra, idx) => (
+                <View key={`${ra.roleTemplateCode}-${idx}`} style={styles.roleCardItem}>
+                  <View style={styles.roleIconCol}>
+                    <ShieldCheck size={18} color={Colors.forest} />
+                  </View>
+                  <View style={styles.roleContentCol}>
+                    <Text style={styles.roleNameText}>
+                      {ra.roleTemplateName || ra.roleTemplateCode.replace(/_/g, ' ')}
+                    </Text>
+                    <View style={styles.roleScopeRow}>
+                      <Chip tone="soft">
+                        {ra.departmentCode
+                          ? `Dept: ${ra.departmentCode}`
+                          : ra.scopeType === 'INSTITUTION'
+                          ? 'Institution-wide'
+                          : ra.scopeType}
+                      </Chip>
+                      {ra.validUntil && (
+                        <Text style={styles.roleValidityText}>Expires: {ra.validUntil.slice(0, 10)}</Text>
+                      )}
+                    </View>
+                  </View>
                 </View>
               ))}
             </View>
@@ -178,7 +251,7 @@ export default function FacultyProfileScreen() {
           <IconBubble icon={Smartphone} tone="forest" size={40} />
           <View style={styles.infoCol}>
             <Text style={styles.infoTitle}>Device Authorization</Text>
-            <Text style={styles.infoSubtitle}>Authorized for Dept Roster Scopes</Text>
+            <Text style={styles.infoSubtitle}>Authorized for Roster Scopes</Text>
           </View>
           <Chip tone="forest">Verified</Chip>
         </View>
@@ -220,19 +293,6 @@ export default function FacultyProfileScreen() {
             <Text style={styles.infoSubtitle}>Zero raw classroom video retained or uploaded</Text>
           </View>
         </View>
-
-        <View style={styles.divider} />
-
-        <Pressable
-          onPress={() => router.push('/(faculty)/delegations' as any)}
-          style={({ pressed }) => [
-            styles.actionRow,
-            pressed && { opacity: 0.7 },
-          ]}
-        >
-          <Text style={styles.actionRowText}>Manage Substitute Delegations</Text>
-          <ChevronRight size={18} color={Colors.soft} />
-        </Pressable>
       </Card>
 
       <Text style={styles.sectionHeader}>About {Brand.name}</Text>
@@ -313,6 +373,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.soft,
     marginTop: 4,
+    textAlign: 'center',
+    paddingHorizontal: 16,
   },
   badgesRow: {
     flexDirection: 'row',
@@ -320,38 +382,56 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 8,
   },
-  workspaceSwitcherCard: {
-    backgroundColor: '#f0fdf4',
-    borderWidth: 1.5,
-    borderColor: '#bbf7d0',
-    borderRadius: Radii.card,
-    padding: 14,
-    marginTop: 6,
-    marginBottom: 12,
-    shadowColor: Colors.forest,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
-  },
   rolesGrid: {
-    gap: 8,
+    gap: 10,
   },
-  roleTag: {
+  roleCardItem: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 8,
     paddingHorizontal: 10,
     backgroundColor: '#f8fafc',
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  roleTagText: {
-    fontSize: 13,
+  roleIconCol: {
+    marginTop: 2,
+  },
+  roleContentCol: {
+    flex: 1,
+  },
+  roleNameText: {
+    fontSize: 14,
     fontWeight: '600',
     color: Colors.ink,
+  },
+  roleScopeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  roleValidityText: {
+    fontSize: 11,
+    color: Colors.soft,
+  },
+  actionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  actionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.ink,
+  },
+  actionSubtitle: {
+    fontSize: 12,
+    color: Colors.soft,
+    marginTop: 1,
   },
   sectionHeader: {
     fontSize: 12,
@@ -394,11 +474,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 4,
-  },
-  actionRowText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: Colors.forest,
   },
   syncButton: {
     padding: 8,

@@ -494,6 +494,11 @@ class RoleAssignmentScope(Base, TimestampMixin):
         nullable=True,
         index=True,
     )
+    program_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
     academic_term_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
         nullable=True,
@@ -715,6 +720,10 @@ class DelegationScope(Base, TimestampMixin):
         nullable=True,
     )
     department_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+    )
+    program_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
         nullable=True,
     )

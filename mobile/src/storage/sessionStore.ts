@@ -4,13 +4,36 @@
  * Fully supports IAC v1 granular permissions and canonical role assignments.
  */
 
+export interface RoleScopeInfo {
+  scopeType: string;
+  campusId?: string | null;
+  departmentId?: string | null;
+  departmentCode?: string | null;
+  programId?: string | null;
+  classSectionId?: string | null;
+}
+
 export interface RoleAssignmentInfo {
+  id?: string;
   roleTemplateCode: string;
   roleTemplateName: string;
   scopeType: string;
   departmentCode?: string;
+  scopes?: RoleScopeInfo[];
+  permissions?: string[];
   validFrom?: string;
   validUntil?: string | null;
+}
+
+export interface AuthorizationSnapshot {
+  membership_id?: string | null;
+  user_id?: string;
+  institution_id?: string | null;
+  authorization_version?: string;
+  validated_at?: string;
+  expires_at?: string;
+  role_assignments?: RoleAssignmentInfo[];
+  effective_permissions?: string[];
 }
 
 export interface AuthUser {
@@ -21,6 +44,9 @@ export interface AuthUser {
   role: 'STUDENT' | 'FACULTY' | 'ADMIN' | string;
   faceRegistrationState?: 'UNREGISTERED' | 'PENDING' | 'REGISTERED';
   institutionId?: string;
+  membershipId?: string;
+  authorizationVersion?: string;
+  authorizationSnapshot?: AuthorizationSnapshot;
   permissions?: string[];
   roleAssignments?: RoleAssignmentInfo[];
 }
@@ -119,9 +145,37 @@ export const SessionStore = {
     try {
       const db = await getSessionDb();
       if (session) {
+        const user = session.user;
+        const membershipId = user?.membershipId || 'default-membership';
+        const snapshotJson = user?.authorizationSnapshot
+          ? JSON.stringify(user.authorizationSnapshot)
+          : JSON.stringify({
+              membership_id: membershipId,
+              user_id: user?.id,
+              institution_id: user?.institutionId,
+              authorization_version: user?.authorizationVersion || 'v1.0',
+              role_assignments: user?.roleAssignments,
+              effective_permissions: user?.permissions,
+            });
+        const authVersion = user?.authorizationVersion || 'v1.0';
+        const nowIso = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+
         await db.runAsync(
-          `INSERT OR REPLACE INTO local_auth_session (id, token, user_json, updated_at) VALUES (1, ?, ?, ?);`,
-          [session.token, JSON.stringify(session.user), new Date().toISOString()]
+          `INSERT OR REPLACE INTO local_auth_session (
+             id, token, user_json, membership_id, authorization_snapshot_json,
+             authorization_version, last_server_validation_at, snapshot_expires_at, updated_at
+           ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          [
+            session.token,
+            JSON.stringify(session.user),
+            membershipId,
+            snapshotJson,
+            authVersion,
+            nowIso,
+            expiresAt,
+            nowIso,
+          ]
         );
       } else {
         await db.runAsync('DELETE FROM local_auth_session WHERE id = 1;');
@@ -136,13 +190,27 @@ export const SessionStore = {
   async initFromStorage(): Promise<AuthSession | null> {
     try {
       const db = await getSessionDb();
-      const row = await db.getFirstAsync<{ token: string; user_json: string }>(
-        'SELECT token, user_json FROM local_auth_session WHERE id = 1;'
+      const row = await db.getFirstAsync<{
+        token: string;
+        user_json: string;
+        membership_id?: string;
+        authorization_snapshot_json?: string;
+        authorization_version?: string;
+      }>(
+        'SELECT token, user_json, membership_id, authorization_snapshot_json, authorization_version FROM local_auth_session WHERE id = 1;'
       );
       if (row?.token && row?.user_json) {
+        const parsedUser = JSON.parse(row.user_json);
+        if (row.membership_id) parsedUser.membershipId = row.membership_id;
+        if (row.authorization_version) parsedUser.authorizationVersion = row.authorization_version;
+        if (row.authorization_snapshot_json) {
+          try {
+            parsedUser.authorizationSnapshot = JSON.parse(row.authorization_snapshot_json);
+          } catch {}
+        }
         activeSession = {
           token: row.token,
-          user: JSON.parse(row.user_json),
+          user: parsedUser,
         };
         return activeSession;
       }
@@ -152,6 +220,18 @@ export const SessionStore = {
       }
     }
     return null;
+  },
+
+  getMembershipId(): string | undefined {
+    return activeSession?.user?.membershipId;
+  },
+
+  getAuthorizationSnapshot(): AuthorizationSnapshot | null {
+    return activeSession?.user?.authorizationSnapshot ?? null;
+  },
+
+  getEffectivePermissions(): string[] {
+    return activeSession?.user?.permissions ?? [];
   },
 
   getSession(): AuthSession | null {

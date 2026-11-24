@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from src.config import get_settings
 from src.core.security import get_password_hash
-from src.models.academic import AcademicTerm, ClassSection, Department, Subject, TermStatus
+from src.models.academic import AcademicTerm, ClassSection, Department, Subject, TermStatus, DEFAULT_INSTITUTION_ID
+from src.models.access_control import InstitutionMembership, MembershipStatus
 from src.models.assignment import TeachingAssignment
 from src.models.enrollment import EnrollmentStatus, FaceRegistrationStatus, StudentEnrollment, StudentFaceProfile
 from src.models.user import AccountStatus, User, UserRole
@@ -241,6 +242,21 @@ async def seed_development_catalog(
             if verbose:
                 print(f"  [*] Reused User: {u.institutional_id} ({u.role.value})")
         users[u_spec["institutional_id"]] = u
+
+        # Ensure active institution membership exists for user
+        mem_stmt = select(InstitutionMembership).where(
+            InstitutionMembership.institution_id == DEFAULT_INSTITUTION_ID,
+            InstitutionMembership.user_id == u.id,
+        )
+        mem = (await session.execute(mem_stmt)).scalar_one_or_none()
+        if not mem:
+            mem = InstitutionMembership(
+                institution_id=DEFAULT_INSTITUTION_ID,
+                user_id=u.id,
+                status=MembershipStatus.ACTIVE,
+            )
+            session.add(mem)
+            await session.flush()
 
     # 6. Student Face Profiles
     face_profiles_spec = [

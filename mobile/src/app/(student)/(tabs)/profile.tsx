@@ -41,9 +41,9 @@ export default function StudentProfileScreen() {
     initUser();
   }, []);
 
-  const studentName = user?.fullName || 'Aarav Sharma';
-  const studentId = user?.id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94';
-  const studentRoll = user?.institutionalId || '21CS037';
+  const studentName = user?.fullName || 'Enrolled Student';
+  const studentId = user?.id;
+  const studentRoll = user?.institutionalId || 'STUDENT';
 
   const handleConfirmSignOut = async () => {
     setIsSigningOut(true);
@@ -68,13 +68,13 @@ export default function StudentProfileScreen() {
         <Avatar
           name={studentName}
           userId={studentId}
-          photoUrl={`${API_BASE_URL}/api/v1/users/${studentId}/profile-photo?t=${cacheBuster}`}
+          photoUrl={studentId ? `${API_BASE_URL}/api/v1/users/${studentId}/profile-photo?t=${cacheBuster}` : null}
           size={76}
         />
         <Text style={styles.userName}>{studentName}</Text>
-        <Text style={styles.userSub}>CSE · Section 3A · {studentRoll}</Text>
+        <Text style={styles.userSub}>{studentRoll} · Enrolled Student</Text>
         <Chip tone="forest" style={styles.cohortChip}>
-          Cohort 2026–27 · 3rd Year
+          Active Academic Enrollment
         </Chip>
       </View>
 

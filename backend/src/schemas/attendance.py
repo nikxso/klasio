@@ -42,6 +42,10 @@ class SubmitAttendanceSessionRequest(BaseModel):
     regular_faculty_user_id: Optional[uuid.UUID] = Field(default=None, validation_alias=AliasChoices("regular_faculty_user_id", "regularFacultyUserId"))
     conducting_faculty_user_id: Optional[uuid.UUID] = Field(default=None, validation_alias=AliasChoices("conducting_faculty_user_id", "conductingFacultyUserId"))
     substitute_delegation_id: Optional[uuid.UUID] = Field(default=None, validation_alias=AliasChoices("substitute_delegation_id", "substituteDelegationId"))
+    delegation_id: Optional[uuid.UUID] = Field(default=None, validation_alias=AliasChoices("delegation_id", "delegationId"))
+    authorizing_role_assignment_id: Optional[uuid.UUID] = Field(default=None, validation_alias=AliasChoices("authorizing_role_assignment_id", "authorizingRoleAssignmentId"))
+    actor_membership_id: Optional[uuid.UUID] = Field(default=None, validation_alias=AliasChoices("actor_membership_id", "actorMembershipId"))
+    authorization_version: Optional[str] = Field(default="v1.0", validation_alias=AliasChoices("authorization_version", "authorizationVersion"))
     finalized_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         validation_alias=AliasChoices("finalized_at", "finalizedAt"),

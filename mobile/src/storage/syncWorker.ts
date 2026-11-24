@@ -5,6 +5,10 @@ export interface SyncQueueRow {
   clientAmendmentId?: string | null;
   endpointPath: string;
   payloadJson: string;
+  actorMembershipId?: string;
+  authorizingRoleAssignmentId?: string | null;
+  delegationId?: string | null;
+  authorizationVersion?: string;
   syncStatus: 'PENDING' | 'IN_FLIGHT' | 'ACKNOWLEDGED' | 'FAILED';
   retryCount: number;
   lastError: string | null;
@@ -93,14 +97,16 @@ export class AttendanceSyncWorker {
     const nowIso = new Date().toISOString();
 
     const query = ignoreNextRetry
-      ? `SELECT queue_id, client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status,
-                retry_count, last_error, next_retry_at, created_at, updated_at
+      ? `SELECT queue_id, client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json,
+                actor_membership_id, authorizing_role_assignment_id, delegation_id, authorization_version,
+                sync_status, retry_count, last_error, next_retry_at, created_at, updated_at
          FROM sync_queue
          WHERE sync_status = 'PENDING'
          ORDER BY queue_id ASC
          LIMIT ?;`
-      : `SELECT queue_id, client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json, sync_status,
-                retry_count, last_error, next_retry_at, created_at, updated_at
+      : `SELECT queue_id, client_session_uuid, operation_type, client_amendment_id, endpoint_path, payload_json,
+                actor_membership_id, authorizing_role_assignment_id, delegation_id, authorization_version,
+                sync_status, retry_count, last_error, next_retry_at, created_at, updated_at
          FROM sync_queue
          WHERE sync_status = 'PENDING'
            AND (next_retry_at IS NULL OR next_retry_at <= ?)
@@ -116,6 +122,10 @@ export class AttendanceSyncWorker {
       clientAmendmentId: r.client_amendment_id || null,
       endpointPath: r.endpoint_path,
       payloadJson: r.payload_json,
+      actorMembershipId: r.actor_membership_id || undefined,
+      authorizingRoleAssignmentId: r.authorizing_role_assignment_id || null,
+      delegationId: r.delegation_id || null,
+      authorizationVersion: r.authorization_version || 'v1.0',
       syncStatus: r.sync_status,
       retryCount: r.retry_count,
       lastError: r.last_error,
@@ -147,6 +157,20 @@ export class AttendanceSyncWorker {
     let parsedPayload: any;
     try {
       parsedPayload = JSON.parse(item.payloadJson);
+      if (item.operationType === 'SESSION_SYNC') {
+        if (!parsedPayload.authorizingRoleAssignmentId && item.authorizingRoleAssignmentId) {
+          parsedPayload.authorizingRoleAssignmentId = item.authorizingRoleAssignmentId;
+        }
+        if (!parsedPayload.delegationId && item.delegationId) {
+          parsedPayload.delegationId = item.delegationId;
+        }
+        if (!parsedPayload.actorMembershipId && item.actorMembershipId) {
+          parsedPayload.actorMembershipId = item.actorMembershipId;
+        }
+        if (!parsedPayload.authorizationVersion && item.authorizationVersion) {
+          parsedPayload.authorizationVersion = item.authorizationVersion;
+        }
+      }
     } catch (e: any) {
       await db.run(
         "UPDATE sync_queue SET sync_status = 'FAILED', last_error = ?, updated_at = ? WHERE queue_id = ?;",

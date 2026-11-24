@@ -1,6 +1,14 @@
 from src.models.base import Base, TimestampMixin
 from src.models.user import User, UserRole, AccountStatus
-from src.models.academic import Department, AcademicTerm, Subject, ClassSection, TermStatus
+from src.models.academic import (
+    Department,
+    AcademicTerm,
+    Subject,
+    ClassSection,
+    TermStatus,
+    DeploymentConfig,
+    Program,
+)
 from src.models.assignment import TeachingAssignment, SubstituteDelegation, DelegationStatus
 from src.models.enrollment import (
     StudentEnrollment,
@@ -63,6 +71,8 @@ __all__ = [
     "Subject",
     "ClassSection",
     "TermStatus",
+    "DeploymentConfig",
+    "Program",
     "TeachingAssignment",
     "SubstituteDelegation",
     "DelegationStatus",

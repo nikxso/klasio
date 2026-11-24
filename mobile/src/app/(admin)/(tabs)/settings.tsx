@@ -126,7 +126,7 @@ export default function AdminSettingsScreen() {
 
       {SessionStore.canScanAttendance() && (
         <Pressable
-          onPress={() => router.replace('/(faculty)' as any)}
+          onPress={() => router.push('/(faculty)/session/select-context' as any)}
           style={({ pressed }) => [
             styles.workspaceSwitcherCard,
             pressed && { opacity: 0.85, transform: [{ scale: 0.99 }] },
@@ -136,11 +136,11 @@ export default function AdminSettingsScreen() {
             <IconBubble icon={ScanFace} tone="lilac" size={40} />
             <View style={styles.infoCol}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={styles.infoTitle}>Faculty Attendance Portal</Text>
-                <Chip tone="lilac">Dual Role</Chip>
+                <Text style={styles.infoTitle}>Take Attendance Scanner</Text>
+                <Chip tone="lilac">Teaching</Chip>
               </View>
               <Text style={styles.infoSubtitle}>
-                Tap to conduct attendance and manage class rosters
+                Launch on-device camera perception to verify attendance
               </Text>
             </View>
             <ChevronRight size={18} color={Colors.lilac} />
@@ -153,12 +153,17 @@ export default function AdminSettingsScreen() {
           <Text style={styles.sectionHeader}>Assigned Institutional Roles</Text>
           <Card style={styles.cardGroup}>
             <View style={styles.rolesGrid}>
-              {user.roleAssignments.map((ra) => (
-                <View key={ra.roleTemplateCode} style={styles.roleTag}>
+              {user.roleAssignments.map((ra, idx) => (
+                <View key={`${ra.roleTemplateCode}-${idx}`} style={styles.roleTag}>
                   <ShieldCheck size={14} color={Colors.forest} />
-                  <Text style={styles.roleTagText}>
-                    {ra.roleTemplateName || ra.roleTemplateCode.replace(/_/g, ' ')}
-                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.roleTagText}>
+                      {ra.roleTemplateName || ra.roleTemplateCode.replace(/_/g, ' ')}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: Colors.soft, marginTop: 1 }}>
+                      {ra.departmentCode ? `Department: ${ra.departmentCode}` : ra.scopeType === 'INSTITUTION' ? 'Institution-wide' : ra.scopeType}
+                    </Text>
+                  </View>
                 </View>
               ))}
             </View>

@@ -100,5 +100,13 @@ class Notification(Base, TimestampMixin):
         String(128),
         nullable=True,
     )
+    payload_json: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    action_route: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
 
     user = relationship("User", foreign_keys=[user_id])

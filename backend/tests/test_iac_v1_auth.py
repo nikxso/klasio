@@ -139,14 +139,19 @@ async def test_department_scoped_role_assignment_serialization(
     db_session.add(dept_faculty)
     await db_session.flush()
 
-    # Create membership
-    membership = InstitutionMembership(
-        institution_id=inst_uuid,
-        user_id=dept_faculty.id,
-        status=MembershipStatus.ACTIVE,
+    # Retrieve or create membership
+    mem_res = await db_session.execute(
+        select(InstitutionMembership).where(InstitutionMembership.user_id == dept_faculty.id)
     )
-    db_session.add(membership)
-    await db_session.flush()
+    membership = mem_res.scalar_one_or_none()
+    if not membership:
+        membership = InstitutionMembership(
+            institution_id=inst_uuid,
+            user_id=dept_faculty.id,
+            status=MembershipStatus.ACTIVE,
+        )
+        db_session.add(membership)
+        await db_session.flush()
 
     # Find FACULTY role template
     res = await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "FACULTY"))
@@ -229,13 +234,18 @@ async def test_inactive_role_assignments_excluded(
     db_session.add(user)
     await db_session.flush()
 
-    membership = InstitutionMembership(
-        institution_id=inst_uuid,
-        user_id=user.id,
-        status=MembershipStatus.ACTIVE,
+    mem_res = await db_session.execute(
+        select(InstitutionMembership).where(InstitutionMembership.user_id == user.id)
     )
-    db_session.add(membership)
-    await db_session.flush()
+    membership = mem_res.scalar_one_or_none()
+    if not membership:
+        membership = InstitutionMembership(
+            institution_id=inst_uuid,
+            user_id=user.id,
+            status=MembershipStatus.ACTIVE,
+        )
+        db_session.add(membership)
+        await db_session.flush()
 
     res_fac = await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "FACULTY"))
     faculty_tpl = res_fac.scalar_one()
@@ -295,13 +305,18 @@ async def test_compute_legacy_role_hierarchical_projection_and_jwt_sync(
     db_session.add(promoted_user)
     await db_session.flush()
 
-    membership = InstitutionMembership(
-        institution_id=inst_uuid,
-        user_id=promoted_user.id,
-        status=MembershipStatus.ACTIVE,
+    mem_res = await db_session.execute(
+        select(InstitutionMembership).where(InstitutionMembership.user_id == promoted_user.id)
     )
-    db_session.add(membership)
-    await db_session.flush()
+    membership = mem_res.scalar_one_or_none()
+    if not membership:
+        membership = InstitutionMembership(
+            institution_id=inst_uuid,
+            user_id=promoted_user.id,
+            status=MembershipStatus.ACTIVE,
+        )
+        db_session.add(membership)
+        await db_session.flush()
 
     # Assign CENTRAL_INSTITUTION_ADMIN role template
     res = await db_session.execute(
@@ -353,13 +368,18 @@ async def test_temporal_window_excludes_future_and_expired_assignments(
     db_session.add(user)
     await db_session.flush()
 
-    membership = InstitutionMembership(
-        institution_id=inst_uuid,
-        user_id=user.id,
-        status=MembershipStatus.ACTIVE,
+    mem_res = await db_session.execute(
+        select(InstitutionMembership).where(InstitutionMembership.user_id == user.id)
     )
-    db_session.add(membership)
-    await db_session.flush()
+    membership = mem_res.scalar_one_or_none()
+    if not membership:
+        membership = InstitutionMembership(
+            institution_id=inst_uuid,
+            user_id=user.id,
+            status=MembershipStatus.ACTIVE,
+        )
+        db_session.add(membership)
+        await db_session.flush()
 
     # Get templates
     faculty_tpl = (await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "FACULTY"))).scalar_one()

@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.user import User, UserRole, AccountStatus
-from src.models.academic import Department, AcademicTerm, Subject, ClassSection, TermStatus
+from src.models.academic import Department, AcademicTerm, Subject, ClassSection, TermStatus, DEFAULT_INSTITUTION_ID
 from src.models.assignment import TeachingAssignment, SubstituteDelegation, DelegationStatus
 from src.models.access_control import (
     Institution,
@@ -326,10 +326,16 @@ async def test_delegation_validity_constraints(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_substitute_delegation_coexistence(db_session: AsyncSession):
     """Verify that legacy SubstituteDelegation continues to function untouched alongside new Delegation."""
-    inst = Institution(code="TEST_INST_COEXIST", name="Coexistence Inst")
-    fac_reg = User(institutional_id="FAC-REG-CO", email="fac_reg@inst.edu", password_hash="h", full_name="Regular Fac", role=UserRole.FACULTY)
-    fac_sub = User(institutional_id="FAC-SUB-CO", email="fac_sub@inst.edu", password_hash="h", full_name="Sub Fac", role=UserRole.FACULTY)
-    db_session.add_all([inst, fac_reg, fac_sub])
+    # Retrieve deployment default institution
+    res_inst = await db_session.execute(select(Institution).where(Institution.id == DEFAULT_INSTITUTION_ID))
+    inst = res_inst.scalar_one_or_none()
+    if not inst:
+        inst = Institution(id=DEFAULT_INSTITUTION_ID, code="KLASIO_MAIN", name="Coexistence Inst")
+        db_session.add(inst)
+        await db_session.flush()
+    fac_reg = User(institutional_id=f"FAC-REG-{uuid.uuid4().hex[:6]}", email=f"fac_reg_{uuid.uuid4().hex[:6]}@inst.edu", password_hash="h", full_name="Regular Fac", role=UserRole.FACULTY)
+    fac_sub = User(institutional_id=f"FAC-SUB-{uuid.uuid4().hex[:6]}", email=f"fac_sub_{uuid.uuid4().hex[:6]}@inst.edu", password_hash="h", full_name="Sub Fac", role=UserRole.FACULTY)
+    db_session.add_all([fac_reg, fac_sub])
     await db_session.flush()
 
     campus = Campus(institution_id=inst.id, code="CAMP_CO", name="Campus Co")

@@ -70,6 +70,13 @@ class AttendanceSession(Base, TimestampMixin):
         primary_key=True,
         default=uuid.uuid4,
     )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_config.institution_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        default=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    )
     client_session_uuid: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         unique=True,
@@ -118,6 +125,33 @@ class AttendanceSession(Base, TimestampMixin):
         ForeignKey("substitute_delegations.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+    delegation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    authorizing_role_assignment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    finalizing_actor_membership_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    permission_code: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        nullable=True,
+    )
+    matched_scope_type: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+    matched_scope_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
     )
     session_status: Mapped[AttendanceSessionStatus] = mapped_column(
         SQLEnum(AttendanceSessionStatus, name="attendance_session_status", native_enum=False),
@@ -188,6 +222,13 @@ class AttendanceRecord(Base, TimestampMixin):
         primary_key=True,
         default=uuid.uuid4,
     )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_config.institution_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        default=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    )
     attendance_session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("attendance_sessions.id", ondelete="RESTRICT"),
@@ -245,6 +286,13 @@ class AttendanceAmendmentAudit(Base, TimestampMixin):
         primary_key=True,
         default=uuid.uuid4,
     )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_config.institution_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        default=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    )
     client_amendment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
         nullable=True,
@@ -275,9 +323,36 @@ class AttendanceAmendmentAudit(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    amendment_role: Mapped[AmendmentRole] = mapped_column(
+    amendment_role: Mapped[Optional[AmendmentRole]] = mapped_column(
         SQLEnum(AmendmentRole, name="amendment_role", native_enum=False),
-        nullable=False,
+        nullable=True,
+    )
+    actor_membership_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    authorizing_role_assignment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    delegation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    permission_code: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        nullable=True,
+    )
+    scope_type: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+    scope_resource_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
     )
     amendment_reason: Mapped[str] = mapped_column(
         Text,
@@ -310,6 +385,19 @@ class StudentAttendanceRequest(Base, TimestampMixin):
         Uuid(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
+    )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_config.institution_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        default=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    )
+    attendance_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("attendance_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     student_user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -354,6 +442,7 @@ class StudentAttendanceRequest(Base, TimestampMixin):
     student_user = relationship("User", foreign_keys=[student_user_id])
     reviewer_user = relationship("User", foreign_keys=[reviewer_user_id])
     teaching_assignment = relationship("TeachingAssignment")
+    attendance_session = relationship("AttendanceSession", foreign_keys=[attendance_session_id])
 
     def __repr__(self) -> str:
         return f"<StudentAttendanceRequest {self.id} Student: {self.student_user_id} Status: {self.status}>"

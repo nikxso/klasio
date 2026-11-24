@@ -7,6 +7,19 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS local_auth_session (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    token TEXT NOT NULL,
+    user_json TEXT NOT NULL,
+    membership_id TEXT NOT NULL DEFAULT 'default-membership',
+    authorization_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    authorization_version TEXT NOT NULL DEFAULT 'v1.0',
+    last_server_validation_at TEXT NOT NULL DEFAULT '',
+    token_expires_at TEXT,
+    snapshot_expires_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS cached_rosters (
     teaching_assignment_id TEXT NOT NULL,
     student_user_id TEXT NOT NULL,
@@ -20,30 +33,36 @@ CREATE TABLE IF NOT EXISTS cached_rosters (
 );
 
 CREATE TABLE IF NOT EXISTS cached_embeddings (
+    teaching_assignment_id TEXT NOT NULL DEFAULT '',
     student_user_id TEXT NOT NULL,
     model_version TEXT NOT NULL,
-    embedding_dimension INTEGER NOT NULL,
+    embedding_dimension INTEGER NOT NULL CHECK (embedding_dimension > 0),
     embedding_blob BLOB NOT NULL,
-    sample_index INTEGER NOT NULL DEFAULT 0,
-    gallery_version INTEGER NOT NULL,
-    PRIMARY KEY (student_user_id, model_version, sample_index)
+    sample_index INTEGER NOT NULL DEFAULT 0 CHECK (sample_index >= 0),
+    gallery_version INTEGER NOT NULL CHECK (gallery_version >= 0),
+    cached_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (teaching_assignment_id, student_user_id, model_version, sample_index)
 );
 
 CREATE TABLE IF NOT EXISTS local_attendance_sessions (
     client_session_uuid TEXT PRIMARY KEY,
     teaching_assignment_id TEXT NOT NULL,
     session_date TEXT NOT NULL,
-    period_slot_or_sequence INTEGER NOT NULL,
+    period_slot_or_sequence INTEGER NOT NULL CHECK (period_slot_or_sequence > 0),
     applicability_status TEXT NOT NULL CHECK(applicability_status IN ('COUNTED', 'CANCELLED', 'EXEMPT')),
     status_reason TEXT,
     regular_faculty_user_id TEXT NOT NULL,
     conducting_faculty_user_id TEXT NOT NULL,
+    authorizing_role_assignment_id TEXT DEFAULT 'default-role-assignment',
+    delegation_id TEXT,
+    authorization_version TEXT NOT NULL DEFAULT 'v1.0',
     substitute_delegation_id TEXT,
     session_status TEXT NOT NULL CHECK(session_status IN ('DRAFT', 'FINALIZED', 'SYNCED')),
     finalized_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE(teaching_assignment_id, session_date, period_slot_or_sequence)
+    UNIQUE(teaching_assignment_id, session_date, period_slot_or_sequence),
+    CHECK (authorizing_role_assignment_id IS NOT NULL OR delegation_id IS NOT NULL OR substitute_delegation_id IS NOT NULL)
 );
 
 CREATE TABLE IF NOT EXISTS local_attendance_records (
@@ -55,7 +74,8 @@ CREATE TABLE IF NOT EXISTS local_attendance_records (
     candidate_confidence REAL,
     recorded_at TEXT NOT NULL,
     FOREIGN KEY(client_session_uuid) REFERENCES local_attendance_sessions(client_session_uuid) ON DELETE CASCADE,
-    UNIQUE(client_session_uuid, student_user_id)
+    UNIQUE(client_session_uuid, student_user_id),
+    CHECK (candidate_confidence IS NULL OR (candidate_confidence >= 0.0 AND candidate_confidence <= 1.0))
 );
 
 CREATE TABLE IF NOT EXISTS sync_queue (
@@ -65,12 +85,20 @@ CREATE TABLE IF NOT EXISTS sync_queue (
     client_amendment_id TEXT,
     endpoint_path TEXT NOT NULL,
     payload_json TEXT NOT NULL,
+    actor_membership_id TEXT NOT NULL DEFAULT 'default-membership',
+    authorizing_role_assignment_id TEXT,
+    delegation_id TEXT,
+    authorization_version TEXT NOT NULL DEFAULT 'v1.0',
     sync_status TEXT NOT NULL CHECK(sync_status IN ('PENDING', 'IN_FLIGHT', 'ACKNOWLEDGED', 'FAILED')),
-    retry_count INTEGER NOT NULL DEFAULT 0,
+    retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
     last_error TEXT,
     next_retry_at TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    CHECK (
+        (operation_type = 'SESSION_SYNC' AND client_amendment_id IS NULL)
+        OR (operation_type = 'AMENDMENT_SYNC' AND client_amendment_id IS NOT NULL)
+    )
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sync_queue_session ON sync_queue(client_session_uuid) WHERE operation_type = 'SESSION_SYNC';
@@ -84,14 +112,23 @@ CREATE TABLE IF NOT EXISTS local_amendment_audits (
     previous_status TEXT NOT NULL CHECK(previous_status IN ('PRESENT', 'ABSENT', 'EXCUSED')),
     new_status TEXT NOT NULL CHECK(new_status IN ('PRESENT', 'ABSENT', 'EXCUSED')),
     amending_user_id TEXT NOT NULL,
-    amendment_role TEXT NOT NULL CHECK(amendment_role IN ('REGULAR_FACULTY', 'ADMIN')),
+    actor_membership_id TEXT NOT NULL DEFAULT 'default-membership',
+    authorizing_role_assignment_id TEXT DEFAULT 'default-role-assignment',
+    delegation_id TEXT,
+    permission_code TEXT NOT NULL DEFAULT 'attendance.amend',
+    scope_type TEXT NOT NULL DEFAULT 'TEACHING_ASSIGNMENT',
+    scope_resource_id TEXT NOT NULL DEFAULT 'default-resource',
+    amendment_role TEXT DEFAULT 'REGULAR_FACULTY',
     amendment_reason TEXT NOT NULL,
-    amended_at TEXT NOT NULL
+    amended_at TEXT NOT NULL,
+    CHECK (authorizing_role_assignment_id IS NOT NULL OR delegation_id IS NOT NULL),
+    CHECK (new_status <> previous_status),
+    CHECK (length(trim(amendment_reason)) >= 10)
 );
 
 CREATE TABLE IF NOT EXISTS cached_student_attendance (
     student_user_id TEXT PRIMARY KEY,
-    overall_attendance_percentage REAL NOT NULL,
+    overall_attendance_percentage REAL NOT NULL CHECK(overall_attendance_percentage >= 0.0 AND overall_attendance_percentage <= 100.0),
     payload_json TEXT NOT NULL,
     cached_at TEXT NOT NULL
 );
@@ -101,13 +138,6 @@ CREATE TABLE IF NOT EXISTS cached_student_subject_history (
     student_user_id TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     cached_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS local_auth_session (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    token TEXT NOT NULL,
-    user_json TEXT NOT NULL,
-    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS cached_student_requests (
@@ -167,12 +197,38 @@ export async function getDatabase(dbName: string = DB_NAME): Promise<SQLite.SQLi
           console.warn('[DB_INIT] statement warning:', err);
         }
       }
-      try {
-        await db.runAsync("ALTER TABLE sync_queue ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'SESSION_SYNC';");
-      } catch {}
-      try {
-        await db.runAsync("ALTER TABLE sync_queue ADD COLUMN client_amendment_id TEXT;");
-      } catch {}
+      const migrations = [
+        "ALTER TABLE sync_queue ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'SESSION_SYNC';",
+        "ALTER TABLE sync_queue ADD COLUMN client_amendment_id TEXT;",
+        "ALTER TABLE sync_queue ADD COLUMN actor_membership_id TEXT NOT NULL DEFAULT 'default-membership';",
+        "ALTER TABLE sync_queue ADD COLUMN authorizing_role_assignment_id TEXT;",
+        "ALTER TABLE sync_queue ADD COLUMN delegation_id TEXT;",
+        "ALTER TABLE sync_queue ADD COLUMN authorization_version TEXT NOT NULL DEFAULT 'v1.0';",
+        "ALTER TABLE local_attendance_sessions ADD COLUMN authorizing_role_assignment_id TEXT DEFAULT 'default-role-assignment';",
+        "ALTER TABLE local_attendance_sessions ADD COLUMN delegation_id TEXT;",
+        "ALTER TABLE local_attendance_sessions ADD COLUMN authorization_version TEXT NOT NULL DEFAULT 'v1.0';",
+        "ALTER TABLE local_attendance_sessions ADD COLUMN substitute_delegation_id TEXT;",
+        "ALTER TABLE local_auth_session ADD COLUMN membership_id TEXT NOT NULL DEFAULT 'default-membership';",
+        "ALTER TABLE local_auth_session ADD COLUMN authorization_snapshot_json TEXT NOT NULL DEFAULT '{}';",
+        "ALTER TABLE local_auth_session ADD COLUMN authorization_version TEXT NOT NULL DEFAULT 'v1.0';",
+        "ALTER TABLE local_auth_session ADD COLUMN last_server_validation_at TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE local_auth_session ADD COLUMN token_expires_at TEXT;",
+        "ALTER TABLE local_auth_session ADD COLUMN snapshot_expires_at TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE local_amendment_audits ADD COLUMN actor_membership_id TEXT NOT NULL DEFAULT 'default-membership';",
+        "ALTER TABLE local_amendment_audits ADD COLUMN authorizing_role_assignment_id TEXT DEFAULT 'default-role-assignment';",
+        "ALTER TABLE local_amendment_audits ADD COLUMN delegation_id TEXT;",
+        "ALTER TABLE local_amendment_audits ADD COLUMN permission_code TEXT NOT NULL DEFAULT 'attendance.amend';",
+        "ALTER TABLE local_amendment_audits ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'TEACHING_ASSIGNMENT';",
+        "ALTER TABLE local_amendment_audits ADD COLUMN scope_resource_id TEXT NOT NULL DEFAULT 'default-resource';",
+        "ALTER TABLE local_amendment_audits ADD COLUMN amendment_role TEXT DEFAULT 'REGULAR_FACULTY';",
+        "ALTER TABLE cached_embeddings ADD COLUMN teaching_assignment_id TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE cached_embeddings ADD COLUMN cached_at TEXT NOT NULL DEFAULT '';",
+      ];
+      for (const mig of migrations) {
+        try {
+          await db.runAsync(mig);
+        } catch {}
+      }
       dbInstance = db;
       return db;
     })();
@@ -202,11 +258,37 @@ export async function initDatabase(dbName: string = DB_NAME): Promise<SQLite.SQL
     }
   }
   // Migration helpers for existing legacy tables on physical devices
-  try {
-    await db.runAsync("ALTER TABLE sync_queue ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'SESSION_SYNC';");
-  } catch {}
-  try {
-    await db.runAsync("ALTER TABLE sync_queue ADD COLUMN client_amendment_id TEXT;");
-  } catch {}
+  const migrations = [
+    "ALTER TABLE sync_queue ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'SESSION_SYNC';",
+    "ALTER TABLE sync_queue ADD COLUMN client_amendment_id TEXT;",
+    "ALTER TABLE sync_queue ADD COLUMN actor_membership_id TEXT NOT NULL DEFAULT 'default-membership';",
+    "ALTER TABLE sync_queue ADD COLUMN authorizing_role_assignment_id TEXT;",
+    "ALTER TABLE sync_queue ADD COLUMN delegation_id TEXT;",
+    "ALTER TABLE sync_queue ADD COLUMN authorization_version TEXT NOT NULL DEFAULT 'v1.0';",
+    "ALTER TABLE local_attendance_sessions ADD COLUMN authorizing_role_assignment_id TEXT DEFAULT 'default-role-assignment';",
+    "ALTER TABLE local_attendance_sessions ADD COLUMN delegation_id TEXT;",
+    "ALTER TABLE local_attendance_sessions ADD COLUMN authorization_version TEXT NOT NULL DEFAULT 'v1.0';",
+    "ALTER TABLE local_attendance_sessions ADD COLUMN substitute_delegation_id TEXT;",
+    "ALTER TABLE local_auth_session ADD COLUMN membership_id TEXT NOT NULL DEFAULT 'default-membership';",
+    "ALTER TABLE local_auth_session ADD COLUMN authorization_snapshot_json TEXT NOT NULL DEFAULT '{}';",
+    "ALTER TABLE local_auth_session ADD COLUMN authorization_version TEXT NOT NULL DEFAULT 'v1.0';",
+    "ALTER TABLE local_auth_session ADD COLUMN last_server_validation_at TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE local_auth_session ADD COLUMN token_expires_at TEXT;",
+    "ALTER TABLE local_auth_session ADD COLUMN snapshot_expires_at TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE local_amendment_audits ADD COLUMN actor_membership_id TEXT NOT NULL DEFAULT 'default-membership';",
+    "ALTER TABLE local_amendment_audits ADD COLUMN authorizing_role_assignment_id TEXT DEFAULT 'default-role-assignment';",
+    "ALTER TABLE local_amendment_audits ADD COLUMN delegation_id TEXT;",
+    "ALTER TABLE local_amendment_audits ADD COLUMN permission_code TEXT NOT NULL DEFAULT 'attendance.amend';",
+    "ALTER TABLE local_amendment_audits ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'TEACHING_ASSIGNMENT';",
+    "ALTER TABLE local_amendment_audits ADD COLUMN scope_resource_id TEXT NOT NULL DEFAULT 'default-resource';",
+    "ALTER TABLE local_amendment_audits ADD COLUMN amendment_role TEXT DEFAULT 'REGULAR_FACULTY';",
+    "ALTER TABLE cached_embeddings ADD COLUMN teaching_assignment_id TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE cached_embeddings ADD COLUMN cached_at TEXT NOT NULL DEFAULT '';",
+  ];
+  for (const mig of migrations) {
+    try {
+      await db.runAsync(mig);
+    } catch {}
+  }
   return db;
 }

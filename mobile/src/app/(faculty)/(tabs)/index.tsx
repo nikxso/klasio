@@ -17,6 +17,9 @@ import {
   BookOpen,
   UserCheck,
   BarChart3,
+  Users,
+  GraduationCap,
+  ShieldCheck,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
@@ -250,6 +253,49 @@ export default function FacultyHomeScreen() {
           </Card>
         ))}
       </View>
+
+      {SessionStore.canAccessAdmin() && (
+        <View style={{ marginTop: 24, marginBottom: 16 }}>
+          <SectionTitle title="Department & Administration" />
+          <View style={styles.adminGrid}>
+            <Pressable
+              onPress={() => router.push('/(admin)/(tabs)/people' as any)}
+              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+            >
+              <Users size={22} color={Colors.forest} />
+              <Text style={styles.adminCardTitle}>People</Text>
+              <Text style={styles.adminCardSub}>Faculty & Students</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.push('/(admin)/(tabs)/academics' as any)}
+              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+            >
+              <GraduationCap size={22} color={Colors.forest} />
+              <Text style={styles.adminCardTitle}>Academics</Text>
+              <Text style={styles.adminCardSub}>Sections & Courses</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.push('/(faculty)/delegations' as any)}
+              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+            >
+              <UserCheck size={22} color={Colors.forest} />
+              <Text style={styles.adminCardTitle}>Delegations</Text>
+              <Text style={styles.adminCardSub}>Substitutes</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.push('/(faculty)/reports' as any)}
+              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+            >
+              <BarChart3 size={22} color={Colors.forest} />
+              <Text style={styles.adminCardTitle}>Reports</Text>
+              <Text style={styles.adminCardSub}>Attendance Trends</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </Screen>
   );
 }
@@ -409,5 +455,32 @@ const styles = StyleSheet.create({
     color: Colors.soft,
     marginTop: -8,
     marginBottom: 12,
+  },
+  adminGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 8,
+  },
+  adminCard: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: Colors.card,
+    borderRadius: Radii.card,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    alignItems: 'flex-start',
+  },
+  adminCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.ink,
+    marginTop: 8,
+  },
+  adminCardSub: {
+    fontSize: 11,
+    color: Colors.soft,
+    marginTop: 2,
   },
 });

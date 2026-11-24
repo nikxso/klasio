@@ -2,6 +2,7 @@ import type {
   AttendanceFinalizationPayload,
   AttendanceFinalizationResult,
 } from '../perception/contracts.ts';
+import { SessionStore } from './sessionStore.ts';
 
 interface RepoDb {
   getFirstAsync<T = any>(sql: string, params?: any[]): Promise<T | null>;
@@ -164,13 +165,19 @@ export class AttendanceRepository {
       }
 
       // 3. Upsert Local Attendance Session
+      const actorMemId = (payload as any).actorMembershipId || SessionStore.getMembershipId() || 'default-membership';
+      const authRoleAssignId = (payload as any).authorizingRoleAssignmentId || SessionStore.getUser()?.roleAssignments?.[0]?.id || 'default-role-assignment';
+      const delegId = (payload as any).delegationId || payload.substituteDelegationId || null;
+      const authVer = (payload as any).authorizationVersion || 'v1.0';
+
       await db.runAsync(
         `INSERT INTO local_attendance_sessions (
           client_session_uuid, teaching_assignment_id, session_date,
           period_slot_or_sequence, applicability_status, status_reason,
           regular_faculty_user_id, conducting_faculty_user_id, substitute_delegation_id,
+          authorizing_role_assignment_id, delegation_id, authorization_version,
           session_status, finalized_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FINALIZED', ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FINALIZED', ?, ?, ?)
         ON CONFLICT(client_session_uuid) DO UPDATE SET
           session_status = 'FINALIZED',
           finalized_at = excluded.finalized_at,
@@ -185,6 +192,9 @@ export class AttendanceRepository {
           payload.regularFacultyUserId,
           payload.conductingFacultyUserId,
           payload.substituteDelegationId ?? null,
+          authRoleAssignId,
+          delegId,
+          authVer,
           payload.finalizedAt,
           nowIso,
           nowIso,
@@ -217,17 +227,25 @@ export class AttendanceRepository {
       recordsInserted = payload.records.length;
 
       // 6. Enqueue into Outbound Sync Queue for Offline Synchronization
-      const syncPayloadJson = JSON.stringify(payload);
+      const enrichedPayload = {
+        ...payload,
+        actorMembershipId: actorMemId,
+        authorizingRoleAssignmentId: authRoleAssignId,
+        delegationId: delegId,
+        authorizationVersion: authVer,
+      };
+      const syncPayloadJson = JSON.stringify(enrichedPayload);
       await db.runAsync(
         `INSERT INTO sync_queue (
-          client_session_uuid, operation_type, endpoint_path, payload_json, sync_status,
-          retry_count, created_at, updated_at
-        ) VALUES (?, 'SESSION_SYNC', '/api/v1/attendance/sessions/sync', ?, 'PENDING', 0, ?, ?)
+          client_session_uuid, operation_type, endpoint_path, payload_json,
+          actor_membership_id, authorizing_role_assignment_id, delegation_id, authorization_version,
+          sync_status, retry_count, created_at, updated_at
+        ) VALUES (?, 'SESSION_SYNC', '/api/v1/attendance/sessions/sync', ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?)
         ON CONFLICT(client_session_uuid) WHERE operation_type = 'SESSION_SYNC' DO UPDATE SET
           payload_json = excluded.payload_json,
           sync_status = 'PENDING',
           updated_at = excluded.updated_at;`,
-        [payload.clientSessionUuid, syncPayloadJson, nowIso, nowIso]
+        [payload.clientSessionUuid, syncPayloadJson, actorMemId, authRoleAssignId, delegId, authVer, nowIso, nowIso]
       );
     });
 
@@ -408,7 +426,13 @@ export class AttendanceRepository {
     amendmentRole: 'REGULAR_FACULTY' | 'ADMIN',
     customDb?: any,
     clientAmendmentId?: string,
-    expectedPreviousStatus?: 'PRESENT' | 'ABSENT' | 'EXCUSED'
+    expectedPreviousStatus?: 'PRESENT' | 'ABSENT' | 'EXCUSED',
+    actorMembershipId?: string,
+    authorizingRoleAssignmentId?: string,
+    delegationId?: string,
+    permissionCode?: string,
+    scopeType?: string,
+    scopeResourceId?: string
   ): Promise<{ auditId: string; clientAmendmentId: string; previousStatus: string; newStatus: string }> {
     const cleanedReason = (amendmentReason || '').trim();
     if (cleanedReason.length < 10) {
@@ -447,6 +471,13 @@ export class AttendanceRepository {
     const auditId = 'audit-' + Math.random().toString(36).substring(2, 10);
     const nowIso = new Date().toISOString();
 
+    const effectiveActorMembershipId = actorMembershipId || SessionStore.getMembershipId() || 'default-membership';
+    const effectiveRoleAssignmentId = authorizingRoleAssignmentId || SessionStore.getUser()?.roleAssignments?.[0]?.id || 'default-role-assignment';
+    const effectiveDelegationId = delegationId || null;
+    const effectivePermissionCode = permissionCode || 'attendance.amend';
+    const effectiveScopeType = scopeType || 'TEACHING_ASSIGNMENT';
+    const effectiveScopeResourceId = scopeResourceId || clientSessionUuid;
+
     const payloadObj = {
       client_amendment_id: stableAmendmentId,
       attendance_session_id: clientSessionUuid,
@@ -454,6 +485,9 @@ export class AttendanceRepository {
       expected_previous_status: previousStatus,
       new_status: newStatus,
       amendment_reason: cleanedReason,
+      actor_membership_id: effectiveActorMembershipId,
+      authorizing_role_assignment_id: effectiveRoleAssignmentId,
+      delegation_id: effectiveDelegationId,
     };
     const payloadJson = JSON.stringify(payloadObj);
 
@@ -468,9 +502,10 @@ export class AttendanceRepository {
       await db.runAsync(
         `INSERT INTO local_amendment_audits (
           audit_id, client_amendment_id, client_session_uuid, student_user_id,
-          previous_status, new_status, amending_user_id, amendment_role,
-          amendment_reason, amended_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          previous_status, new_status, amending_user_id, actor_membership_id,
+          authorizing_role_assignment_id, delegation_id, permission_code,
+          scope_type, scope_resource_id, amendment_role, amendment_reason, amended_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         [
           auditId,
           stableAmendmentId,
@@ -479,6 +514,12 @@ export class AttendanceRepository {
           previousStatus,
           newStatus,
           amendingUserId,
+          effectiveActorMembershipId,
+          effectiveRoleAssignmentId,
+          effectiveDelegationId,
+          effectivePermissionCode,
+          effectiveScopeType,
+          effectiveScopeResourceId,
           amendmentRole,
           cleanedReason,
           nowIso,
@@ -489,13 +530,17 @@ export class AttendanceRepository {
       await db.runAsync(
         `INSERT INTO sync_queue (
           client_session_uuid, operation_type, client_amendment_id, endpoint_path,
-          payload_json, sync_status, retry_count, created_at, updated_at
-        ) VALUES (?, 'AMENDMENT_SYNC', ?, ?, ?, 'PENDING', 0, ?, ?);`,
+          payload_json, actor_membership_id, authorizing_role_assignment_id, delegation_id,
+          authorization_version, sync_status, retry_count, created_at, updated_at
+        ) VALUES (?, 'AMENDMENT_SYNC', ?, ?, ?, ?, ?, ?, 'v1.0', 'PENDING', 0, ?, ?);`,
         [
           clientSessionUuid,
           stableAmendmentId,
           `/api/v1/attendance/sessions/${clientSessionUuid}/amendments`,
           payloadJson,
+          effectiveActorMembershipId,
+          effectiveRoleAssignmentId,
+          effectiveDelegationId,
           nowIso,
           nowIso,
         ]

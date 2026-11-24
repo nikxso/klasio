@@ -58,6 +58,40 @@ async def test_engine():
                 ON CONFLICT (id) DO NOTHING
             """)
         )
+        await conn.execute(
+            text("""
+                INSERT INTO deployment_config (singleton_id, institution_id, deployment_mode, attendance_shortage_threshold)
+                VALUES (1, '00000000-0000-0000-0000-000000000001', 'SINGLE_INSTITUTION_SELF_HOSTED', 75.0)
+                ON CONFLICT (singleton_id) DO NOTHING
+            """)
+        )
+        await conn.execute(
+            text("""
+                CREATE OR REPLACE FUNCTION trg_auto_create_institution_membership()
+                RETURNS TRIGGER AS $$
+                DECLARE
+                    inst_id uuid;
+                BEGIN
+                    SELECT institution_id INTO inst_id FROM deployment_config WHERE singleton_id = 1;
+                    IF inst_id IS NOT NULL THEN
+                        INSERT INTO institution_memberships (id, institution_id, user_id, status, joined_at, created_at, updated_at)
+                        VALUES (gen_random_uuid(), inst_id, NEW.id, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (institution_id, user_id) DO NOTHING;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+            """)
+        )
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_user_auto_membership ON users;"))
+        await conn.execute(
+            text("""
+                CREATE TRIGGER trg_user_auto_membership
+                AFTER INSERT ON users
+                FOR EACH ROW
+                EXECUTE FUNCTION trg_auto_create_institution_membership();
+            """)
+        )
 
     session_factory = async_sessionmaker(
         bind=engine,
