@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import pytest
 import pytest_asyncio
 import uuid
@@ -5,7 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.security import get_password_hash
+from src.core.security import decode_access_token, get_password_hash
 from src.main import app
 from src.models.access_control import (
     AssignmentStatus,
@@ -273,3 +274,139 @@ async def test_inactive_role_assignments_excluded(
     assert not any(ra["role_template_code"] == "FACULTY" for ra in user_data["role_assignments"])
     # Faculty permissions must not be granted
     assert "attendance.session.start" not in user_data["permissions"]
+
+
+@pytest.mark.asyncio
+async def test_compute_legacy_role_hierarchical_projection_and_jwt_sync(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+):
+    """Verify compute_legacy_role evaluates active role assignments before user.role, and syncs JWT claim."""
+    inst_uuid = uuid.UUID(DEFAULT_INSTITUTION_ID)
+    # User in users table has role=STUDENT
+    promoted_user = User(
+        institutional_id="promoted_admin_user",
+        email="promoted@institution.edu",
+        password_hash=get_password_hash("password"),
+        full_name="Promoted Admin",
+        role=UserRole.STUDENT,
+        account_status=AccountStatus.ACTIVE,
+    )
+    db_session.add(promoted_user)
+    await db_session.flush()
+
+    membership = InstitutionMembership(
+        institution_id=inst_uuid,
+        user_id=promoted_user.id,
+        status=MembershipStatus.ACTIVE,
+    )
+    db_session.add(membership)
+    await db_session.flush()
+
+    # Assign CENTRAL_INSTITUTION_ADMIN role template
+    res = await db_session.execute(
+        select(RoleTemplate).where(RoleTemplate.code == "CENTRAL_INSTITUTION_ADMIN")
+    )
+    admin_tpl = res.scalar_one()
+
+    assignment = RoleAssignment(
+        institution_id=inst_uuid,
+        membership_id=membership.id,
+        role_template_id=admin_tpl.id,
+        status=AssignmentStatus.ACTIVE,
+    )
+    db_session.add(assignment)
+    await db_session.flush()
+
+    response = await async_client.post(
+        "/api/v1/auth/login",
+        json={"username": "promoted_admin_user", "password": "password"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # The effective legacy role must be projected to ADMIN, not STUDENT
+    assert data["user"]["role"] == "ADMIN"
+
+    # Verify the JWT token role claim is synchronized to ADMIN
+    token = data["access_token"]
+    claims = decode_access_token(token)
+    assert claims["role"] == "ADMIN"
+
+
+@pytest.mark.asyncio
+async def test_temporal_window_excludes_future_and_expired_assignments(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+):
+    """Verify temporal bounds filtering: valid_from <= now and (valid_until is None or valid_until > now)."""
+    inst_uuid = uuid.UUID(DEFAULT_INSTITUTION_ID)
+    now = datetime.now(timezone.utc)
+
+    user = User(
+        institutional_id="temporal_user",
+        email="temporal@institution.edu",
+        password_hash=get_password_hash("password"),
+        full_name="Temporal Test User",
+        role=UserRole.STUDENT,
+        account_status=AccountStatus.ACTIVE,
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    membership = InstitutionMembership(
+        institution_id=inst_uuid,
+        user_id=user.id,
+        status=MembershipStatus.ACTIVE,
+    )
+    db_session.add(membership)
+    await db_session.flush()
+
+    # Get templates
+    faculty_tpl = (await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "FACULTY"))).scalar_one()
+    admin_tpl = (await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "CENTRAL_INSTITUTION_ADMIN"))).scalar_one()
+    student_tpl = (await db_session.execute(select(RoleTemplate).where(RoleTemplate.code == "STUDENT"))).scalar_one()
+
+    # 1. Future assignment (FACULTY): valid_from in 2 days
+    future_assignment = RoleAssignment(
+        institution_id=inst_uuid,
+        membership_id=membership.id,
+        role_template_id=faculty_tpl.id,
+        status=AssignmentStatus.ACTIVE,
+        valid_from=now + timedelta(days=2),
+    )
+    # 2. Expired assignment (ADMIN): valid_until was 1 hour ago
+    expired_assignment = RoleAssignment(
+        institution_id=inst_uuid,
+        membership_id=membership.id,
+        role_template_id=admin_tpl.id,
+        status=AssignmentStatus.ACTIVE,
+        valid_from=now - timedelta(days=5),
+        valid_until=now - timedelta(hours=1),
+    )
+    # 3. Currently valid assignment (STUDENT): valid_from 1 hour ago, valid_until in 1 hour
+    valid_assignment = RoleAssignment(
+        institution_id=inst_uuid,
+        membership_id=membership.id,
+        role_template_id=student_tpl.id,
+        status=AssignmentStatus.ACTIVE,
+        valid_from=now - timedelta(hours=1),
+        valid_until=now + timedelta(hours=1),
+    )
+    db_session.add_all([future_assignment, expired_assignment, valid_assignment])
+    await db_session.flush()
+
+    response = await async_client.post(
+        "/api/v1/auth/login",
+        json={"username": "temporal_user", "password": "password"},
+    )
+    assert response.status_code == 200
+    user_data = response.json()["user"]
+
+    assigned_codes = [ra["role_template_code"] for ra in user_data["role_assignments"]]
+    assert "STUDENT" in assigned_codes
+    assert "FACULTY" not in assigned_codes
+    assert "CENTRAL_INSTITUTION_ADMIN" not in assigned_codes
+    # Permissions should only come from STUDENT
+    assert "attendance.session.start" not in user_data["permissions"]
+    assert "institution.manage" not in user_data["permissions"]
+    assert "biometrics.enroll.self" in user_data["permissions"]

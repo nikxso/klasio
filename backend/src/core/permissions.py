@@ -122,9 +122,13 @@ async def ensure_legacy_role_mapping(
     db: AsyncSession,
 ) -> None:
     """Compatibility provisioner: map unassigned legacy accounts to canonical role templates."""
-    stmt = select(RoleAssignment.id).where(
-        RoleAssignment.membership_id == membership.id,
-        RoleAssignment.status == AssignmentStatus.ACTIVE,
+    stmt = (
+        select(RoleAssignment.id)
+        .where(
+            RoleAssignment.membership_id == membership.id,
+            RoleAssignment.status == AssignmentStatus.ACTIVE,
+        )
+        .limit(1)
     )
     existing = (await db.execute(stmt)).scalar_one_or_none()
     if existing:

@@ -1,6 +1,7 @@
+from datetime import datetime, timezone
 from typing import List, Optional, Set
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,39 +32,61 @@ settings = get_settings()
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication & Context"])
 
+ADMIN_ROLE_CODES: Set[str] = {
+    "INSTITUTION_OWNER",
+    "CENTRAL_INSTITUTION_ADMIN",
+    "CAMPUS_ADMIN",
+    "ACCESS_ADMIN",
+    "IT_ADMIN",
+    "PRIVACY_BIOMETRIC_OFFICER",
+    "INSTITUTIONAL_AUDITOR",
+}
+
+FACULTY_ROLE_CODES: Set[str] = {
+    "ACADEMIC_REGISTRAR",
+    "ADMISSIONS_OFFICER",
+    "ENROLLMENT_OFFICER",
+    "STUDENT_RECORDS_OFFICER",
+    "DEPARTMENT_HEAD",
+    "PROGRAM_COORDINATOR",
+    "TIMETABLE_COORDINATOR",
+    "FACULTY",
+    "TEACHING_ASSISTANT",
+    "CLASS_ADVISOR",
+    "BIOMETRIC_ENROLLMENT_OFFICER",
+    "ATTENDANCE_AUDITOR",
+}
+
+STUDENT_ROLE_CODES: Set[str] = {
+    "STUDENT",
+}
+
 
 def compute_legacy_role(user: User, role_assignments: List[RoleAssignment]) -> UserRole:
-    """Compute backward-compatible UserRole (ADMIN, FACULTY, STUDENT)."""
-    if user.role:
-        return user.role
-    for ra in role_assignments:
-        if ra.role_template:
-            code = ra.role_template.code
-            if code in (
-                "INSTITUTION_OWNER",
-                "CENTRAL_INSTITUTION_ADMIN",
-                "CAMPUS_ADMIN",
-                "ACCESS_ADMIN",
-                "IT_ADMIN",
-                "PRIVACY_BIOMETRIC_OFFICER",
-            ):
-                return UserRole.ADMIN
-            if code in (
-                "ACADEMIC_REGISTRAR",
-                "ADMISSIONS_OFFICER",
-                "ENROLLMENT_OFFICER",
-                "STUDENT_RECORDS_OFFICER",
-                "DEPARTMENT_HEAD",
-                "PROGRAM_COORDINATOR",
-                "TIMETABLE_COORDINATOR",
-                "FACULTY",
-                "TEACHING_ASSISTANT",
-                "CLASS_ADVISOR",
-            ):
-                return UserRole.FACULTY
-            if code == "STUDENT":
-                return UserRole.STUDENT
-    return UserRole.STUDENT
+    """Compute backward-compatible UserRole (ADMIN, FACULTY, STUDENT) using tiered privilege hierarchy.
+
+    Evaluates active role templates first:
+    1. ADMIN if any admin-tier template is assigned.
+    2. FACULTY if any academic/teaching/auditor template is assigned.
+    3. STUDENT if student template is assigned.
+    4. Fall back to user.role only if no active role templates match.
+    """
+    assigned_codes = {
+        ra.role_template.code
+        for ra in role_assignments
+        if ra.role_template and ra.role_template.is_active
+    }
+
+    if assigned_codes & ADMIN_ROLE_CODES:
+        return UserRole.ADMIN
+
+    if assigned_codes & FACULTY_ROLE_CODES:
+        return UserRole.FACULTY
+
+    if assigned_codes & STUDENT_ROLE_CODES:
+        return UserRole.STUDENT
+
+    return user.role if user.role else UserRole.STUDENT
 
 
 async def build_user_context(
@@ -82,7 +105,8 @@ async def build_user_context(
     # Ensure legacy role mapping if membership has no active role assignment
     await ensure_legacy_role_mapping(user, membership, db)
 
-    # Query active role assignments with template, permissions, and scopes
+    # Query active role assignments with temporal bounds matching AuthorizationEvaluator
+    now = datetime.now(timezone.utc)
     assignment_stmt = (
         select(RoleAssignment)
         .options(
@@ -90,8 +114,15 @@ async def build_user_context(
             selectinload(RoleAssignment.scopes).selectinload(RoleAssignmentScope.department),
         )
         .where(
-            RoleAssignment.membership_id == membership.id,
-            RoleAssignment.status == AssignmentStatus.ACTIVE,
+            and_(
+                RoleAssignment.membership_id == membership.id,
+                RoleAssignment.status == AssignmentStatus.ACTIVE,
+                RoleAssignment.valid_from <= now,
+                or_(
+                    RoleAssignment.valid_until.is_(None),
+                    RoleAssignment.valid_until > now,
+                ),
+            )
         )
     )
     result = await db.execute(assignment_stmt)
@@ -156,7 +187,7 @@ async def build_user_context(
 )
 async def login(
     payload: LoginRequest,
-    request: Request = None,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -189,13 +220,13 @@ async def login(
             {"account_status": user.account_status.value},
         )
 
+    user_context = await build_user_context(user, db, request)
+
     token = create_access_token(
         subject=str(user.id),
-        role=user.role.value,
+        role=user_context.role.value,
         institutional_id=user.institutional_id,
     )
-
-    user_context = await build_user_context(user, db, request)
 
     return TokenResponse(
         access_token=token,
@@ -207,7 +238,7 @@ async def login(
 
 @router.get("/me", response_model=UserContextResponse, summary="Retrieve authenticated user profile")
 async def get_current_user_context(
-    request: Request = None,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
