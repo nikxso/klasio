@@ -554,7 +554,7 @@ export default function AdminPeopleScreen() {
         }
       } else {
         const err = await res.json();
-        setGrantRoleError(err.detail || 'Failed to grant role');
+        setGrantRoleError(err.message || err.detail || 'Failed to grant role');
       }
     } catch (e: any) {
       setGrantRoleError(e?.message || 'Network error');
@@ -1097,23 +1097,35 @@ export default function AdminPeopleScreen() {
                 Select Role to Grant
               </Text>
               {grantRoleError && <Text style={styles.errorBanner}>{grantRoleError}</Text>}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
-                <View style={{ flexDirection: 'row', gap: 6 }}>
+              <ScrollView style={{ maxHeight: 160, marginBottom: 10 }} nestedScrollEnabled>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                   {[
-                    'CAMPUS_ADMIN',
-                    'FACULTY',
-                    'DEPARTMENT_HEAD_COORDINATOR',
-                    'ACCESS_ADMIN',
-                    'IT_ADMIN',
-                    'PRIVACY_BIOMETRIC_OFFICER',
-                    'ACADEMIC_REGISTRAR',
-                    'TEACHING_ASSISTANT',
-                    'CLASS_ADVISOR',
-                    'BIOMETRIC_ENROLLMENT_OFFICER',
-                    'ATTENDANCE_AUDITOR',
-                  ].map((code) => {
+                    { code: 'IT_ADMIN', label: 'IT Administrator' },
+                    { code: 'PRIVACY_BIOMETRIC_OFFICER', label: 'Privacy & Biometric Officer' },
+                    { code: 'CAMPUS_ADMIN', label: 'Campus Administrator' },
+                    { code: 'ACCESS_ADMIN', label: 'Access Administrator' },
+                    { code: 'CENTRAL_INSTITUTION_ADMIN', label: 'Central Institution Admin' },
+                    { code: 'INSTITUTION_OWNER', label: 'Institution Owner' },
+                    { code: 'DEPARTMENT_HEAD_COORDINATOR', label: 'Department Head' },
+                    { code: 'FACULTY', label: 'Faculty' },
+                    { code: 'TEACHING_ASSISTANT', label: 'Teaching Assistant' },
+                    { code: 'CLASS_ADVISOR', label: 'Class Advisor' },
+                    { code: 'ACADEMIC_REGISTRAR', label: 'Academic Registrar' },
+                    { code: 'ADMISSIONS_OFFICER', label: 'Admissions Officer' },
+                    { code: 'ENROLLMENT_OFFICER', label: 'Enrollment Officer' },
+                    { code: 'STUDENT_RECORDS_OFFICER', label: 'Student Records Officer' },
+                    { code: 'PROGRAM_COORDINATOR', label: 'Program Coordinator' },
+                    { code: 'TIMETABLE_COORDINATOR', label: 'Timetable Coordinator' },
+                    { code: 'BIOMETRIC_ENROLLMENT_OFFICER', label: 'Biometric Enrollment Officer' },
+                    { code: 'ATTENDANCE_AUDITOR', label: 'Attendance Auditor' },
+                    { code: 'INSTITUTIONAL_AUDITOR', label: 'Institutional Auditor' },
+                    { code: 'STUDENT', label: 'Student' },
+                  ].map(({ code, label }) => {
                     const isSelected = roleToGrant === code;
-                    const alreadyHas = selectedUser.roles?.includes(code);
+                    const alreadyHas =
+                      selectedUser.roles?.includes(code) ||
+                      (code === 'PRIVACY_BIOMETRIC_OFFICER' && selectedUser.roles?.includes('PRIVACY_BIOMETRIC_GOVERNANCE')) ||
+                      (code === 'DEPARTMENT_HEAD_COORDINATOR' && selectedUser.roles?.includes('DEPARTMENT_HEAD'));
                     return (
                       <Pressable
                         key={code}
@@ -1122,11 +1134,11 @@ export default function AdminPeopleScreen() {
                         style={[
                           styles.pickerChip,
                           isSelected && styles.pickerChipActive,
-                          alreadyHas && { opacity: 0.4 },
+                          alreadyHas && { opacity: 0.35, backgroundColor: Colors.line },
                         ]}
                       >
                         <Text style={[styles.pickerChipText, isSelected && styles.pickerChipTextActive]}>
-                          {code.replace(/_/g, ' ')} {alreadyHas ? '(Assigned)' : ''}
+                          {label} {alreadyHas ? '✓' : ''}
                         </Text>
                       </Pressable>
                     );

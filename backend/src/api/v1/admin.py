@@ -541,8 +541,19 @@ async def add_user_role(
         await db.flush()
         await db.refresh(membership)
 
-    tpl_stmt = select(RoleTemplate).where(RoleTemplate.code == payload.role_code.strip().upper())
+    target_code = payload.role_code.strip().upper()
+    tpl_stmt = select(RoleTemplate).where(RoleTemplate.code == target_code)
     tpl = (await db.execute(tpl_stmt)).scalar_one_or_none()
+    if not tpl:
+        ROLE_ALIASES = {
+            "PRIVACY_BIOMETRIC_OFFICER": "PRIVACY_BIOMETRIC_GOVERNANCE",
+            "PRIVACY_BIOMETRIC_GOVERNANCE": "PRIVACY_BIOMETRIC_OFFICER",
+            "DEPARTMENT_HEAD": "DEPARTMENT_HEAD_COORDINATOR",
+            "DEPARTMENT_HEAD_COORDINATOR": "DEPARTMENT_HEAD",
+        }
+        alias = ROLE_ALIASES.get(target_code)
+        if alias:
+            tpl = (await db.execute(select(RoleTemplate).where(RoleTemplate.code == alias))).scalar_one_or_none()
     if not tpl:
         raise EntityNotFoundError(f"Role template '{payload.role_code}' not found")
 
@@ -618,16 +629,25 @@ async def revoke_user_role(
     membership = (await db.execute(mem_stmt)).scalar_one_or_none()
     if membership:
         target_code = role_code.strip().upper()
+        ROLE_ALIASES = {
+            "PRIVACY_BIOMETRIC_OFFICER": "PRIVACY_BIOMETRIC_GOVERNANCE",
+            "PRIVACY_BIOMETRIC_GOVERNANCE": "PRIVACY_BIOMETRIC_OFFICER",
+            "DEPARTMENT_HEAD": "DEPARTMENT_HEAD_COORDINATOR",
+            "DEPARTMENT_HEAD_COORDINATOR": "DEPARTMENT_HEAD",
+        }
+        alias = ROLE_ALIASES.get(target_code)
+        target_codes = {target_code, alias} if alias else {target_code}
+
         # Revoke matching role assignments
         for ra in (membership.role_assignments or []):
-            if ((ra.role_template and ra.role_template.code == target_code) or ra.role_template_id in (
-                select(RoleTemplate.id).where(RoleTemplate.code == target_code).scalar_subquery()
+            if ((ra.role_template and ra.role_template.code in target_codes) or ra.role_template_id in (
+                select(RoleTemplate.id).where(RoleTemplate.code.in_(target_codes)).scalar_subquery()
             )) and ra.status == AssignmentStatus.ACTIVE:
                 ra.status = AssignmentStatus.REVOKED
                 ra.reason = f"Revoked {target_code} role via Admin Console"
         # Also direct query update to be completely certain
-        tpl_target = (await db.execute(select(RoleTemplate).where(RoleTemplate.code == target_code))).scalar_one_or_none()
-        if tpl_target:
+        tpl_targets = (await db.execute(select(RoleTemplate).where(RoleTemplate.code.in_(target_codes)))).scalars().all()
+        for tpl_target in tpl_targets:
             direct_ras = (await db.execute(
                 select(RoleAssignment).where(
                     RoleAssignment.membership_id == membership.id,
