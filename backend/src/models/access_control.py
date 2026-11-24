@@ -53,10 +53,16 @@ class RoleScopeType(str, enum.Enum):
     INSTITUTION = "INSTITUTION"
     CAMPUS = "CAMPUS"
     DEPARTMENT = "DEPARTMENT"
+    PROGRAM = "PROGRAM"
     ACADEMIC_TERM = "ACADEMIC_TERM"
     CLASS_SECTION = "CLASS_SECTION"
     TEACHING_ASSIGNMENT = "TEACHING_ASSIGNMENT"
     STUDENT = "STUDENT"
+
+
+class DelegationType(str, enum.Enum):
+    FACULTY_SUBSTITUTE = "FACULTY_SUBSTITUTE"
+    MANAGEMENT_DELEGATION = "MANAGEMENT_DELEGATION"
 
 
 class DelegationLifecycleStatus(str, enum.Enum):
@@ -500,6 +506,12 @@ class Delegation(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
+    delegation_type: Mapped[DelegationType] = mapped_column(
+        SQLEnum(DelegationType, name="delegation_type", native_enum=False),
+        nullable=False,
+        default=DelegationType.FACULTY_SUBSTITUTE,
+        server_default=text("'FACULTY_SUBSTITUTE'"),
+    )
     status: Mapped[DelegationLifecycleStatus] = mapped_column(
         SQLEnum(DelegationLifecycleStatus, name="delegation_lifecycle_status", native_enum=False),
         nullable=False,
@@ -546,6 +558,10 @@ class Delegation(Base, TimestampMixin):
     revoked_by = relationship("InstitutionMembership", foreign_keys=[revoked_by_membership_id])
     permissions = relationship("Permission", secondary=delegation_permissions)
     scopes = relationship("DelegationScope", back_populates="delegation", cascade="all, delete-orphan")
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("delegation_type", DelegationType.FACULTY_SUBSTITUTE)
+        super().__init__(**kwargs)
 
     def __repr__(self) -> str:
         return f"<Delegation {self.id} Grantee: {self.grantee_membership_id} Status: {self.status}>"
