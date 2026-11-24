@@ -29,21 +29,70 @@ import {
   IconBubble,
   Sheet,
 } from '@/components/ui/kit';
-import { Colors, Radii } from '@/theme/tokens';
+import { Colors, Radii, Tone } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
 
-interface DelegationItem {
+export type DelegationType = 'FACULTY_SUBSTITUTE' | 'MANAGEMENT_DELEGATION' | string;
+export type DelegationLifecycleStatus =
+  | 'PENDING_APPROVAL'
+  | 'ACTIVE'
+  | 'REJECTED'
+  | 'REVOKED'
+  | 'EXPIRED'
+  | string;
+
+export interface DelegationItem {
   id: string;
-  assignmentId: string;
+  assignmentId?: string;
   subjectName: string;
-  sectionCode: string;
+  sectionCode?: string;
   substituteFacultyName: string;
   substituteFacultyId: string;
   startDate: string;
   endDate: string;
   reason: string;
-  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  status: DelegationLifecycleStatus;
+  delegationType: DelegationType;
+}
+
+function getStatusTone(status: string): Tone {
+  switch (status?.toUpperCase()) {
+    case 'ACTIVE':
+      return 'forest';
+    case 'PENDING_APPROVAL':
+      return 'amber';
+    case 'REJECTED':
+    case 'REVOKED':
+      return 'rose';
+    case 'EXPIRED':
+    default:
+      return 'soft';
+  }
+}
+
+function getStatusLabel(status: string): string {
+  switch (status?.toUpperCase()) {
+    case 'ACTIVE':
+      return 'Active';
+    case 'PENDING_APPROVAL':
+      return 'Pending Approval';
+    case 'REJECTED':
+      return 'Rejected';
+    case 'REVOKED':
+      return 'Revoked';
+    case 'EXPIRED':
+      return 'Expired';
+    default:
+      return status || 'Unknown';
+  }
+}
+
+function getTypeLabel(type?: string): string {
+  if (type === 'MANAGEMENT_DELEGATION') {
+    return 'Management';
+  }
+  return 'Substitute';
 }
 
 export default function DelegationsScreen() {
@@ -77,26 +126,51 @@ export default function DelegationsScreen() {
 
     try {
       // 1. Delegations
-      const delRes = await fetch(`${API_BASE_URL}/api/v1/faculty/delegations`, { headers });
-      if (delRes.ok) {
-        const dData = await delRes.json();
-        if (Array.isArray(dData)) {
-          setDelegations(
-            dData.map((d: any) => ({
-              id: d.id,
-              assignmentId: d.assignment_id,
-              subjectName: d.subject_name,
-              sectionCode: d.section_code,
-              substituteFacultyName: d.substitute_faculty_name,
-              substituteFacultyId: d.substitute_faculty_id,
-              startDate: d.start_date,
-              endDate: d.end_date,
-              reason: d.reason,
-              status: d.status,
-            }))
-          );
-        }
+      const isApprover = SessionStore.canApproveDelegation();
+      let rawDelegations: any[] = [];
+
+      if (isApprover) {
+        try {
+          const adminDelRes = await fetch(`${API_BASE_URL}/api/v1/admin/access-control/delegations`, { headers });
+          if (adminDelRes.ok) {
+            const adminData = await adminDelRes.json();
+            if (Array.isArray(adminData)) {
+              rawDelegations = adminData;
+            }
+          }
+        } catch (_) {}
       }
+
+      try {
+        const delRes = await fetch(`${API_BASE_URL}/api/v1/faculty/delegations`, { headers });
+        if (delRes.ok) {
+          const dData = await delRes.json();
+          if (Array.isArray(dData)) {
+            const existingIds = new Set(rawDelegations.map((d: any) => d.id));
+            for (const item of dData) {
+              if (!existingIds.has(item.id)) {
+                rawDelegations.push(item);
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      setDelegations(
+        rawDelegations.map((d: any) => ({
+          id: d.id,
+          assignmentId: d.assignment_id || d.teaching_assignment_id || '',
+          subjectName: d.subject_name || (d.grantor_user_name ? `${d.grantor_user_name}'s Offering` : 'Department Offering'),
+          sectionCode: d.section_code || '',
+          substituteFacultyName: d.substitute_faculty_name || d.grantee_user_name || 'Faculty Colleague',
+          substituteFacultyId: d.substitute_faculty_id || d.grantee_membership_id || '',
+          startDate: d.start_date || (d.valid_from ? String(d.valid_from).split('T')[0] : ''),
+          endDate: d.end_date || (d.valid_until ? String(d.valid_until).split('T')[0] : ''),
+          reason: d.reason || d.delegation_reason || '',
+          status: (d.status || 'ACTIVE').toUpperCase(),
+          delegationType: d.delegation_type || (d.assignment_id || d.teaching_assignment_id ? 'FACULTY_SUBSTITUTE' : 'MANAGEMENT_DELEGATION'),
+        }))
+      );
 
       // 2. Teaching Assignments
       const taRes = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, { headers });
@@ -146,7 +220,82 @@ export default function DelegationsScreen() {
     loadData();
   }, [loadData]);
 
+  const pendingDelegations = delegations.filter((d) => d.status === 'PENDING_APPROVAL');
   const activeDelegations = delegations.filter((d) => d.status === 'ACTIVE');
+  const pastDelegations = delegations.filter((d) => ['REVOKED', 'REJECTED', 'EXPIRED'].includes(d.status));
+  const canApprove = SessionStore.canApproveDelegation();
+
+  const handleApproveDelegation = async (target: DelegationItem) => {
+    const token = SessionStore.getToken();
+    setLoading(true);
+    try {
+      let res = await fetch(
+        `${API_BASE_URL}/api/v1/admin/access-control/delegations/${target.id}/approve`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ reason: 'Approved by Department Head / Academic Authority' }),
+        }
+      );
+      if (!res.ok) {
+        res = await fetch(
+          `${API_BASE_URL}/api/v1/faculty/delegations/${target.id}/approve`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ reason: 'Approved by Department Head / Academic Authority' }),
+          }
+        );
+      }
+      await loadData();
+    } catch (e) {
+      console.warn('Approve delegation error:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRejectDelegation = async (target: DelegationItem) => {
+    const token = SessionStore.getToken();
+    setLoading(true);
+    try {
+      let res = await fetch(
+        `${API_BASE_URL}/api/v1/admin/access-control/delegations/${target.id}/revoke`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ reason: 'Rejected by Department Head / Academic Authority' }),
+        }
+      );
+      if (!res.ok) {
+        res = await fetch(
+          `${API_BASE_URL}/api/v1/faculty/delegations/${target.id}/revoke`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ revocation_reason: 'Rejected by Department Head / Academic Authority' }),
+          }
+        );
+      }
+      await loadData();
+    } catch (e) {
+      console.warn('Reject delegation error:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCreateDelegation = async () => {
     if (!selectedAssignment || !selectedColleague) {
@@ -239,9 +388,9 @@ export default function DelegationsScreen() {
         <View style={styles.infoRow}>
           <IconBubble icon={ShieldCheck} tone="forest" size={38} />
           <View style={styles.infoContent}>
-            <Text style={styles.infoTitle}>Direct Faculty Delegation</Text>
+            <Text style={styles.infoTitle}>Faculty Course Delegation</Text>
             <Text style={styles.infoDesc}>
-              Granted delegations activate immediately without pre-approval. Both you and the substitute will be recorded in attendance provenance.
+              Substitute delegations grant temporary attendance conduct authority. Approved and active delegations record both regular and substitute faculty in provenance.
             </Text>
           </View>
         </View>
@@ -259,53 +408,174 @@ export default function DelegationsScreen() {
         Delegate a course
       </Button>
 
-      <SectionTitle>Active delegations</SectionTitle>
+      {/* Pending Approval Section */}
+      {pendingDelegations.length > 0 && (
+        <View style={styles.sectionBlock}>
+          <SectionTitle>Pending approval ({pendingDelegations.length})</SectionTitle>
+          <View style={styles.delegationsList}>
+            {pendingDelegations.map((d) => (
+              <Card key={d.id} style={styles.delegationCard}>
+                <View style={styles.cardHeader}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.courseTitle}>{d.subjectName}</Text>
+                    {d.sectionCode ? <Text style={styles.sectionSubtitle}>{d.sectionCode}</Text> : null}
+                  </View>
+                  <View style={styles.badgeGroup}>
+                    <Chip tone={d.delegationType === 'MANAGEMENT_DELEGATION' ? 'lilac' : 'secondary'}>
+                      {getTypeLabel(d.delegationType)}
+                    </Chip>
+                    <Chip tone={getStatusTone(d.status)}>
+                      {getStatusLabel(d.status)}
+                    </Chip>
+                  </View>
+                </View>
 
-      {activeDelegations.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <IconBubble icon={UserCheck} tone="soft" size={44} />
-          <Text style={styles.emptyTitle}>No active delegations</Text>
-          <Text style={styles.emptySubtitle}>
-            When you delegate class authority to a colleague, it will appear here.
-          </Text>
+                <View style={styles.colleagueRow}>
+                  <Avatar name={d.substituteFacultyName} size={36} />
+                  <View style={styles.colleagueInfo}>
+                    <Text style={styles.colleagueName}>{d.substituteFacultyName}</Text>
+                    {d.substituteFacultyId ? <Text style={styles.colleagueId}>{d.substituteFacultyId}</Text> : null}
+                  </View>
+                </View>
+
+                <View style={styles.dateRow}>
+                  <Calendar size={14} color={Colors.soft} />
+                  <Text style={styles.dateText}>
+                    Valid: {d.startDate} to {d.endDate}
+                  </Text>
+                </View>
+
+                {d.reason ? <Text style={styles.reasonText}>"{d.reason}"</Text> : null}
+
+                {canApprove && (
+                  <View style={styles.approvalActionsRow}>
+                    <Button
+                      variant="primary"
+                      tone="forest"
+                      icon={<Check size={16} color="#ffffff" />}
+                      style={styles.actionBtn}
+                      onPress={() => handleApproveDelegation(d)}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      variant="soft"
+                      tone="rose"
+                      icon={<X size={16} color={Colors.rose} />}
+                      style={styles.actionBtn}
+                      onPress={() => handleRejectDelegation(d)}
+                    >
+                      Reject
+                    </Button>
+                  </View>
+                )}
+              </Card>
+            ))}
+          </View>
         </View>
-      ) : (
-        <View style={styles.delegationsList}>
-          {activeDelegations.map((d) => (
-            <Card key={d.id} style={styles.delegationCard}>
-              <View style={styles.cardHeader}>
-                <View>
-                  <Text style={styles.courseTitle}>{d.subjectName}</Text>
-                  <Text style={styles.sectionSubtitle}>{d.sectionCode}</Text>
+      )}
+
+      {/* Active Delegations Section */}
+      <View style={styles.sectionBlock}>
+        <SectionTitle>Active delegations ({activeDelegations.length})</SectionTitle>
+
+        {activeDelegations.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <IconBubble icon={UserCheck} tone="soft" size={44} />
+            <Text style={styles.emptyTitle}>No active delegations</Text>
+            <Text style={styles.emptySubtitle}>
+              When you delegate class authority to a colleague, it will appear here.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.delegationsList}>
+            {activeDelegations.map((d) => (
+              <Card key={d.id} style={styles.delegationCard}>
+                <View style={styles.cardHeader}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.courseTitle}>{d.subjectName}</Text>
+                    {d.sectionCode ? <Text style={styles.sectionSubtitle}>{d.sectionCode}</Text> : null}
+                  </View>
+                  <View style={styles.badgeGroup}>
+                    <Chip tone={d.delegationType === 'MANAGEMENT_DELEGATION' ? 'lilac' : 'secondary'}>
+                      {getTypeLabel(d.delegationType)}
+                    </Chip>
+                    <Chip tone={getStatusTone(d.status)}>
+                      {getStatusLabel(d.status)}
+                    </Chip>
+                  </View>
                 </View>
-                <Chip tone="forest">Active</Chip>
-              </View>
 
-              <View style={styles.colleagueRow}>
-                <Avatar name={d.substituteFacultyName} size={36} />
-                <View style={styles.colleagueInfo}>
-                  <Text style={styles.colleagueName}>{d.substituteFacultyName}</Text>
-                  <Text style={styles.colleagueId}>{d.substituteFacultyId}</Text>
+                <View style={styles.colleagueRow}>
+                  <Avatar name={d.substituteFacultyName} size={36} />
+                  <View style={styles.colleagueInfo}>
+                    <Text style={styles.colleagueName}>{d.substituteFacultyName}</Text>
+                    {d.substituteFacultyId ? <Text style={styles.colleagueId}>{d.substituteFacultyId}</Text> : null}
+                  </View>
                 </View>
-              </View>
 
-              <View style={styles.dateRow}>
-                <Calendar size={14} color={Colors.soft} />
-                <Text style={styles.dateText}>
-                  Valid: {d.startDate} to {d.endDate}
-                </Text>
-              </View>
+                <View style={styles.dateRow}>
+                  <Calendar size={14} color={Colors.soft} />
+                  <Text style={styles.dateText}>
+                    Valid: {d.startDate} to {d.endDate}
+                  </Text>
+                </View>
 
-              <Text style={styles.reasonText}>"{d.reason}"</Text>
+                {d.reason ? <Text style={styles.reasonText}>"{d.reason}"</Text> : null}
 
-              <Pressable
-                style={styles.revokeButton}
-                onPress={() => setRevokeSheetTarget(d)}
-              >
-                <Text style={styles.revokeButtonText}>Revoke delegation</Text>
-              </Pressable>
-            </Card>
-          ))}
+                <Pressable
+                  style={styles.revokeButton}
+                  onPress={() => setRevokeSheetTarget(d)}
+                >
+                  <Text style={styles.revokeButtonText}>Revoke delegation</Text>
+                </Pressable>
+              </Card>
+            ))}
+          </View>
+        )}
+      </View>
+
+      {/* History / Inactive Section */}
+      {pastDelegations.length > 0 && (
+        <View style={styles.sectionBlock}>
+          <SectionTitle>History ({pastDelegations.length})</SectionTitle>
+          <View style={styles.delegationsList}>
+            {pastDelegations.map((d) => (
+              <Card key={d.id} style={styles.delegationCard}>
+                <View style={styles.cardHeader}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.courseTitle}>{d.subjectName}</Text>
+                    {d.sectionCode ? <Text style={styles.sectionSubtitle}>{d.sectionCode}</Text> : null}
+                  </View>
+                  <View style={styles.badgeGroup}>
+                    <Chip tone={d.delegationType === 'MANAGEMENT_DELEGATION' ? 'lilac' : 'secondary'}>
+                      {getTypeLabel(d.delegationType)}
+                    </Chip>
+                    <Chip tone={getStatusTone(d.status)}>
+                      {getStatusLabel(d.status)}
+                    </Chip>
+                  </View>
+                </View>
+
+                <View style={styles.colleagueRow}>
+                  <Avatar name={d.substituteFacultyName} size={36} />
+                  <View style={styles.colleagueInfo}>
+                    <Text style={styles.colleagueName}>{d.substituteFacultyName}</Text>
+                    {d.substituteFacultyId ? <Text style={styles.colleagueId}>{d.substituteFacultyId}</Text> : null}
+                  </View>
+                </View>
+
+                <View style={styles.dateRow}>
+                  <Calendar size={14} color={Colors.soft} />
+                  <Text style={styles.dateText}>
+                    Valid: {d.startDate} to {d.endDate}
+                  </Text>
+                </View>
+
+                {d.reason ? <Text style={styles.reasonText}>"{d.reason}"</Text> : null}
+              </Card>
+            ))}
+          </View>
         </View>
       )}
 
@@ -492,6 +762,26 @@ const styles = StyleSheet.create({
   },
   delegationsList: {
     gap: 12,
+  },
+  sectionBlock: {
+    marginBottom: 16,
+  },
+  badgeGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  approvalActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.line,
+  },
+  actionBtn: {
+    flex: 1,
   },
   delegationCard: {
     padding: 16,

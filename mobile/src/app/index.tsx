@@ -27,7 +27,24 @@ import { Button } from '@/components/ui/kit';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
 import { API_BASE_URL } from '@/config/api';
-import { SessionStore } from '@/storage/sessionStore';
+import { RoleAssignmentInfo, SessionStore } from '@/storage/sessionStore';
+
+export function resolveTargetRoute(user?: { permissions?: string[]; role?: string } | null): string {
+  if (user?.permissions?.some(p => p.startsWith('institution.') || p.startsWith('campus.') || p.startsWith('academic_structure.'))) {
+    return '/(admin)';
+  }
+  if (user?.permissions?.some(p => p.startsWith('attendance.'))) {
+    return '/(faculty)';
+  }
+  if (user?.permissions?.some(p => p.startsWith('biometrics.enroll.self'))) {
+    return '/(student)';
+  }
+  // Fallback to legacy role
+  const role = user?.role ? user.role.toUpperCase() : '';
+  if (role === 'ADMIN') return '/(admin)';
+  if (role === 'STUDENT') return '/(student)';
+  return '/(faculty)';
+}
 
 export type RoleKey = 'student' | 'faculty' | 'admin';
 
@@ -94,25 +111,36 @@ export default function LoginScreen() {
       });
       if (res.ok) {
         const data = await res.json();
+        const roleAssignments: RoleAssignmentInfo[] | undefined = Array.isArray(data.user?.role_assignments)
+          ? data.user.role_assignments.map((ra: any) => ({
+              roleTemplateCode: ra.role_template_code ?? ra.roleTemplateCode,
+              roleTemplateName: ra.role_template_name ?? ra.roleTemplateName,
+              scopeType: ra.scope_type ?? ra.scopeType,
+              departmentCode: ra.department_code ?? ra.departmentCode,
+              validFrom: ra.valid_from ? String(ra.valid_from) : ra.validFrom,
+              validUntil: ra.valid_until ? String(ra.valid_until) : ra.validUntil,
+            }))
+          : undefined;
+
+        const authUser = {
+          id: data.user.id,
+          institutionalId: data.user.institutional_id,
+          email: data.user.email,
+          fullName: data.user.full_name,
+          role: data.user.role,
+          faceRegistrationState: data.user.face_registration_state,
+          institutionId: data.user.institution_id,
+          permissions: Array.isArray(data.user.permissions) ? data.user.permissions : undefined,
+          roleAssignments,
+        };
+
         await SessionStore.setSession({
           token: data.access_token,
-          user: {
-            id: data.user.id,
-            institutionalId: data.user.institutional_id,
-            email: data.user.email,
-            fullName: data.user.full_name,
-            role: data.user.role,
-            faceRegistrationState: data.user.face_registration_state,
-          },
+          user: authUser,
         });
         setLoading(false);
-        if (data.user.role === 'STUDENT') {
-          router.replace('/(student)' as any);
-        } else if (data.user.role === 'ADMIN') {
-          router.replace('/(admin)' as any);
-        } else {
-          router.replace('/(faculty)' as any);
-        }
+        const targetRoute = resolveTargetRoute(authUser);
+        router.replace(targetRoute as any);
         return;
       } else {
         let errMsg = 'Invalid credentials. Please verify your ID and password.';
@@ -129,13 +157,8 @@ export default function LoginScreen() {
       const cached = await SessionStore.initFromStorage();
       if (cached?.user) {
         setLoading(false);
-        if (cached.user.role === 'STUDENT') {
-          router.replace('/(student)' as any);
-        } else if (cached.user.role === 'ADMIN') {
-          router.replace('/(admin)' as any);
-        } else {
-          router.replace('/(faculty)' as any);
-        }
+        const targetRoute = resolveTargetRoute(cached.user);
+        router.replace(targetRoute as any);
         return;
       }
       setAuthError('Cannot connect to authentication server and no active offline session exists.');
