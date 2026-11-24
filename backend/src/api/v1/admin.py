@@ -1,6 +1,6 @@
 import uuid
-from typing import List, Optional
-from datetime import datetime
+from typing import List, Optional, Dict
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
@@ -278,6 +278,8 @@ class AdminUserListItem(BaseModel):
     identifier: str
     subtitle: Optional[str] = None
     tag: Optional[str] = None
+    roles: List[str] = []
+    membership_id: Optional[uuid.UUID] = None
 
 
 class DepartmentOverviewItem(BaseModel):
@@ -295,28 +297,84 @@ async def list_admin_users(
     db: AsyncSession = Depends(get_db_session),
     admin_user: User = Depends(require_admin),
 ):
+    inst_id, _ = await resolve_tenant_and_membership(None, admin_user, db)
+
+    # 1. Fetch active role assignments directly for this institution
+    now = datetime.now(timezone.utc)
+    ra_stmt = (
+        select(RoleAssignment)
+        .options(selectinload(RoleAssignment.role_template))
+        .where(
+            RoleAssignment.institution_id == inst_id,
+            RoleAssignment.status == AssignmentStatus.ACTIVE,
+        )
+    )
+    all_ras = (await db.execute(ra_stmt)).scalars().all()
+    membership_roles: Dict[uuid.UUID, List[str]] = {}
+    for ra in all_ras:
+        if ra.valid_until is None or ra.valid_until > now:
+            code = ra.role_template.code if ra.role_template else None
+            if code:
+                roles_list = membership_roles.setdefault(ra.membership_id, [])
+                if code not in roles_list:
+                    roles_list.append(code)
+
+    # Fetch memberships for this institution
+    mem_stmt = (
+        select(InstitutionMembership)
+        .where(InstitutionMembership.institution_id == inst_id)
+    )
+    mem_res = await db.execute(mem_stmt)
+    memberships = mem_res.scalars().all()
+    user_to_membership: Dict[uuid.UUID, InstitutionMembership] = {m.user_id: m for m in memberships}
+
+    # 2. Query users
     query = select(User)
-    if role:
-        role_upper = role.upper()
-        if role_upper in UserRole.__members__:
-            query = query.where(User.role == UserRole[role_upper])
     if q:
         query = query.where(User.full_name.ilike(f"%{q}%"))
     query = query.order_by(User.full_name.asc())
     res = await db.execute(query)
     users = res.scalars().all()
-    return [
-        AdminUserListItem(
-            id=u.id,
-            name=u.full_name,
-            email=u.email,
-            role=u.role.value,
-            identifier=u.institutional_id,
-            subtitle=f"{u.role.value.capitalize()} · {u.institutional_id}",
-            tag=None,
+
+    items: List[AdminUserListItem] = []
+    for u in users:
+        membership = user_to_membership.get(u.id)
+        active_roles: List[str] = list(membership_roles.get(membership.id, [])) if membership else []
+        if u.role and u.role.value not in active_roles:
+            active_roles.append(u.role.value)
+
+        # Apply multi-role filter if specified
+        if role:
+            role_upper = role.upper()
+            if role_upper == "FACULTY":
+                matches = any(r in {"FACULTY", "TEACHING_ASSISTANT", "CLASS_ADVISOR", "DEPARTMENT_HEAD"} for r in active_roles) or u.role == UserRole.FACULTY
+            elif role_upper == "ADMIN":
+                matches = any(r in {
+                    "ADMIN", "INSTITUTION_OWNER", "CENTRAL_INSTITUTION_ADMIN",
+                    "CAMPUS_ADMIN", "ACCESS_ADMIN", "IT_ADMIN", "PRIVACY_BIOMETRIC_OFFICER", "DEPARTMENT_HEAD"
+                } for r in active_roles) or u.role == UserRole.ADMIN
+            elif role_upper == "STUDENT":
+                matches = "STUDENT" in active_roles or u.role == UserRole.STUDENT
+            else:
+                matches = role_upper in active_roles or u.role.value == role_upper
+            if not matches:
+                continue
+
+        subtitle_roles = ", ".join(r.replace("_", " ").title() for r in active_roles)
+        items.append(
+            AdminUserListItem(
+                id=u.id,
+                name=u.full_name,
+                email=u.email,
+                role=u.role.value,
+                identifier=u.institutional_id,
+                subtitle=f"{subtitle_roles} · {u.institutional_id}",
+                tag=None,
+                roles=active_roles,
+                membership_id=membership.id if membership else None,
+            )
         )
-        for u in users
-    ]
+    return items
 
 
 @router.get(
@@ -407,6 +465,7 @@ async def create_admin_user(
 
     inst_res = await db.execute(select(Institution).limit(1))
     inst = inst_res.scalar_one_or_none()
+    membership = None
     if inst:
         membership = InstitutionMembership(
             institution_id=inst.id,
@@ -415,7 +474,21 @@ async def create_admin_user(
         )
         db.add(membership)
         await db.flush()
+        # Seed matching canonical role template if available
+        role_tpl_res = await db.execute(select(RoleTemplate).where(RoleTemplate.code == new_user.role.value))
+        role_tpl = role_tpl_res.scalar_one_or_none()
+        if role_tpl:
+            ra = RoleAssignment(
+                institution_id=inst.id,
+                membership_id=membership.id,
+                role_template_id=role_tpl.id,
+                status=AssignmentStatus.ACTIVE,
+                reason="Initial role assignment on account creation",
+            )
+            db.add(ra)
+            await db.flush()
 
+    active_roles = [new_user.role.value]
     return AdminUserListItem(
         id=new_user.id,
         name=new_user.full_name,
@@ -424,6 +497,184 @@ async def create_admin_user(
         identifier=new_user.institutional_id,
         subtitle=f"{new_user.role.value.capitalize()} · {new_user.institutional_id}",
         tag=None,
+        roles=active_roles,
+        membership_id=membership.id if membership else None,
+    )
+
+
+class UserAddRoleRequest(BaseModel):
+    role_code: str
+    scope_type: RoleScopeType = RoleScopeType.INSTITUTION
+    reason: Optional[str] = "Granted via Admin Management Console"
+
+
+@router.post("/users/{user_id}/roles", response_model=AdminUserListItem, summary="Add a role template to a user")
+async def add_user_role(
+    user_id: uuid.UUID,
+    payload: UserAddRoleRequest,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    inst_id, _ = await resolve_tenant_and_membership(None, admin_user, db)
+    user_stmt = select(User).where(User.id == user_id)
+    user = (await db.execute(user_stmt)).scalar_one_or_none()
+    if not user:
+        raise EntityNotFoundError(f"User {user_id} not found")
+
+    # Ensure membership
+    mem_stmt = (
+        select(InstitutionMembership)
+        .options(selectinload(InstitutionMembership.role_assignments).selectinload(RoleAssignment.role_template))
+        .where(
+            InstitutionMembership.user_id == user.id,
+            InstitutionMembership.institution_id == inst_id,
+        )
+    )
+    membership = (await db.execute(mem_stmt)).scalar_one_or_none()
+    if not membership:
+        membership = InstitutionMembership(
+            institution_id=inst_id,
+            user_id=user.id,
+            status=MembershipStatus.ACTIVE,
+        )
+        db.add(membership)
+        await db.flush()
+        await db.refresh(membership)
+
+    tpl_stmt = select(RoleTemplate).where(RoleTemplate.code == payload.role_code.strip().upper())
+    tpl = (await db.execute(tpl_stmt)).scalar_one_or_none()
+    if not tpl:
+        raise EntityNotFoundError(f"Role template '{payload.role_code}' not found")
+
+    # Check if already active
+    existing_ra = next((ra for ra in (membership.role_assignments or []) if ra.role_template_id == tpl.id and ra.status == AssignmentStatus.ACTIVE), None)
+    if not existing_ra:
+        new_ra = RoleAssignment(
+            institution_id=inst_id,
+            membership_id=membership.id,
+            role_template_id=tpl.id,
+            role_template=tpl,
+            status=AssignmentStatus.ACTIVE,
+            reason=payload.reason or "Granted via Admin Management Console",
+        )
+        db.add(new_ra)
+        await db.flush()
+
+    # Query all active role assignments
+    ra_stmt = (
+        select(RoleAssignment)
+        .options(selectinload(RoleAssignment.role_template))
+        .where(
+            RoleAssignment.membership_id == membership.id,
+            RoleAssignment.status == AssignmentStatus.ACTIVE,
+        )
+    )
+    all_ras = (await db.execute(ra_stmt)).scalars().all()
+    now = datetime.now(timezone.utc)
+    active_roles: List[str] = []
+    for ra in all_ras:
+        if ra.valid_until is None or ra.valid_until > now:
+            code = (ra.role_template.code if ra.role_template else None) or (tpl.code if ra.role_template_id == tpl.id else None)
+            if code and code not in active_roles:
+                active_roles.append(code)
+    if user.role and user.role.value not in active_roles:
+        active_roles.append(user.role.value)
+
+    subtitle_roles = ", ".join(r.replace("_", " ").title() for r in active_roles)
+    return AdminUserListItem(
+        id=user.id,
+        name=user.full_name,
+        email=user.email,
+        role=user.role.value,
+        identifier=user.institutional_id,
+        subtitle=f"{subtitle_roles} · {user.institutional_id}",
+        tag=None,
+        roles=active_roles,
+        membership_id=membership.id,
+    )
+
+
+@router.delete("/users/{user_id}/roles/{role_code}", response_model=AdminUserListItem, summary="Revoke a role from a user")
+async def revoke_user_role(
+    user_id: uuid.UUID,
+    role_code: str,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    inst_id, _ = await resolve_tenant_and_membership(None, admin_user, db)
+    user_stmt = select(User).where(User.id == user_id)
+    user = (await db.execute(user_stmt)).scalar_one_or_none()
+    if not user:
+        raise EntityNotFoundError(f"User {user_id} not found")
+
+    mem_stmt = (
+        select(InstitutionMembership)
+        .options(selectinload(InstitutionMembership.role_assignments).selectinload(RoleAssignment.role_template))
+        .where(
+            InstitutionMembership.user_id == user.id,
+            InstitutionMembership.institution_id == inst_id,
+        )
+    )
+    membership = (await db.execute(mem_stmt)).scalar_one_or_none()
+    if membership:
+        target_code = role_code.strip().upper()
+        # Revoke matching role assignments
+        for ra in (membership.role_assignments or []):
+            if ((ra.role_template and ra.role_template.code == target_code) or ra.role_template_id in (
+                select(RoleTemplate.id).where(RoleTemplate.code == target_code).scalar_subquery()
+            )) and ra.status == AssignmentStatus.ACTIVE:
+                ra.status = AssignmentStatus.REVOKED
+                ra.reason = f"Revoked {target_code} role via Admin Console"
+        # Also direct query update to be completely certain
+        tpl_target = (await db.execute(select(RoleTemplate).where(RoleTemplate.code == target_code))).scalar_one_or_none()
+        if tpl_target:
+            direct_ras = (await db.execute(
+                select(RoleAssignment).where(
+                    RoleAssignment.membership_id == membership.id,
+                    RoleAssignment.role_template_id == tpl_target.id,
+                    RoleAssignment.status == AssignmentStatus.ACTIVE,
+                )
+            )).scalars().all()
+            for r in direct_ras:
+                r.status = AssignmentStatus.REVOKED
+                r.reason = f"Revoked {target_code} role via Admin Console"
+        await db.flush()
+
+    # Query remaining active roles
+    active_roles: List[str] = []
+    if membership:
+        ra_stmt = (
+            select(RoleAssignment)
+            .options(selectinload(RoleAssignment.role_template))
+            .where(
+                RoleAssignment.membership_id == membership.id,
+                RoleAssignment.status == AssignmentStatus.ACTIVE,
+            )
+        )
+        all_ras = (await db.execute(ra_stmt)).scalars().all()
+        now = datetime.now(timezone.utc)
+        for ra in all_ras:
+            if ra.valid_until is None or ra.valid_until > now:
+                code = ra.role_template.code if ra.role_template else None
+                if code and code not in active_roles:
+                    active_roles.append(code)
+
+    if not active_roles and user.role and user.role.value != role_code.strip().upper():
+        active_roles.append(user.role.value)
+    elif user.role and user.role.value not in active_roles and user.role.value != role_code.strip().upper():
+        active_roles.append(user.role.value)
+
+    subtitle_roles = ", ".join(r.replace("_", " ").title() for r in active_roles) if active_roles else user.role.value.capitalize()
+    return AdminUserListItem(
+        id=user.id,
+        name=user.full_name,
+        email=user.email,
+        role=user.role.value,
+        identifier=user.institutional_id,
+        subtitle=f"{subtitle_roles} · {user.institutional_id}",
+        tag=None,
+        roles=active_roles,
+        membership_id=membership.id if membership else None,
     )
 
 
@@ -442,16 +693,56 @@ async def update_user_role(
 
     user.role = payload.role
     await db.flush()
-    await db.refresh(user)
 
+    inst_id, _ = await resolve_tenant_and_membership(None, admin_user, db)
+    mem_stmt = (
+        select(InstitutionMembership)
+        .options(selectinload(InstitutionMembership.role_assignments).selectinload(RoleAssignment.role_template))
+        .where(
+            InstitutionMembership.user_id == user.id,
+            InstitutionMembership.institution_id == inst_id,
+        )
+    )
+    membership = (await db.execute(mem_stmt)).scalar_one_or_none()
+    if membership:
+        tpl_stmt = select(RoleTemplate).where(RoleTemplate.code == payload.role.value)
+        tpl = (await db.execute(tpl_stmt)).scalar_one_or_none()
+        if tpl:
+            existing = any(ra.role_template_id == tpl.id and ra.status == AssignmentStatus.ACTIVE for ra in membership.role_assignments)
+            if not existing:
+                new_ra = RoleAssignment(
+                    institution_id=inst_id,
+                    membership_id=membership.id,
+                    role_template_id=tpl.id,
+                    status=AssignmentStatus.ACTIVE,
+                    reason=f"Assigned {payload.role.value} role via Admin Console",
+                )
+                db.add(new_ra)
+                await db.flush()
+                await db.refresh(membership)
+
+    refreshed_mem = (await db.execute(mem_stmt)).scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    active_roles: List[str] = []
+    if refreshed_mem:
+        for ra in refreshed_mem.role_assignments:
+            if ra.status == AssignmentStatus.ACTIVE and (ra.valid_until is None or ra.valid_until > now):
+                if ra.role_template and ra.role_template.code not in active_roles:
+                    active_roles.append(ra.role_template.code)
+    if user.role and user.role.value not in active_roles:
+        active_roles.append(user.role.value)
+
+    subtitle_roles = ", ".join(r.replace("_", " ").title() for r in active_roles)
     return AdminUserListItem(
         id=user.id,
         name=user.full_name,
         email=user.email,
         role=user.role.value,
         identifier=user.institutional_id,
-        subtitle=f"{user.role.value.capitalize()} · {user.institutional_id}",
+        subtitle=f"{subtitle_roles} · {user.institutional_id}",
         tag=None,
+        roles=active_roles,
+        membership_id=membership.id if membership else None,
     )
 
 

@@ -217,15 +217,41 @@ export const SessionStore = {
     return (
       this.hasPermission('attendance.session.start') ||
       this.hasPermission('attendance:scan') ||
-      this.hasAnyRole(['FACULTY'])
+      this.hasAnyRole(['FACULTY', 'TEACHING_ASSISTANT', 'CLASS_ADVISOR'])
     );
+  },
+
+  canAccessAdmin(): boolean {
+    return (
+      this.hasPermission('institution.view') ||
+      this.hasPermission('institution.manage') ||
+      this.hasPermission('campus.view') ||
+      this.hasPermission('campus.manage') ||
+      this.hasPermission('academic_structure.view') ||
+      this.hasPermission('access_control.assign_role') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'CAMPUS_ADMIN',
+        'ACCESS_ADMIN',
+        'IT_ADMIN',
+        'PRIVACY_BIOMETRIC_OFFICER',
+        'DEPARTMENT_HEAD',
+        'DEPARTMENT_HEAD_COORDINATOR',
+      ])
+    );
+  },
+
+  isDualRole(): boolean {
+    return this.canAccessAdmin() && this.canScanAttendance();
   },
 
   canApproveDelegation(): boolean {
     return (
       this.hasPermission('delegation.approve') ||
       this.hasPermission('delegation:approve') ||
-      this.hasAnyRole(['DEPARTMENT_HEAD', 'ADMIN', 'CENTRAL_INSTITUTION_ADMIN', 'CAMPUS_ADMIN'])
+      this.hasAnyRole(['DEPARTMENT_HEAD', 'DEPARTMENT_HEAD_COORDINATOR', 'ADMIN', 'CENTRAL_INSTITUTION_ADMIN', 'CAMPUS_ADMIN'])
     );
   },
 

@@ -116,6 +116,24 @@ export default function FacultyProfileScreen() {
         </Chip>
       </View>
 
+      {SessionStore.canAccessAdmin() && (
+        <Card style={[styles.cardGroup, { borderColor: Colors.forest, backgroundColor: '#f0fdf4', marginBottom: 16 }]}>
+          <View style={styles.infoRow}>
+            <IconBubble icon={ShieldCheck} tone="forest" size={40} />
+            <View style={styles.infoCol}>
+              <Text style={styles.infoTitle}>Administrator Console</Text>
+              <Text style={styles.infoSubtitle}>You hold active institutional admin capabilities</Text>
+            </View>
+            <Button
+              tone="forest"
+              onPress={() => router.replace('/(admin)' as any)}
+            >
+              Open
+            </Button>
+          </View>
+        </Card>
+      )}
+
       <Text style={styles.sectionHeader}>Biometric Perception & Device</Text>
       <Card style={styles.cardGroup}>
         <View style={styles.infoRow}>

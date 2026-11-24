@@ -66,6 +66,8 @@ EXCLUDED_RUNTIME_PATHS = {
     "/api/v1/admin/access-control/unmapped-accounts",
     "/api/v1/admin/campuses",
     "/api/v1/admin/campuses/{campus_id}",
+    "/api/v1/admin/users/{user_id}/roles",
+    "/api/v1/admin/users/{user_id}/roles/{role_code}",
 }
 
 EXCLUDED_RUNTIME_OPERATIONS = {
@@ -114,6 +116,7 @@ EXCLUDED_RUNTIME_SCHEMAS = {
     "RoleScopeType",
     "RoleTemplateResponse",
     "UnmappedAccountItem",
+    "UserAddRoleRequest",
 }
 
 DOMAIN_ENUMS = [

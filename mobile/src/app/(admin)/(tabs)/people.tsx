@@ -41,6 +41,8 @@ interface Person {
   identifier: string;
   sub: string;
   tag?: string | null;
+  roles?: string[];
+  membershipId?: string | null;
 }
 
 interface FacultyAssignment {
@@ -172,6 +174,11 @@ export default function AdminPeopleScreen() {
 
   // Role Assignment State
   const [roleUpdating, setRoleUpdating] = useState(false);
+  const [grantRoleModalVisible, setGrantRoleModalVisible] = useState(false);
+  const [roleToGrant, setRoleToGrant] = useState('CAMPUS_ADMIN');
+  const [grantReason, setGrantReason] = useState('');
+  const [grantingRole, setGrantingRole] = useState(false);
+  const [grantRoleError, setGrantRoleError] = useState<string | null>(null);
 
   // Faculty Assignments State
   const [facultyAssignments, setFacultyAssignments] = useState<FacultyAssignment[]>([]);
@@ -355,6 +362,8 @@ export default function AdminPeopleScreen() {
               identifier: u.identifier,
               sub: u.subtitle || `${u.role} · ${u.identifier || ''}`,
               tag: u.tag,
+              roles: u.roles || [u.role],
+              membershipId: u.membership_id,
             }))
           );
         }
@@ -409,7 +418,15 @@ export default function AdminPeopleScreen() {
 
   const handleSelectUser = (person: Person) => {
     setSelectedUser(person);
-    if (person.role.toUpperCase() === 'FACULTY') {
+    setGrantRoleModalVisible(false);
+    setGrantRoleError(null);
+    const hasTeachingCapability =
+      person.role.toUpperCase() === 'FACULTY' ||
+      (person.roles &&
+        person.roles.some((r) =>
+          ['FACULTY', 'TEACHING_ASSISTANT', 'CLASS_ADVISOR', 'DEPARTMENT_HEAD', 'DEPARTMENT_HEAD_COORDINATOR'].includes(r.toUpperCase())
+        ));
+    if (hasTeachingCapability) {
       loadFacultyAssignments(person.id);
     }
   };
@@ -480,6 +497,7 @@ export default function AdminPeopleScreen() {
           ...selectedUser,
           role: updated.role,
           sub: `${updated.role} · ${selectedUser.identifier}`,
+          roles: updated.roles || [updated.role],
         });
         await loadDirectory();
         if (targetRole === 'FACULTY') {
@@ -488,6 +506,90 @@ export default function AdminPeopleScreen() {
       }
     } catch (e) {
       console.warn('Update role error:', e);
+    } finally {
+      setRoleUpdating(false);
+    }
+  };
+
+  // Grant an additional role template to a user
+  const handleGrantRole = async () => {
+    if (!selectedUser || !roleToGrant) return;
+    setGrantingRole(true);
+    setGrantRoleError(null);
+    const token = SessionStore.getToken();
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/users/${selectedUser.id}/roles`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          role_code: roleToGrant,
+          reason: grantReason.trim() || 'Role granted via Admin Management Console',
+        }),
+      });
+
+      if (res.ok) {
+        const updatedUser = await res.json();
+        setSelectedUser({
+          ...selectedUser,
+          role: updatedUser.role,
+          sub: updatedUser.subtitle,
+          roles: updatedUser.roles,
+        });
+        setGrantRoleModalVisible(false);
+        setGrantReason('');
+        await loadDirectory();
+        const hasTeaching =
+          updatedUser.role === 'FACULTY' ||
+          (updatedUser.roles &&
+            updatedUser.roles.some((r: string) =>
+              ['FACULTY', 'TEACHING_ASSISTANT', 'CLASS_ADVISOR', 'DEPARTMENT_HEAD', 'DEPARTMENT_HEAD_COORDINATOR'].includes(r.toUpperCase())
+            ));
+        if (hasTeaching) {
+          loadFacultyAssignments(selectedUser.id);
+        }
+      } else {
+        const err = await res.json();
+        setGrantRoleError(err.detail || 'Failed to grant role');
+      }
+    } catch (e: any) {
+      setGrantRoleError(e?.message || 'Network error');
+    } finally {
+      setGrantingRole(false);
+    }
+  };
+
+  // Revoke a specific role from a user
+  const handleRevokeUserRole = async (roleCode: string) => {
+    if (!selectedUser) return;
+    setRoleUpdating(true);
+    const token = SessionStore.getToken();
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/users/${selectedUser.id}/roles/${roleCode}`, {
+        method: 'DELETE',
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (res.ok) {
+        const updatedUser = await res.json();
+        setSelectedUser({
+          ...selectedUser,
+          role: updatedUser.role,
+          sub: updatedUser.subtitle,
+          roles: updatedUser.roles,
+        });
+        await loadDirectory();
+      }
+    } catch (e) {
+      console.warn('Revoke role error:', e);
     } finally {
       setRoleUpdating(false);
     }
@@ -916,8 +1018,151 @@ export default function AdminPeopleScreen() {
             </View>
           </View>
 
-          {/* Role Switcher */}
-          <Text style={styles.sheetSectionTitle}>Assign Role</Text>
+          {/* Active Assigned Roles */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+            <Text style={styles.sheetSectionTitle}>Assigned Roles</Text>
+            <Pressable
+              onPress={() => {
+                setGrantRoleError(null);
+                setGrantRoleModalVisible(!grantRoleModalVisible);
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+            >
+              <Plus size={14} color={Colors.forest} />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.forest }}>
+                {grantRoleModalVisible ? 'Cancel' : 'Grant Role'}
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* List of active roles as chips with remove option */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 12 }}>
+            {(selectedUser.roles && selectedUser.roles.length > 0 ? selectedUser.roles : [selectedUser.role]).map((r) => {
+              const rUpper = r.toUpperCase();
+              const isGovernance = rUpper.includes('ADMIN') || rUpper.includes('OWNER') || rUpper.includes('OFFICER');
+              const isTeaching = ['FACULTY', 'TEACHING_ASSISTANT', 'CLASS_ADVISOR'].includes(rUpper);
+              const chipTone = isGovernance ? 'forest' : isTeaching ? 'lilac' : 'soft';
+              const canRevoke = (selectedUser.roles?.length || 1) > 1;
+
+              return (
+                <View
+                  key={r}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: chipTone === 'forest' ? Colors.forest50 : chipTone === 'lilac' ? '#f5f3ff' : Colors.line,
+                    borderRadius: Radii.pill,
+                    paddingLeft: 10,
+                    paddingRight: canRevoke ? 6 : 10,
+                    paddingVertical: 5,
+                    borderWidth: 1,
+                    borderColor: chipTone === 'forest' ? Colors.forest : chipTone === 'lilac' ? Colors.lilac : 'transparent',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: '600',
+                      color: chipTone === 'forest' ? Colors.forest : chipTone === 'lilac' ? Colors.lilac : Colors.ink,
+                    }}
+                  >
+                    {r.replace(/_/g, ' ')}
+                  </Text>
+                  {canRevoke && (
+                    <Pressable
+                      disabled={roleUpdating}
+                      onPress={() => handleRevokeUserRole(r)}
+                      style={{
+                        marginLeft: 6,
+                        width: 18,
+                        height: 18,
+                        borderRadius: 9,
+                        backgroundColor: 'rgba(0,0,0,0.08)',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: 'bold', color: Colors.soft, lineHeight: 12 }}>×</Text>
+                    </Pressable>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Inline Grant Role Form if toggled */}
+          {grantRoleModalVisible && (
+            <View style={{ backgroundColor: Colors.card, padding: 12, borderRadius: Radii.card, borderWidth: 1, borderColor: Colors.line, marginBottom: 16 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.ink, marginBottom: 8 }}>
+                Select Role to Grant
+              </Text>
+              {grantRoleError && <Text style={styles.errorBanner}>{grantRoleError}</Text>}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {[
+                    'CAMPUS_ADMIN',
+                    'FACULTY',
+                    'DEPARTMENT_HEAD_COORDINATOR',
+                    'ACCESS_ADMIN',
+                    'IT_ADMIN',
+                    'PRIVACY_BIOMETRIC_OFFICER',
+                    'ACADEMIC_REGISTRAR',
+                    'TEACHING_ASSISTANT',
+                    'CLASS_ADVISOR',
+                    'BIOMETRIC_ENROLLMENT_OFFICER',
+                    'ATTENDANCE_AUDITOR',
+                  ].map((code) => {
+                    const isSelected = roleToGrant === code;
+                    const alreadyHas = selectedUser.roles?.includes(code);
+                    return (
+                      <Pressable
+                        key={code}
+                        disabled={alreadyHas}
+                        onPress={() => setRoleToGrant(code)}
+                        style={[
+                          styles.pickerChip,
+                          isSelected && styles.pickerChipActive,
+                          alreadyHas && { opacity: 0.4 },
+                        ]}
+                      >
+                        <Text style={[styles.pickerChipText, isSelected && styles.pickerChipTextActive]}>
+                          {code.replace(/_/g, ' ')} {alreadyHas ? '(Assigned)' : ''}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+
+              <Text style={styles.inputLabel}>Reason / Justification</Text>
+              <TextInput
+                value={grantReason}
+                onChangeText={setGrantReason}
+                placeholder="e.g. Appointed as Department Head and Faculty"
+                placeholderTextColor={Colors.soft}
+                style={[styles.textInput, { marginBottom: 10 }]}
+              />
+
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Button
+                  tone="forest"
+                  disabled={grantingRole}
+                  onPress={handleGrantRole}
+                >
+                  {grantingRole ? 'Granting…' : 'Confirm Grant'}
+                </Button>
+                <Button
+                  tone="soft"
+                  onPress={() => setGrantRoleModalVisible(false)}
+                >
+                  Cancel
+                </Button>
+              </View>
+            </View>
+          )}
+
+          {/* Primary Compatibility Switcher */}
+          <Text style={[styles.sheetSectionTitle, { marginTop: 4 }]}>Primary Role</Text>
           <View style={styles.roleAssignmentRow}>
             {(['STUDENT', 'FACULTY', 'ADMIN'] as const).map((roleOption) => {
               const isCurrent = selectedUser.role.toUpperCase() === roleOption;
@@ -944,8 +1189,13 @@ export default function AdminPeopleScreen() {
             })}
           </View>
 
-          {/* If Faculty: Teaching Assignments */}
-          {selectedUser.role.toUpperCase() === 'FACULTY' && (
+          {/* If User has teaching capability or faculty assignments */}
+          {(selectedUser.role.toUpperCase() === 'FACULTY' ||
+            (selectedUser.roles &&
+              selectedUser.roles.some((r) =>
+                ['FACULTY', 'TEACHING_ASSISTANT', 'CLASS_ADVISOR', 'DEPARTMENT_HEAD', 'DEPARTMENT_HEAD_COORDINATOR'].includes(r.toUpperCase())
+              )) ||
+            facultyAssignments.length > 0) && (
             <>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
                 <Text style={styles.sheetSectionTitle}>Classes they can take attendance for</Text>

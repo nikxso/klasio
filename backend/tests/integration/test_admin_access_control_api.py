@@ -157,3 +157,71 @@ async def test_admin_access_control_role_templates_and_assignments(
     audits = audits_res.json()
     assert len(audits) >= 2
     assert any(a["action"] == "role_assignment.create" for a in audits)
+
+
+@pytest.mark.asyncio
+async def test_admin_multi_role_user_management(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+):
+    inst = Institution(code=f"INST_MULTI_{uuid.uuid4().hex[:6]}", name="Multi Role Inst")
+    admin = User(
+        institutional_id=f"ADM_M_{uuid.uuid4().hex[:6]}",
+        email=f"adm_m_{uuid.uuid4().hex[:6]}@inst.edu",
+        password_hash=get_password_hash("password123"),
+        full_name="Multi Admin",
+        role=UserRole.ADMIN,
+        account_status=AccountStatus.ACTIVE,
+    )
+    dual_user = User(
+        institutional_id=f"DUAL_{uuid.uuid4().hex[:6]}",
+        email=f"dual_{uuid.uuid4().hex[:6]}@inst.edu",
+        password_hash=get_password_hash("password123"),
+        full_name="Prof & Admin Dual",
+        role=UserRole.FACULTY,
+        account_status=AccountStatus.ACTIVE,
+    )
+    db_session.add_all([inst, admin, dual_user])
+    await db_session.flush()
+
+    admin_mem = InstitutionMembership(institution_id=inst.id, user_id=admin.id, status=MembershipStatus.ACTIVE)
+    dual_mem = InstitutionMembership(institution_id=inst.id, user_id=dual_user.id, status=MembershipStatus.ACTIVE)
+    db_session.add_all([admin_mem, dual_mem])
+    await db_session.commit()
+
+    token = create_access_token(subject=str(admin.id), role=admin.role.value, institutional_id=admin.institutional_id)
+    headers = {"Authorization": f"Bearer {token}", "X-Institution-ID": str(inst.id)}
+
+    # 1. Add CAMPUS_ADMIN role to dual_user (who is originally FACULTY)
+    add_role_res = await async_client.post(
+        f"/api/v1/admin/users/{dual_user.id}/roles",
+        headers=headers,
+        json={"role_code": "CAMPUS_ADMIN", "reason": "Appointed Campus Administrator"},
+    )
+    assert add_role_res.status_code == 200
+    user_data = add_role_res.json()
+    assert "CAMPUS_ADMIN" in user_data["roles"]
+    assert "FACULTY" in user_data["roles"]
+
+    # 2. Verify dual_user appears when querying ?role=faculty
+    fac_res = await async_client.get("/api/v1/admin/users?role=faculty", headers=headers)
+    assert fac_res.status_code == 200
+    fac_list = fac_res.json()
+    assert any(u["id"] == str(dual_user.id) for u in fac_list)
+
+    # 3. Verify dual_user ALSO appears when querying ?role=admin
+    adm_res = await async_client.get("/api/v1/admin/users?role=admin", headers=headers)
+    assert adm_res.status_code == 200
+    adm_list = adm_res.json()
+    assert any(u["id"] == str(dual_user.id) for u in adm_list)
+
+    # 4. Revoke CAMPUS_ADMIN role from dual_user
+    del_role_res = await async_client.delete(
+        f"/api/v1/admin/users/{dual_user.id}/roles/CAMPUS_ADMIN",
+        headers=headers,
+    )
+    assert del_role_res.status_code == 200
+    updated_user_data = del_role_res.json()
+    assert "CAMPUS_ADMIN" not in updated_user_data["roles"]
+    assert "FACULTY" in updated_user_data["roles"]
+

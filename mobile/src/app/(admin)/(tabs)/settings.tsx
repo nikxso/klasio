@@ -117,6 +117,24 @@ export default function AdminSettingsScreen() {
         </Chip>
       </View>
 
+      {SessionStore.canScanAttendance() && (
+        <Card style={[styles.cardGroup, { borderColor: Colors.lilac, backgroundColor: '#f5f3ff', marginBottom: 16 }]}>
+          <View style={styles.infoRow}>
+            <IconBubble icon={ScanFace} tone="lilac" size={40} />
+            <View style={styles.infoCol}>
+              <Text style={styles.infoTitle}>Faculty Attendance Portal</Text>
+              <Text style={styles.infoSubtitle}>Take attendance and manage class rosters</Text>
+            </View>
+            <Button
+              tone="lilac"
+              onPress={() => router.replace('/(faculty)' as any)}
+            >
+              Open
+            </Button>
+          </View>
+        </Card>
+      )}
+
       <Text style={styles.sectionHeader}>Attendance Policies</Text>
       <Card style={styles.cardGroup}>
         <Pressable
