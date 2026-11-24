@@ -107,31 +107,58 @@ export default function FacultyProfileScreen() {
           name={facultyName}
           userId={facultyId}
           photoUrl={facultyId ? `${API_BASE_URL}/api/v1/users/${facultyId}/profile-photo?t=${cacheBuster}` : null}
-          size={72}
+          size={76}
         />
         <Text style={styles.userName}>{facultyName}</Text>
         <Text style={styles.userRole}>Faculty · Computer Science</Text>
-        <Chip tone="forest" style={styles.badgeChip}>
-          Staff ID: {facultyStaffId}
-        </Chip>
+        <View style={styles.badgesRow}>
+          <Chip tone="forest">Staff ID: {facultyStaffId}</Chip>
+          {user?.roleAssignments && user.roleAssignments.length > 1 && (
+            <Chip tone="lilac">{user.roleAssignments.length} Roles Assigned</Chip>
+          )}
+        </View>
       </View>
 
       {SessionStore.canAccessAdmin() && (
-        <Card style={[styles.cardGroup, { borderColor: Colors.forest, backgroundColor: '#f0fdf4', marginBottom: 16 }]}>
+        <Pressable
+          onPress={() => router.replace('/(admin)' as any)}
+          style={({ pressed }) => [
+            styles.workspaceSwitcherCard,
+            pressed && { opacity: 0.85, transform: [{ scale: 0.99 }] },
+          ]}
+        >
           <View style={styles.infoRow}>
             <IconBubble icon={ShieldCheck} tone="forest" size={40} />
             <View style={styles.infoCol}>
-              <Text style={styles.infoTitle}>Administrator Console</Text>
-              <Text style={styles.infoSubtitle}>You hold active institutional admin capabilities</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.infoTitle}>Administrator Console</Text>
+                <Chip tone="forest">Dual Role</Chip>
+              </View>
+              <Text style={styles.infoSubtitle}>
+                Tap to switch to institutional administration & governance
+              </Text>
             </View>
-            <Button
-              tone="forest"
-              onPress={() => router.replace('/(admin)' as any)}
-            >
-              Open
-            </Button>
+            <ChevronRight size={18} color={Colors.forest} />
           </View>
-        </Card>
+        </Pressable>
+      )}
+
+      {user?.roleAssignments && user.roleAssignments.length > 0 && (
+        <>
+          <Text style={styles.sectionHeader}>Assigned Institutional Roles</Text>
+          <Card style={styles.cardGroup}>
+            <View style={styles.rolesGrid}>
+              {user.roleAssignments.map((ra) => (
+                <View key={ra.roleTemplateCode} style={styles.roleTag}>
+                  <ShieldCheck size={14} color={Colors.forest} />
+                  <Text style={styles.roleTagText}>
+                    {ra.roleTemplateName || ra.roleTemplateCode.replace(/_/g, ' ')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </Card>
+        </>
       )}
 
       <Text style={styles.sectionHeader}>Biometric Perception & Device</Text>
@@ -287,8 +314,44 @@ const styles = StyleSheet.create({
     color: Colors.soft,
     marginTop: 4,
   },
-  badgeChip: {
+  badgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginTop: 8,
+  },
+  workspaceSwitcherCard: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1.5,
+    borderColor: '#bbf7d0',
+    borderRadius: Radii.card,
+    padding: 14,
+    marginTop: 6,
+    marginBottom: 12,
+    shadowColor: Colors.forest,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  rolesGrid: {
+    gap: 8,
+  },
+  roleTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  roleTagText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.ink,
   },
   sectionHeader: {
     fontSize: 12,

@@ -111,28 +111,59 @@ export default function AdminSettingsScreen() {
           size={76}
         />
         <Text style={styles.userName}>{adminName}</Text>
-        <Text style={styles.userSub}>Administrator · Academic Dean Office</Text>
-        <Chip tone="forest" style={styles.adminChip}>
-          {adminId} · Full Permissions
-        </Chip>
+        <Text style={styles.userSub}>
+          {user?.roleAssignments?.some(ra => ra.roleTemplateCode === 'CENTRAL_INSTITUTION_ADMIN' || ra.roleTemplateCode === 'IT_ADMIN')
+            ? 'Institutional Administration & Governance'
+            : 'Academic Administration'}
+        </Text>
+        <View style={styles.badgesRow}>
+          <Chip tone="forest">Staff ID: {adminId}</Chip>
+          {user?.roleAssignments && user.roleAssignments.length > 1 && (
+            <Chip tone="lilac">{user.roleAssignments.length} Roles Assigned</Chip>
+          )}
+        </View>
       </View>
 
       {SessionStore.canScanAttendance() && (
-        <Card style={[styles.cardGroup, { borderColor: Colors.lilac, backgroundColor: '#f5f3ff', marginBottom: 16 }]}>
+        <Pressable
+          onPress={() => router.replace('/(faculty)' as any)}
+          style={({ pressed }) => [
+            styles.workspaceSwitcherCard,
+            pressed && { opacity: 0.85, transform: [{ scale: 0.99 }] },
+          ]}
+        >
           <View style={styles.infoRow}>
             <IconBubble icon={ScanFace} tone="lilac" size={40} />
             <View style={styles.infoCol}>
-              <Text style={styles.infoTitle}>Faculty Attendance Portal</Text>
-              <Text style={styles.infoSubtitle}>Take attendance and manage class rosters</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.infoTitle}>Faculty Attendance Portal</Text>
+                <Chip tone="lilac">Dual Role</Chip>
+              </View>
+              <Text style={styles.infoSubtitle}>
+                Tap to conduct attendance and manage class rosters
+              </Text>
             </View>
-            <Button
-              tone="lilac"
-              onPress={() => router.replace('/(faculty)' as any)}
-            >
-              Open
-            </Button>
+            <ChevronRight size={18} color={Colors.lilac} />
           </View>
-        </Card>
+        </Pressable>
+      )}
+
+      {user?.roleAssignments && user.roleAssignments.length > 0 && (
+        <>
+          <Text style={styles.sectionHeader}>Assigned Institutional Roles</Text>
+          <Card style={styles.cardGroup}>
+            <View style={styles.rolesGrid}>
+              {user.roleAssignments.map((ra) => (
+                <View key={ra.roleTemplateCode} style={styles.roleTag}>
+                  <ShieldCheck size={14} color={Colors.forest} />
+                  <Text style={styles.roleTagText}>
+                    {ra.roleTemplateName || ra.roleTemplateCode.replace(/_/g, ' ')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </Card>
+        </>
       )}
 
       <Text style={styles.sectionHeader}>Attendance Policies</Text>
@@ -314,6 +345,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.soft,
     marginTop: 4,
+  },
+  badgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  workspaceSwitcherCard: {
+    backgroundColor: '#faf5ff',
+    borderWidth: 1.5,
+    borderColor: '#e9d5ff',
+    borderRadius: Radii.card,
+    padding: 14,
+    marginTop: 6,
+    marginBottom: 16,
+    shadowColor: Colors.lilac,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  rolesGrid: {
+    gap: 8,
+  },
+  roleTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  roleTagText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.ink,
   },
   adminChip: {
     marginTop: 8,
