@@ -217,7 +217,6 @@ export default function FacultyScanningScreen() {
             isActive={isCameraActive}
             zoom={zoom}
             enableFpsGraph={false}
-            orientation="portrait"
             onError={handleCameraError}
           />
         ) : (
@@ -535,7 +534,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   noCameraPlaceholder: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#120f18',
     justifyContent: 'center',
     alignItems: 'center',

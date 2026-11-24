@@ -243,7 +243,7 @@ export class GallerySyncService {
         modelName: 'EdgeFace-XS',
         activeModelVersion: modelVersion,
         embeddingDimension: detectedDim,
-        normalization: 'L2',
+        normalization: 'MINUS_127_5_DIV_127_5',
         alignmentMode: 'SIMILARITY_TRANSFORM_5PT',
         embeddings: embeddings,
       });

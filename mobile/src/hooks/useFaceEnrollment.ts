@@ -59,7 +59,7 @@ export function useFaceEnrollment(options: UseFaceEnrollmentOptions) {
   // Self-rescheduling loop & in-flight guard refs
   const inFlightRef = useRef<boolean>(false);
   const loopActiveRef = useRef<boolean>(false);
-  const loopTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const loopTimerRef = useRef<any>(null);
 
   const cancelLoop = useCallback(() => {
     loopActiveRef.current = false;

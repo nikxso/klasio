@@ -111,7 +111,14 @@ export class SessionScopedFaceGallery implements IFaceGallery {
         };
       }
 
-      if (profile.normalization !== manifest.normalization) {
+      // Check normalization compatibility:
+      // Accepts manifest.normalization directly, or accepts 'L2' / 'UNIT_L2' as valid unit embedding representation for EdgeFace
+      const isNormMatch =
+        profile.normalization === manifest.normalization ||
+        ((profile.normalization === 'L2' || profile.normalization === 'UNIT_L2') &&
+         manifest.normalization === 'MINUS_127_5_DIV_127_5');
+
+      if (!isNormMatch) {
         return {
           isCompatible: false,
           mismatchedField: 'normalization',

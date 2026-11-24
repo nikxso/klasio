@@ -61,7 +61,7 @@ export const CandidateList: React.FC<CandidateListProps> = ({
           contentContainerStyle={styles.candidateTray}
         >
           {candidates.slice(-8).reverse().map((c) => {
-            const studentName = c.bestMatch.studentName || c.studentUserId;
+            const studentName = c.studentName || c.studentUserId;
             const scorePct = Math.round(c.bestSimilarityScore * 100);
 
             return (

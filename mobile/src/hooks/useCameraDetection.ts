@@ -476,62 +476,49 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
         setTrackingCadenceFps((prev) => (prev === 0 ? fps : Math.round(prev * 0.8 + fps * 0.2)));
       }
 
-      const activeTracks = tracker.getActiveTracks();
+      const activeTracks = tracker.step(now);
+      const stats = tracker.getDiagnostics();
+      setTrackerStats(stats);
+
       const mapped: DetectedFaceBox[] = activeTracks.map((t) => {
-        const d = t.displayBox;
-        const screenW = viewfinderLayout.width;
-        const screenH = viewfinderLayout.height;
-
-        const leftPx = d.x * screenW;
-        const topPx = d.y * screenH;
-        const widthPx = d.width * screenW;
-        const heightPx = d.height * screenH;
-
-        const xPct = Math.max(0, Math.min(100, (leftPx / screenW) * 100));
-        const yPct = Math.max(0, Math.min(100, (topPx / screenH) * 100));
-        const wPct = Math.max(0, Math.min(100, (widthPx / screenW) * 100));
-        const hPct = Math.max(0, Math.min(100, (heightPx / screenH) * 100));
-
+        const b = t.boundingBox;
+        const db = t.displayBox || t.boundingBox;
+        const isCoasting = t.timeSinceLastSeenMs > 250;
         const lm = t.landmarks;
         return {
           id: `track_${t.trackId}`,
           trackId: t.trackId,
-          trackingState: t.state,
-          isConfirmed: t.state === 'confirmed',
+          trackingState: isCoasting ? 'coasting' : t.isConfirmed ? 'confirmed' : 'tentative',
+          isConfirmed: t.isConfirmed,
           quality: t.quality,
-          displayBox: t.displayBox,
-          rawBox: t.boundingBox,
+          displayBox: {
+            x: Math.max(0, Math.min(100, db.x * 100)),
+            y: Math.max(0, Math.min(100, db.y * 100)),
+            width: Math.max(0, Math.min(100, db.width * 100)),
+            height: Math.max(0, Math.min(100, db.height * 100)),
+          },
+          rawBox: {
+            x: Math.max(0, Math.min(100, b.x * 100)),
+            y: Math.max(0, Math.min(100, b.y * 100)),
+            width: Math.max(0, Math.min(100, b.width * 100)),
+            height: Math.max(0, Math.min(100, b.height * 100)),
+          },
           frameId: `track_${t.trackId}_${now}`,
-          captureTimestampMs: t.lastUpdatedMs,
-          resultAgeMs: Math.max(0, now - t.lastUpdatedMs),
-          isStale: t.isCoasting,
-          x: xPct,
-          y: yPct,
-          width: wPct,
-          height: hPct,
+          captureTimestampMs: now - t.timeSinceLastSeenMs,
+          resultAgeMs: t.timeSinceLastSeenMs,
+          isStale: isCoasting,
+          x: Math.max(0, Math.min(100, db.x * 100)),
+          y: Math.max(0, Math.min(100, db.y * 100)),
+          width: Math.max(0, Math.min(100, db.width * 100)),
+          height: Math.max(0, Math.min(100, db.height * 100)),
           confidence: t.confidence,
           landmarks: lm
             ? {
-                leftEye: {
-                  x: Math.max(0, Math.min(100, ((lm.leftEye?.x || 0) * screenW) / screenW * 100)),
-                  y: Math.max(0, Math.min(100, ((lm.leftEye?.y || 0) * screenH) / screenH * 100)),
-                },
-                rightEye: {
-                  x: Math.max(0, Math.min(100, ((lm.rightEye?.x || 0) * screenW) / screenW * 100)),
-                  y: Math.max(0, Math.min(100, ((lm.rightEye?.y || 0) * screenH) / screenH * 100)),
-                },
-                noseTip: {
-                  x: Math.max(0, Math.min(100, ((lm.noseTip?.x || 0) * screenW) / screenW * 100)),
-                  y: Math.max(0, Math.min(100, ((lm.noseTip?.y || 0) * screenH) / screenH * 100)),
-                },
-                mouthLeft: {
-                  x: Math.max(0, Math.min(100, ((lm.mouthLeft?.x || 0) * screenW) / screenW * 100)),
-                  y: Math.max(0, Math.min(100, ((lm.mouthLeft?.y || 0) * screenH) / screenH * 100)),
-                },
-                mouthRight: {
-                  x: Math.max(0, Math.min(100, ((lm.mouthRight?.x || 0) * screenW) / screenW * 100)),
-                  y: Math.max(0, Math.min(100, ((lm.mouthRight?.y || 0) * screenH) / screenH * 100)),
-                },
+                leftEye: { x: (lm.leftEye?.x || 0) * 100, y: (lm.leftEye?.y || 0) * 100 },
+                rightEye: { x: (lm.rightEye?.x || 0) * 100, y: (lm.rightEye?.y || 0) * 100 },
+                noseTip: { x: (lm.noseTip?.x || 0) * 100, y: (lm.noseTip?.y || 0) * 100 },
+                mouthLeft: { x: (lm.mouthLeft?.x || 0) * 100, y: (lm.mouthLeft?.y || 0) * 100 },
+                mouthRight: { x: (lm.mouthRight?.x || 0) * 100, y: (lm.mouthRight?.y || 0) * 100 },
               }
             : undefined,
         };
@@ -559,7 +546,7 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
     const runDetection = async () => {
       if (!isMounted || !isCameraActive) return;
 
-      if (isDetectingRef.current) {
+      if (isDetectingRef.current || inFlightCountRef.current > 0) {
         droppedFramesCountRef.current += 1;
         setDroppedFramesCount(droppedFramesCountRef.current);
         const delayMs = activeDetector === 'YuNet-InMemory' ? 20 : 50;
@@ -568,186 +555,111 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
       }
 
       isDetectingRef.current = true;
-      inFlightCountRef.current += 1;
-      setQueueDepth(inFlightCountRef.current);
+      inFlightCountRef.current = 1;
+      setQueueDepth(1);
 
       frameSeqRef.current += 1;
       const thisFrameSeq = frameSeqRef.current;
       const frameId = `f_${thisFrameSeq}_${Date.now()}`;
+      const captureStart = performance.now();
       const captureStartWall = Date.now();
 
       try {
-        const dummyFrame: RawFrame = {
-          width: 640,
-          height: 640,
-          format: 'rgba',
-          timestampMs: captureStartWall,
-          data: new Uint8Array(64),
-          rotationDegrees: 0,
-        };
+        if (cameraRef.current) {
+          let detections: FaceDetectionResult[] = [];
+          let timings: DetailedPerceptionTimings | undefined;
+          let acquisitionMs = 0;
 
-        const viewTag = findNodeHandle(cameraRef.current);
-        const isInMemory = activeDetector === 'YuNet-InMemory';
-
-        const detector = isInMemory ? directDetector : yunetDetector;
-        if (isInMemory) {
-          (detector as DirectOnDeviceDetector).cameraTag = viewTag;
-        }
-
-        const tBeforeDetect = Date.now();
-        const result = await detector.detect(dummyFrame);
-        const tAfterDetect = Date.now();
-
-        if (thisFrameSeq < lastRenderedFrameSeqRef.current) {
-          staleFramesCountRef.current += 1;
-          setStaleFramesCount(staleFramesCountRef.current);
-          return;
-        }
-        lastRenderedFrameSeqRef.current = thisFrameSeq;
-
-        if (isMounted) {
-          const detections: FaceDetectionResult[] = result.faces || [];
-          const timings = result.timings;
-
-          const nowRendered = Date.now();
-          const renderAge = nowRendered - captureStartWall;
-          const captureToResult = nowRendered - tBeforeDetect;
-
-          setDisplayedFrameId(frameId);
-          setResultAgeMs(renderAge);
-          setCaptureToResultMs(captureToResult);
-          setTotalFramesAnalyzed((prev) => prev + 1);
-
-          const clientMappingStart = Date.now();
-
-          const mappedBoxes: DetectedFaceBox[] = detections.map((f, i) => {
-            const raw = f.box;
-            const targetRes = ANALYSIS_RESOLUTIONS[analysisPreference];
-            const targetWidth = targetRes.targetWidth;
-            const targetHeight = targetRes.targetHeight;
-
-            let bx = raw.x;
-            let by = raw.y;
-            let bw = raw.width;
-            let bh = raw.height;
-
-            if (bx > 1.0 || by > 1.0 || bw > 1.0 || bh > 1.0) {
-              bx = bx / targetWidth;
-              by = by / targetHeight;
-              bw = bw / targetWidth;
-              bh = bh / targetHeight;
+          if (activeDetector === 'YuNet-InMemory') {
+            const nodeHandle = findNodeHandle(cameraRef.current);
+            if (nodeHandle) {
+              directDetector.setCameraTag(nodeHandle);
             }
 
-            const screenW = viewfinderLayout.width;
-            const screenH = viewfinderLayout.height;
-
-            const scaleX = screenW;
-            const scaleY = screenH;
-
-            const leftPx = bx * scaleX;
-            const topPx = by * scaleY;
-            const widthPx = bw * scaleX;
-            const heightPx = bh * scaleY;
-
-            const xPct = Math.max(0, Math.min(100, (leftPx / screenW) * 100));
-            const yPct = Math.max(0, Math.min(100, (topPx / screenH) * 100));
-            const wPct = Math.max(0, Math.min(100, (widthPx / screenW) * 100));
-            const hPct = Math.max(0, Math.min(100, (heightPx / screenH) * 100));
-
-            const lm = f.landmarks as any;
-            let mappedLandmarks: DetectedFaceBox['landmarks'] = undefined;
-            if (lm) {
-              const mouthLeft = lm.mouthLeft || lm.leftMouth || {};
-              const mouthRight = lm.mouthRight || lm.rightMouth || {};
-              const leftEye = lm.leftEye || {};
-              const rightEye = lm.rightEye || {};
-              const noseTip = lm.noseTip || lm.nose || {};
-
-              const normLm = (pt: { x?: number; y?: number }) => {
-                let px = pt.x ?? 0;
-                let py = pt.y ?? 0;
-                if (px > 1.0 || py > 1.0) {
-                  px = px / targetWidth;
-                  py = py / targetHeight;
-                }
-                return {
-                  x: Math.max(0, Math.min(100, (px * scaleX * 100) / screenW)),
-                  y: Math.max(0, Math.min(100, (py * scaleY * 100) / screenH)),
-                };
-              };
-
-              mappedLandmarks = {
-                leftEye: normLm(leftEye),
-                rightEye: normLm(rightEye),
-                noseTip: normLm(noseTip),
-                mouthLeft: normLm(mouthLeft),
-                mouthRight: normLm(mouthRight),
-              };
-            }
-
-            return {
-              id: `${frameId}_${i}`,
-              displayBox: { x: bx, y: by, width: bw, height: bh },
-              rawBox: { x: raw.x, y: raw.y, width: raw.width, height: raw.height },
-              frameId,
+            const rawFrame: RawFrame = {
+              width: viewfinderLayout.width,
+              height: viewfinderLayout.height,
+              format: 'rgba',
+              timestampMs: captureStartWall,
               captureTimestampMs: captureStartWall,
-              resultAgeMs: renderAge,
-              x: xPct,
-              y: yPct,
-              width: wPct,
-              height: hPct,
-              confidence: f.confidence,
-              landmarks: mappedLandmarks,
+              data: '',
+              rotationDegrees: 0,
+              frameId,
             };
-          });
 
-          const clientMappingMs = Date.now() - clientMappingStart;
-          const totalE2EMs = Date.now() - captureStartWall;
-          const inferMs = timings?.inferenceMs ?? timings?.serverInferenceMs ?? tAfterDetect - tBeforeDetect;
-          const overheadMs = Math.max(0, totalE2EMs - inferMs);
+            const directResult = await directDetector.detectFacesDetailed(rawFrame);
+            detections = directResult.results;
+            timings = directResult.timings;
+            acquisitionMs = timings?.frameAcquisitionMs ?? 0;
+          } else {
+            const snap = await cameraRef.current.takeSnapshot({ quality: 80 });
+            const captureEnd = performance.now();
+            acquisitionMs = Math.round(captureEnd - captureStart);
 
-          setDetectionLatencyMs(inferMs);
+            if (snap?.path && isMounted && isCameraActive) {
+              const rawFrame: RawFrame = {
+                width: snap.width,
+                height: snap.height,
+                format: 'jpeg',
+                timestampMs: captureStartWall,
+                captureTimestampMs: captureStartWall,
+                data: snap.path,
+                uri: 'file://' + snap.path,
+                rotationDegrees: 0,
+                frameId,
+              };
 
-          const fullTimings: DetailedPerceptionTimings = {
-            frameAcquisitionMs: timings?.frameAcquisitionMs ?? 0,
-            shmTransferMs: timings?.shmTransferMs ?? 0,
-            directBufferCopyMs: timings?.directBufferCopyMs ?? 0,
-            networkRttMs: timings?.networkRttMs ?? 0,
-            inferenceDurationMs: inferMs,
-            totalPerceptionLatencyMs: totalE2EMs,
-            resultAgeWhenRenderedMs: renderAge,
-            networkTransportMs: timings?.networkTransportMs ?? 0,
-            serverPayloadReadMs: timings?.serverPayloadReadMs ?? 0,
-            serverDecodeImageMs: timings?.serverDecodeImageMs ?? 0,
-            serverPreprocessMs: timings?.serverPreprocessMs ?? 0,
-            serverInferenceMs: inferMs,
-            serverPostprocessMs: timings?.serverPostprocessMs ?? 0,
-            serverTotalMs: timings?.serverTotalMs ?? 0,
-            clientTotalMs: timings?.clientTotalMs ?? 0,
-            clientResultHandlingMs: clientMappingMs,
-            totalEndToEndMs: totalE2EMs,
-            overheadOutsideInferenceMs: overheadMs,
-          };
-          setDetailedTimings(fullTimings);
-
-          const now = Date.now();
-          const deltaMs = now - lastFrameTimeRef.current;
-          lastFrameTimeRef.current = now;
-          if (deltaMs > 0) {
-            const instantaneousFps = Math.min(30, Math.round(1000 / deltaMs));
-            setDetectionCadenceFps((prev) =>
-              prev === 0 ? instantaneousFps : Math.round(prev * 0.7 + instantaneousFps * 0.3)
-            );
+              const res = await yunetDetector.detectFacesDetailed(rawFrame);
+              detections = res.results;
+              timings = res.timings;
+            } else {
+              return;
+            }
           }
 
-          // Temporal tracker update
-          if (isTrackingEnabled) {
-            tracker.update(detections, captureStartWall);
-            const currentStats = tracker.getDiagnostics();
-            setTrackerStats(currentStats);
+          if (thisFrameSeq <= lastRenderedFrameSeqRef.current) {
+            staleFramesCountRef.current += 1;
+            setStaleFramesCount(staleFramesCountRef.current);
+            return;
+          }
+          lastRenderedFrameSeqRef.current = thisFrameSeq;
 
-            const confirmedTracks = tracker.getConfirmedTracks();
-            const frameCandidates: RecognitionCandidate[] = [];
+          if (isMounted) {
+            const renderWallTime = Date.now();
+            const totalE2EMs = Math.round(performance.now() - captureStart);
+            const ageMs = Math.round(renderWallTime - captureStartWall);
+            const capToResult = timings?.captureToResultLatencyMs ?? totalE2EMs;
+
+            setDisplayedFrameId(frameId);
+            setResultAgeMs(ageMs);
+            setCaptureToResultMs(capToResult);
+            setTotalFramesAnalyzed((prev) => prev + 1);
+
+            const inferMs = timings?.serverInferenceMs || (detections[0]?.latencyMs ?? 0);
+            setDetectionLatencyMs(inferMs || totalE2EMs);
+
+            if (timings) {
+              setDetailedTimings(timings);
+            }
+
+            const now = Date.now();
+            const deltaMs = now - lastFrameTimeRef.current;
+            lastFrameTimeRef.current = now;
+            if (deltaMs > 0) {
+              const instantaneousFps = Math.min(30, Math.round(1000 / deltaMs));
+              setDetectionCadenceFps((prev) =>
+                prev === 0 ? instantaneousFps : Math.round(prev * 0.7 + instantaneousFps * 0.3)
+              );
+            }
+
+            // Temporal tracker update
+            if (isTrackingEnabled) {
+              tracker.update(detections, captureStartWall);
+              const currentStats = tracker.getDiagnostics();
+              setTrackerStats(currentStats);
+
+              const confirmedTracks = tracker.getConfirmedTracks();
+              const frameCandidates: RecognitionCandidate[] = [];
 
             if (sessionGalleryRef.current.size > 0) {
               const targetRes = ANALYSIS_RESOLUTIONS[analysisPreference];
@@ -841,6 +753,7 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
                   }
 
                   if (match && match.isConfident && match.matchState === 'MATCHED' && match.studentUserId) {
+                    console.log(`[MATCHER] MATCHED student ${match.studentUserId} (${match.studentName}) score=${match.similarityScore}`);
                     frameCandidates.push({
                       trackId: track.trackId,
                       match,
@@ -849,6 +762,8 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
                       consecutiveConfirmations: track.ageInFrames || 1,
                       isConfirmed: true,
                     });
+                  } else if (match) {
+                    console.log(`[MATCHER] Track ${track.trackId}: state=${match.matchState} score=${match.similarityScore?.toFixed(3)} reason=${match.diagnosticReason || 'none'}`);
                   }
                 } catch (embErr) {
                   console.warn(`[MATCHER] Error processing track ${track.trackId}:`, embErr);
@@ -861,6 +776,48 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
             setScannerMotionState(metrics.state);
             setAccumulatedCandidates(accumulatorRef.current.getAccumulatedCandidates());
           } else {
+            const mappedBoxes: DetectedFaceBox[] = detections.map((d, index) => {
+              const b = d.boundingBox;
+              const xPct = b.x * 100;
+              const yPct = b.y * 100;
+              const wPct = b.width * 100;
+              const hPct = b.height * 100;
+
+              let mappedLandmarks: DetectedFaceBox['landmarks'] = undefined;
+              if (d.landmarks) {
+                const lm = d.landmarks as any;
+                const leftEye = lm.leftEye || {};
+                const rightEye = lm.rightEye || {};
+                const noseTip = lm.noseTip || {};
+                const mouthLeft = lm.mouthLeft || lm.leftMouth || {};
+                const mouthRight = lm.mouthRight || lm.rightMouth || {};
+
+                mappedLandmarks = {
+                  leftEye: { x: (leftEye.x ?? 0) * 100, y: (leftEye.y ?? 0) * 100 },
+                  rightEye: { x: (rightEye.x ?? 0) * 100, y: (rightEye.y ?? 0) * 100 },
+                  noseTip: { x: (noseTip.x ?? 0) * 100, y: (noseTip.y ?? 0) * 100 },
+                  mouthLeft: { x: (mouthLeft.x ?? 0) * 100, y: (mouthLeft.y ?? 0) * 100 },
+                  mouthRight: { x: (mouthRight.x ?? 0) * 100, y: (mouthRight.y ?? 0) * 100 },
+                };
+              }
+
+              return {
+                id: `face_${index}_${Math.round(b.x * 1000)}`,
+                displayBox: { x: b.x, y: b.y, width: b.width, height: b.height },
+                rawBox: { x: b.x, y: b.y, width: b.width, height: b.height },
+                frameId,
+                captureTimestampMs: captureStartWall,
+                resultAgeMs: ageMs,
+                isStale: false,
+                x: Math.max(0, Math.min(100, xPct)),
+                y: Math.max(0, Math.min(100, yPct)),
+                width: Math.max(0, Math.min(100, wPct)),
+                height: Math.max(0, Math.min(100, hPct)),
+                confidence: d.confidence,
+                landmarks: mappedLandmarks,
+              };
+            });
+
             setDetectedFaces(mappedBoxes);
             if (staleClearTimerRef.current) clearTimeout(staleClearTimerRef.current);
             staleClearTimerRef.current = setTimeout(() => {
@@ -870,7 +827,8 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
             }, 900);
           }
         }
-      } catch (err: any) {
+      }
+    } catch (err: any) {
         console.warn('[DETECTION_LOOP] Error during frame detection:', err?.message || err);
       } finally {
         isDetectingRef.current = false;
@@ -987,7 +945,7 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
 
       const darkFaces = detectedFaces.filter(
         (f) =>
-          f.quality?.primaryReason === 'LOW_LIGHT' ||
+          f.quality?.primaryReason === 'LOW_VISIBILITY' ||
           (f.quality?.score !== undefined && f.quality.score < 0.40 && f.quality.state === 'POOR')
       );
       if (darkFaces.length > 0) {

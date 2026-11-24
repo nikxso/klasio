@@ -110,8 +110,8 @@ export const AttendanceReviewSheet: React.FC<AttendanceReviewSheetProps> = ({
               </View>
             ) : (
               candidates.map((c, index) => {
-                const name = c.bestMatch.studentName || 'Student';
-                const id = c.bestMatch.institutionalId || c.studentUserId;
+                const name = c.studentName || 'Student';
+                const id = c.institutionalId || c.studentUserId;
                 const scorePct = Math.round(c.bestSimilarityScore * 100);
 
                 return (
