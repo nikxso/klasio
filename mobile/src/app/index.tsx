@@ -36,7 +36,6 @@ interface RoleOption {
   label: string;
   icon: typeof GraduationCap;
   defaultId: string;
-  field: string;
 }
 
 const ROLES: RoleOption[] = [
@@ -45,37 +44,30 @@ const ROLES: RoleOption[] = [
     label: 'Student',
     icon: GraduationCap,
     defaultId: 'S3',
-    field: 'Roll number',
   },
   {
     key: 'faculty',
     label: 'Faculty',
     icon: Presentation,
     defaultId: 'prof_alan',
-    field: 'Staff ID',
   },
   {
     key: 'admin',
     label: 'Admin',
     icon: ShieldCheck,
     defaultId: 'admin_meera',
-    field: 'Admin ID',
   },
 ];
 
 export default function LoginScreen() {
   const router = useRouter();
-  const [selectedRole, setSelectedRole] = useState<RoleKey>('faculty');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const currentRole = ROLES.find((r) => r.key === selectedRole)!;
-  const [identifier, setIdentifier] = useState(currentRole.defaultId);
-  const [password, setPassword] = useState('password');
-
-  const handleRoleSelect = (roleKey: RoleKey) => {
-    setSelectedRole(roleKey);
+  const handleAutofill = (roleKey: RoleKey) => {
     setAuthError(null);
     const roleConfig = ROLES.find((r) => r.key === roleKey)!;
     setIdentifier(roleConfig.defaultId);
@@ -83,6 +75,15 @@ export default function LoginScreen() {
   };
 
   const handleSignIn = async () => {
+    if (!identifier.trim()) {
+      setAuthError('Please enter your Institutional ID.');
+      return;
+    }
+    if (!password) {
+      setAuthError('Please enter your password.');
+      return;
+    }
+
     setLoading(true);
     setAuthError(null);
     try {
@@ -126,7 +127,7 @@ export default function LoginScreen() {
     } catch (e) {
       console.warn('[AUTH] Offline/connection error during login:', e);
       const cached = await SessionStore.initFromStorage();
-      if (cached?.user && cached.user.role.toLowerCase() === selectedRole.toLowerCase()) {
+      if (cached?.user) {
         setLoading(false);
         if (cached.user.role === 'STUDENT') {
           router.replace('/(student)' as any);
@@ -159,6 +160,7 @@ export default function LoginScreen() {
           ]}
           bounces={false}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Forest Hero Header */}
           <View style={[styles.heroSection, { paddingTop: insets.top + 16 }]}>
@@ -189,39 +191,8 @@ export default function LoginScreen() {
 
           {/* Form Content Area */}
           <View style={styles.formSection}>
-            <Text style={styles.sectionPrompt}>I am a…</Text>
-
-            {/* 3-Column Role Picker */}
-            <View style={styles.rolesGrid}>
-              {ROLES.map((role) => {
-                const IconComponent = role.icon;
-                const isSelected = selectedRole === role.key;
-
-                return (
-                  <Pressable
-                    key={role.key}
-                    onPress={() => handleRoleSelect(role.key)}
-                    style={[
-                      styles.roleCard,
-                      isSelected ? styles.roleCardActive : styles.roleCardInactive,
-                    ]}
-                  >
-                    <IconComponent
-                      size={22}
-                      color={isSelected ? Colors.forest : Colors.soft}
-                    />
-                    <Text
-                      style={[
-                        styles.roleLabel,
-                        isSelected ? styles.roleLabelActive : styles.roleLabelInactive,
-                      ]}
-                    >
-                      {role.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            <Text style={styles.formTitle}>Sign In</Text>
+            <Text style={styles.formSubtitle}>Access your attendance and courses</Text>
 
             {/* Error Banner */}
             {authError && (
@@ -233,14 +204,15 @@ export default function LoginScreen() {
 
             {/* Identifier Input */}
             <View style={styles.fieldContainer}>
-              <Text style={styles.fieldLabel}>{currentRole.field}</Text>
+              <Text style={styles.fieldLabel}>Institutional ID</Text>
               <TextInput
                 style={styles.input}
                 value={identifier}
                 onChangeText={setIdentifier}
-                placeholder={`Enter ${currentRole.field.toLowerCase()}`}
+                placeholder="Enter Institutional ID"
                 placeholderTextColor={Colors.soft}
-                autoCapitalize="characters"
+                autoCapitalize="none"
+                autoCorrect={false}
               />
             </View>
 
@@ -256,6 +228,7 @@ export default function LoginScreen() {
                   placeholder="Enter password"
                   placeholderTextColor={Colors.soft}
                   autoCapitalize="none"
+                  autoCorrect={false}
                 />
                 <Pressable
                   onPress={() => setShowPassword((prev) => !prev)}
@@ -285,17 +258,59 @@ export default function LoginScreen() {
                   'Sign in'
                 )}
               </Button>
-
-              {/* Developer Lab Shortcut */}
-              <Pressable
-                onPress={() => router.push('/lab/perception')}
-                style={{ marginTop: 16, alignItems: 'center' }}
-              >
-                <Text style={{ fontSize: 13, color: Colors.soft, textDecorationLine: 'underline' }}>
-                  🔬 Open Perception Diagnostic Lab
-                </Text>
-              </Pressable>
             </View>
+
+            {/* Debug Quick Autofill Tray */}
+            <View style={styles.autofillSection}>
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>Quick Autofill (Debug)</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              <View style={styles.autofillGrid}>
+                {ROLES.map((role) => {
+                  const IconComponent = role.icon;
+                  const isCurrent = identifier === role.defaultId;
+
+                  return (
+                    <Pressable
+                      key={role.key}
+                      onPress={() => handleAutofill(role.key)}
+                      style={[
+                        styles.autofillCard,
+                        isCurrent ? styles.autofillCardActive : styles.autofillCardInactive,
+                      ]}
+                      accessibilityLabel={`Autofill ${role.label}`}
+                    >
+                      <IconComponent
+                        size={18}
+                        color={isCurrent ? Colors.forest : Colors.soft}
+                      />
+                      <Text
+                        style={[
+                          styles.autofillLabel,
+                          isCurrent ? styles.autofillLabelActive : styles.autofillLabelInactive,
+                        ]}
+                      >
+                        {role.label}
+                      </Text>
+                      <Text style={styles.autofillIdText}>{role.defaultId}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Developer Lab Shortcut */}
+            <Pressable
+              onPress={() => router.push('/lab/perception')}
+              style={styles.labLink}
+            >
+              <Text style={styles.labLinkText}>
+                🔬 Open Perception Diagnostic Lab
+              </Text>
+            </Pressable>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -322,7 +337,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingTop: 12,
     paddingBottom: 32,
-    minHeight: 280,
+    minHeight: 270,
     position: 'relative',
   },
   heroFloatApricot: {
@@ -371,41 +386,16 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 32,
   },
-  sectionPrompt: {
+  formTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.ink,
+    marginBottom: 4,
+  },
+  formSubtitle: {
     fontSize: 14,
     color: Colors.soft,
-    marginBottom: 12,
-  },
-  rolesGrid: {
-    flexDirection: 'row',
-    gap: 8,
     marginBottom: 20,
-  },
-  roleCard: {
-    flex: 1,
-    borderRadius: 16,
-    paddingVertical: 14,
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 2,
-  },
-  roleCardActive: {
-    borderColor: Colors.forest,
-    backgroundColor: Colors.forest50,
-  },
-  roleCardInactive: {
-    borderColor: Colors.line,
-    backgroundColor: Colors.card,
-  },
-  roleLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  roleLabelActive: {
-    color: Colors.forest,
-  },
-  roleLabelInactive: {
-    color: Colors.soft,
   },
   fieldContainer: {
     marginBottom: 16,
@@ -446,8 +436,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   submitContainer: {
-    marginTop: 'auto',
-    paddingTop: 24,
+    marginTop: 8,
   },
   errorBanner: {
     flexDirection: 'row',
@@ -466,5 +455,71 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#b91c1c',
     lineHeight: 18,
+  },
+  autofillSection: {
+    marginTop: 26,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 10,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.line,
+  },
+  dividerText: {
+    fontSize: 11,
+    color: Colors.soft,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  autofillGrid: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  autofillCard: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    gap: 3,
+    borderWidth: 1.5,
+  },
+  autofillCardActive: {
+    borderColor: Colors.forest,
+    backgroundColor: Colors.forest50,
+  },
+  autofillCardInactive: {
+    borderColor: Colors.line,
+    backgroundColor: Colors.card,
+  },
+  autofillLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  autofillLabelActive: {
+    color: Colors.forest,
+  },
+  autofillLabelInactive: {
+    color: Colors.ink,
+  },
+  autofillIdText: {
+    fontSize: 10,
+    color: Colors.soft,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  labLink: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  labLinkText: {
+    fontSize: 13,
+    color: Colors.soft,
+    textDecorationLine: 'underline',
   },
 });
