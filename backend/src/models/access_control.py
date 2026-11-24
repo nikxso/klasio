@@ -66,9 +66,11 @@ class DelegationType(str, enum.Enum):
 
 
 class DelegationLifecycleStatus(str, enum.Enum):
+    PENDING_APPROVAL = "PENDING_APPROVAL"
     ACTIVE = "ACTIVE"
     REVOKED = "REVOKED"
     EXPIRED = "EXPIRED"
+    REJECTED = "REJECTED"
 
 
 class AuditOutcome(str, enum.Enum):
@@ -513,7 +515,7 @@ class Delegation(Base, TimestampMixin):
         server_default=text("'FACULTY_SUBSTITUTE'"),
     )
     status: Mapped[DelegationLifecycleStatus] = mapped_column(
-        SQLEnum(DelegationLifecycleStatus, name="delegation_lifecycle_status", native_enum=False),
+        SQLEnum(DelegationLifecycleStatus, name="delegation_lifecycle_status", native_enum=False, length=32),
         nullable=False,
         default=DelegationLifecycleStatus.ACTIVE,
     )

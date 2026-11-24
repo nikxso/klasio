@@ -250,6 +250,8 @@ async def test_rule_3_clock_exclusive_upper_bound_rejected(db_session: AsyncSess
         grantor_role_assignment_id=assign.id,
         grantee_membership_id=m_grantee.id,
         status=DelegationLifecycleStatus.ACTIVE,
+        approved_by_membership_id=m_grantor.id,
+        approved_at=t_start - timedelta(hours=1),
         valid_from=t_start,
         valid_until=t_end,
         reason="Test delegation rule 3",

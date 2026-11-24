@@ -27,7 +27,7 @@ from src.models.access_control import (
     AuthorizationAudit,
     AuditOutcome,
 )
-from src.services.authorization_evaluator import AuthorizationEvaluator
+from src.services.authorization_evaluator import AuthorizationEvaluator, LEGACY_PERMISSION_MAP
 
 bearer_scheme = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
@@ -210,6 +210,7 @@ def require_permission(
     resource_param: Optional[str] = None,
 ) -> Callable:
     """Authoritative IAC v1 dependency guard evaluating permissions via AuthorizationEvaluator."""
+    canonical_permission = LEGACY_PERMISSION_MAP.get(permission_code, permission_code)
 
     async def permission_checker(
         request: Request,
@@ -224,7 +225,7 @@ def require_permission(
         evaluator = AuthorizationEvaluator(db)
         decision = await evaluator.evaluate(
             actor_user_id=current_user.id,
-            permission_code=permission_code,
+            permission_code=canonical_permission,
             institution_id=inst_id,
             resource_type=res_type,
             resource_id=res_id,
@@ -236,7 +237,7 @@ def require_permission(
                 actor_membership_id=membership.id,
                 institution_id=inst_id,
                 action=permission_code,
-                permission_code=permission_code,
+                permission_code=canonical_permission,
                 target_resource_type=res_type,
                 target_resource_id=str(res_id) if res_id else None,
                 outcome=AuditOutcome.DENIED,

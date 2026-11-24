@@ -40,10 +40,32 @@ from src.models.access_control import (
     RoleScopeType,
     RoleAssignmentScope,
     Delegation,
+    DelegationType,
     DelegationLifecycleStatus,
     delegation_permissions,
     DelegationScope,
 )
+
+
+LEGACY_PERMISSION_MAP: Dict[str, str] = {
+    "attendance:scan": "attendance.session.start",
+    "attendance:finalize": "attendance.session.finalize",
+    "attendance:view": "attendance.session.view",
+    "attendance:create": "attendance.session.create",
+    "attendance:cancel": "attendance.session.cancel",
+    "attendance:mark": "attendance.mark.manual",
+    "attendance:amend": "attendance.amendment.request",
+    "attendance:amend:approve": "attendance.amendment.approve",
+    "reports:view": "reports.view",
+    "reports:export": "reports.export",
+    "biometrics:enroll": "biometrics.enroll.assisted",
+    "biometrics:enroll:self": "biometrics.enroll.self",
+    "biometrics:status": "biometrics.status.view",
+    "biometrics:template:read": "biometrics.template.read",
+    "delegation:create": "delegation.create",
+    "delegation:approve": "delegation.approve",
+    "delegation:revoke": "delegation.revoke",
+}
 
 
 @dataclass(frozen=True)
@@ -82,6 +104,23 @@ class AuthorizationEvaluator:
         now = clock_now or datetime.now(timezone.utc)
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
+
+        # 0. Biometric Privacy Non-Disclosure Gate
+        # Strictly prohibit direct template/vector access for all human accounts
+        if permission_code in ("biometrics.template.read", "biometrics:template:read"):
+            return AuthorizationDecision(
+                allowed=False,
+                reason_code="BIOMETRIC_VECTOR_ACCESS_PROHIBITED",
+                reason="Direct vector or biometric template access is strictly prohibited for all human accounts",
+                actor_user_id=actor_user_id,
+                institution_id=institution_id,
+                permission_code=permission_code,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                eval_time=now,
+            )
+
+        effective_permission = LEGACY_PERMISSION_MAP.get(permission_code, permission_code)
 
         # 1. Verify User existence & active account status
         user_stmt = select(User).where(User.id == actor_user_id)
@@ -205,7 +244,10 @@ class AuthorizationEvaluator:
                     RoleAssignment.membership_id == membership.id,
                     RoleAssignment.institution_id == institution_id,
                     RoleAssignment.status == AssignmentStatus.ACTIVE,
-                    Permission.code == permission_code,
+                    or_(
+                        Permission.code == permission_code,
+                        Permission.code == effective_permission,
+                    ),
                     RoleAssignment.valid_from <= now,
                     or_(
                         RoleAssignment.valid_until.is_(None),
@@ -250,7 +292,10 @@ class AuthorizationEvaluator:
                     Delegation.grantee_membership_id == membership.id,
                     Delegation.institution_id == institution_id,
                     Delegation.status == DelegationLifecycleStatus.ACTIVE,
-                    Permission.code == permission_code,
+                    or_(
+                        Permission.code == permission_code,
+                        Permission.code == effective_permission,
+                    ),
                     Delegation.valid_from <= now,
                     Delegation.valid_until > now,
                 )
@@ -259,6 +304,17 @@ class AuthorizationEvaluator:
         delegations = (await self.db.execute(deleg_stmt)).scalars().all()
 
         for delegation in delegations:
+            # Enforce HoD approval for FACULTY_SUBSTITUTE delegations:
+            # Valid ONLY if ACTIVE, approved_by_membership_id and approved_at are present, and within valid window
+            if delegation.delegation_type == DelegationType.FACULTY_SUBSTITUTE:
+                if (
+                    delegation.status != DelegationLifecycleStatus.ACTIVE
+                    or delegation.approved_by_membership_id is None
+                    or delegation.approved_at is None
+                    or not (delegation.valid_from <= now < delegation.valid_until)
+                ):
+                    continue
+
             # Grantor assignment must also be active, valid, not INSTITUTION_OWNER, and belonging to an ACTIVE member
             grantor_stmt = (
                 select(RoleAssignment)
@@ -273,7 +329,10 @@ class AuthorizationEvaluator:
                         RoleAssignment.status == AssignmentStatus.ACTIVE,
                         InstitutionMembership.status == MembershipStatus.ACTIVE,
                         RoleTemplate.code != "INSTITUTION_OWNER",
-                        Permission.code == permission_code,
+                        or_(
+                            Permission.code == permission_code,
+                            Permission.code == effective_permission,
+                        ),
                         RoleAssignment.valid_from <= now,
                         or_(
                             RoleAssignment.valid_until.is_(None),
@@ -323,7 +382,10 @@ class AuthorizationEvaluator:
                     and_(
                         RoleAssignment.membership_id == membership.id,
                         RoleAssignment.institution_id == institution_id,
-                        Permission.code == permission_code,
+                        or_(
+                            Permission.code == permission_code,
+                            Permission.code == effective_permission,
+                        ),
                     )
                 )
             )
@@ -409,12 +471,12 @@ class AuthorizationEvaluator:
             if not s or s.institution_id != institution_id:
                 return False, f"ClassSection '{resource_id}' does not belong to institution '{institution_id}'"
         elif rtype == "TEACHING_ASSIGNMENT":
-            ta = (await self.db.execute(
-                select(TeachingAssignment)
-                .join(ClassSection, TeachingAssignment.class_section_id == ClassSection.id)
+            inst_id = (await self.db.execute(
+                select(ClassSection.institution_id)
+                .join(TeachingAssignment, TeachingAssignment.class_section_id == ClassSection.id)
                 .where(TeachingAssignment.id == resource_id)
             )).scalar_one_or_none()
-            if not ta or ta.class_section.institution_id != institution_id:
+            if not inst_id or inst_id != institution_id:
                 return False, f"TeachingAssignment '{resource_id}' does not belong to institution '{institution_id}'"
         elif rtype == "STUDENT":
             m = (await self.db.execute(
@@ -469,10 +531,12 @@ class AuthorizationEvaluator:
                     if sec and sec.campus_id == s.campus_id:
                         return True, None
                 if rtype == "TEACHING_ASSIGNMENT":
-                    ta = (await self.db.execute(
-                        select(TeachingAssignment).join(ClassSection).where(TeachingAssignment.id == resource_id)
+                    ta_campus_id = (await self.db.execute(
+                        select(ClassSection.campus_id)
+                        .join(TeachingAssignment, TeachingAssignment.class_section_id == ClassSection.id)
+                        .where(TeachingAssignment.id == resource_id)
                     )).scalar_one_or_none()
-                    if ta and ta.class_section.campus_id == s.campus_id:
+                    if ta_campus_id == s.campus_id:
                         return True, None
 
             # 3. DEPARTMENT scope
@@ -484,10 +548,12 @@ class AuthorizationEvaluator:
                     if sec and sec.department_id == s.department_id:
                         return True, None
                 if rtype == "TEACHING_ASSIGNMENT":
-                    ta = (await self.db.execute(
-                        select(TeachingAssignment).join(ClassSection).where(TeachingAssignment.id == resource_id)
+                    ta_dept_id = (await self.db.execute(
+                        select(ClassSection.department_id)
+                        .join(TeachingAssignment, TeachingAssignment.class_section_id == ClassSection.id)
+                        .where(TeachingAssignment.id == resource_id)
                     )).scalar_one_or_none()
-                    if ta and ta.class_section.department_id == s.department_id:
+                    if ta_dept_id == s.department_id:
                         return True, None
 
             # 4. ACADEMIC_TERM scope
@@ -504,8 +570,10 @@ class AuthorizationEvaluator:
                 if rtype == "CLASS_SECTION" and s.class_section_id == resource_id:
                     return True, None
                 if rtype == "TEACHING_ASSIGNMENT":
-                    ta = (await self.db.execute(select(TeachingAssignment).where(TeachingAssignment.id == resource_id))).scalar_one_or_none()
-                    if ta and ta.class_section_id == s.class_section_id:
+                    sec_id = (await self.db.execute(
+                        select(TeachingAssignment.class_section_id).where(TeachingAssignment.id == resource_id)
+                    )).scalar_one_or_none()
+                    if sec_id == s.class_section_id:
                         return True, None
                 if rtype == "STUDENT":
                     # Covered if student is enrolled in this section
@@ -558,12 +626,45 @@ class AuthorizationEvaluator:
         for s in scopes:
             if s.scope_type == RoleScopeType.INSTITUTION:
                 return True, None
-            if s.scope_type == RoleScopeType.CAMPUS and rtype == "CAMPUS" and s.campus_id == resource_id:
-                return True, None
-            if s.scope_type == RoleScopeType.DEPARTMENT and rtype == "DEPARTMENT" and s.department_id == resource_id:
-                return True, None
-            if s.scope_type == RoleScopeType.CLASS_SECTION and rtype == "CLASS_SECTION" and s.class_section_id == resource_id:
-                return True, None
+            if s.scope_type == RoleScopeType.CAMPUS:
+                if rtype == "CAMPUS" and s.campus_id == resource_id:
+                    return True, None
+                if rtype == "CLASS_SECTION":
+                    sec_campus_id = (await self.db.execute(select(ClassSection.campus_id).where(ClassSection.id == resource_id))).scalar_one_or_none()
+                    if sec_campus_id == s.campus_id:
+                        return True, None
+                if rtype == "TEACHING_ASSIGNMENT":
+                    ta_campus_id = (await self.db.execute(
+                        select(ClassSection.campus_id)
+                        .join(TeachingAssignment, TeachingAssignment.class_section_id == ClassSection.id)
+                        .where(TeachingAssignment.id == resource_id)
+                    )).scalar_one_or_none()
+                    if ta_campus_id == s.campus_id:
+                        return True, None
+            if s.scope_type == RoleScopeType.DEPARTMENT:
+                if rtype == "DEPARTMENT" and s.department_id == resource_id:
+                    return True, None
+                if rtype == "CLASS_SECTION":
+                    sec_dept_id = (await self.db.execute(select(ClassSection.department_id).where(ClassSection.id == resource_id))).scalar_one_or_none()
+                    if sec_dept_id == s.department_id:
+                        return True, None
+                if rtype == "TEACHING_ASSIGNMENT":
+                    ta_dept_id = (await self.db.execute(
+                        select(ClassSection.department_id)
+                        .join(TeachingAssignment, TeachingAssignment.class_section_id == ClassSection.id)
+                        .where(TeachingAssignment.id == resource_id)
+                    )).scalar_one_or_none()
+                    if ta_dept_id == s.department_id:
+                        return True, None
+            if s.scope_type == RoleScopeType.CLASS_SECTION:
+                if rtype == "CLASS_SECTION" and s.class_section_id == resource_id:
+                    return True, None
+                if rtype == "TEACHING_ASSIGNMENT":
+                    sec_id = (await self.db.execute(
+                        select(TeachingAssignment.class_section_id).where(TeachingAssignment.id == resource_id)
+                    )).scalar_one_or_none()
+                    if sec_id == s.class_section_id:
+                        return True, None
             if s.scope_type == RoleScopeType.TEACHING_ASSIGNMENT and rtype == "TEACHING_ASSIGNMENT" and s.teaching_assignment_id == resource_id:
                 return True, None
             if s.scope_type == RoleScopeType.STUDENT and rtype == "STUDENT" and s.student_user_id == resource_id:

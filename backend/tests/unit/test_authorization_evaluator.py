@@ -363,6 +363,8 @@ async def test_evaluator_delegation_success(db_session: AsyncSession):
         grantor_role_assignment_id=assign_reg.id,
         grantee_membership_id=m_sub.id,
         status=DelegationLifecycleStatus.ACTIVE,
+        approved_by_membership_id=m_reg.id,
+        approved_at=now - timedelta(hours=1),
         valid_from=now - timedelta(hours=1),
         valid_until=now + timedelta(days=2),
         reason="Sick leave coverage",
