@@ -13,7 +13,7 @@ export default function AdminStackLayout() {
         title="Admin Console Restricted"
         message="Student accounts cannot access administrative consoles or institutional configurations."
         requiredCapability="institution.manage or campus.manage"
-        onBack={() => router.replace('/(student)')}
+        onBack={() => router.replace('/(student)' as any)}
       />
     );
   }

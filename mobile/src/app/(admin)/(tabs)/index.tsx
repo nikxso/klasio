@@ -161,7 +161,7 @@ export default function AdminHomeScreen() {
           if (router.canGoBack()) {
             router.back();
           } else {
-            router.replace('/(faculty)');
+            router.replace('/(faculty)' as any);
           }
         }}
       />

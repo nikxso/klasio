@@ -147,7 +147,7 @@ export default function AdminPeopleScreen() {
         title="People Directory Restricted"
         message="Viewing or managing institutional memberships and rosters requires administrative or departmental staff authority."
         requiredCapability="membership.view"
-        onBack={() => router.replace('/(admin)')}
+        onBack={() => router.replace('/(admin)' as any)}
       />
     );
   }
@@ -667,7 +667,7 @@ export default function AdminPeopleScreen() {
         if (router.canGoBack()) {
           router.back();
         } else {
-          router.replace('/(faculty)');
+          router.replace('/(faculty)' as any);
         }
       }}
       scrollable

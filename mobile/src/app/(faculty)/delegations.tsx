@@ -106,7 +106,7 @@ export default function DelegationsScreen() {
         title="Delegations Restricted"
         message="Your active role does not permit creating or approving authority delegations."
         requiredCapability="delegation.create / delegation.approve"
-        onBack={() => router.replace('/(faculty)')}
+        onBack={() => router.replace('/(faculty)' as any)}
       />
     );
   }

@@ -29,7 +29,7 @@ interface ScreenProps {
   right?: ReactNode;
   hero?: ReactNode;
   scrollable?: boolean;
-  refreshControl?: React.ReactElement;
+  refreshControl?: React.ReactElement<any>;
 }
 
 export function Screen({
@@ -109,11 +109,22 @@ export function Screen({
 interface CardProps {
   children: ReactNode;
   onPress?: () => void;
-  style?: object;
+  style?: any;
   tone?: 'normal' | 'apricot' | 'forest' | 'amber';
+  accessibilityRole?: any;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
 }
 
-export function Card({ children, onPress, style, tone = 'normal' }: CardProps) {
+export function Card({
+  children,
+  onPress,
+  style,
+  tone = 'normal',
+  accessibilityRole,
+  accessibilityLabel,
+  accessibilityHint,
+}: CardProps) {
   const bgStyle =
     tone === 'apricot'
       ? { backgroundColor: Colors.apricot50 }
@@ -127,6 +138,9 @@ export function Card({ children, onPress, style, tone = 'normal' }: CardProps) {
     return (
       <Pressable
         onPress={onPress}
+        accessibilityRole={accessibilityRole}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityHint={accessibilityHint}
         style={({ pressed }) => [
           styles.card,
           bgStyle,

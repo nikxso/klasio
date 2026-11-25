@@ -61,7 +61,7 @@ export default function SelectAttendanceContextScreen() {
         title="Attendance Scanner Restricted"
         message="Your active user roles do not permit live classroom attendance scanning."
         requiredCapability="attendance.session.start"
-        onBack={() => router.replace('/(faculty)')}
+        onBack={() => router.replace('/(faculty)' as any)}
       />
     );
   }

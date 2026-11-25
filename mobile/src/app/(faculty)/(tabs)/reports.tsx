@@ -88,7 +88,7 @@ export default function FacultyReportsScreen() {
         title="Reports Restricted"
         message="Attendance analytics and recovery reports are restricted to authorized academic personnel."
         requiredCapability="reports.view"
-        onBack={() => router.replace('/(faculty)')}
+        onBack={() => router.replace('/(faculty)' as any)}
       />
     );
   }

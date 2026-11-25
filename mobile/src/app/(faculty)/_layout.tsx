@@ -13,7 +13,7 @@ export default function FacultyStackLayout() {
         title="Faculty Workspace Restricted"
         message="Student accounts cannot access faculty or administrative workflows."
         requiredCapability="attendance.session.start or faculty role"
-        onBack={() => router.replace('/(student)')}
+        onBack={() => router.replace('/(student)' as any)}
       />
     );
   }

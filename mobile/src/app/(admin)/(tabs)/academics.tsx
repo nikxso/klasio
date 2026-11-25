@@ -399,7 +399,7 @@ export default function AdminAcademicsScreen() {
         if (router.canGoBack()) {
           router.back();
         } else {
-          router.replace('/(faculty)');
+          router.replace('/(faculty)' as any);
         }
       }}
       scrollable

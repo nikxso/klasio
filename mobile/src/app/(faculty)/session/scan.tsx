@@ -39,7 +39,7 @@ export default function FacultyScanningScreen() {
         title="Attendance Scanner Restricted"
         message="Live camera attendance scanning requires authorized teaching or attendance permissions."
         requiredCapability="attendance.session.start"
-        onBack={() => router.replace('/(faculty)')}
+        onBack={() => router.replace('/(faculty)' as any)}
       />
     );
   }

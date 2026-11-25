@@ -36,7 +36,7 @@ export default function AdminSettingsScreen() {
         title="Settings Restricted"
         message="Institutional policies, thresholds, and technical configurations require IT or Governance Administration authority."
         requiredCapability="institution.manage"
-        onBack={() => router.replace('/(admin)')}
+        onBack={() => router.replace('/(admin)' as any)}
       />
     );
   }
@@ -121,7 +121,7 @@ export default function AdminSettingsScreen() {
         if (router.canGoBack()) {
           router.back();
         } else {
-          router.replace('/(faculty)');
+          router.replace('/(faculty)' as any);
         }
       }}
       scrollable

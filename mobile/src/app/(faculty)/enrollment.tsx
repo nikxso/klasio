@@ -53,7 +53,7 @@ export default function FacultyEnrollmentScreen() {
         title="Biometric Enrollment Restricted"
         message="Assisted biometric enrollment requires Biometric Enrollment Officer or authorized faculty permissions."
         requiredCapability="biometrics.enroll.assisted"
-        onBack={() => router.replace('/(faculty)')}
+        onBack={() => router.replace('/(faculty)' as any)}
       />
     );
   }

@@ -12,6 +12,7 @@ export const Colors = {
 
   // Primary Brand
   forest: '#205442',   // Klasio Primary Brand / Buttons
+  primary: '#205442',  // Primary Brand Alias
   forest50: '#E7EFEA', // Klasio soft mint surface
 
   // Secondary Brand
