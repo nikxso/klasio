@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       apiUrl:
-        description: 'Backend Server URL (e.g. http://<azure-vm-ip>:8000 or https://your-domain.com)'
+        description: 'Backend Server URL (e.g. https://payment-adaptor-pottery-answered.trycloudflare.com)'
         required: false
-        default: ''
+        default: 'https://payment-adaptor-pottery-answered.trycloudflare.com'
   release:
     types: [published]
 
@@ -55,7 +55,7 @@ jobs:
       - name: Compile Universal Release APK with Gradle
         working-directory: mobile/android
         env:
-          EXPO_PUBLIC_API_URL: ${{ inputs.apiUrl || vars.EXPO_PUBLIC_API_URL || secrets.EXPO_PUBLIC_API_URL || 'http://20.244.48.12:8000' }}
+          EXPO_PUBLIC_API_URL: ${{ inputs.apiUrl || vars.EXPO_PUBLIC_API_URL || secrets.EXPO_PUBLIC_API_URL || 'https://payment-adaptor-pottery-answered.trycloudflare.com' }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
