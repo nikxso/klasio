@@ -73,10 +73,15 @@ def align_and_crop_portrait(img_bytes: bytes, target_size=(512, 512)) -> bytes:
         return img_bytes
 
     h, w, _ = img.shape
-    yunet_path = Path("/home/dope/Documents/atten/mobile/src/lab/models/yunet_2023mar.onnx")
+    candidates = [
+        Path("/app/src/models/yunet_2023mar.onnx"),
+        Path(__file__).resolve().parent.parent.parent / "models" / "yunet_2023mar.onnx",
+        Path("/home/dope/Documents/atten/mobile/src/lab/models/yunet_2023mar.onnx"),
+    ]
+    yunet_path = next((p for p in candidates if p.exists()), None)
 
     faces = None
-    if yunet_path.exists():
+    if yunet_path is not None:
         try:
             detector = cv2.FaceDetectorYN_create(str(yunet_path), "", (w, h), score_threshold=0.4)
             detector.setInputSize((w, h))
