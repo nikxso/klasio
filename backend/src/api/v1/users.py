@@ -27,7 +27,11 @@ UPLOAD_DIR = Path(
         str(Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "profile_photos"),
     )
 )
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+except (PermissionError, OSError):
+    UPLOAD_DIR = Path("/tmp/uploads/profile_photos")
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ProfilePhotoBase64Request(BaseModel):

@@ -39,6 +39,9 @@ COPY --chown=appuser:appgroup alembic.ini ./
 COPY --chown=appuser:appgroup scripts/ ./scripts/
 COPY --chown=appuser:appgroup README.md ./
 
+# Create uploads directory with correct permissions
+RUN mkdir -p /app/uploads/profile_photos && chown -R appuser:appgroup /app
+
 # Set environment variables for Python execution
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
