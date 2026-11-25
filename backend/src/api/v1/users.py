@@ -21,7 +21,12 @@ from src.models.user import User, UserRole
 
 router = APIRouter(prefix="/api/v1/users", tags=["User Profiles & Photos"])
 
-UPLOAD_DIR = Path("/home/dope/Documents/atten/backend/uploads/profile_photos")
+UPLOAD_DIR = Path(
+    os.getenv(
+        "UPLOAD_DIR",
+        str(Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "profile_photos"),
+    )
+)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -76,7 +81,7 @@ def align_and_crop_portrait(img_bytes: bytes, target_size=(512, 512)) -> bytes:
     candidates = [
         Path("/app/src/models/yunet_2023mar.onnx"),
         Path(__file__).resolve().parent.parent.parent / "models" / "yunet_2023mar.onnx",
-        Path("/home/dope/Documents/atten/mobile/src/lab/models/yunet_2023mar.onnx"),
+        Path(__file__).resolve().parents[3] / "mobile" / "src" / "lab" / "models" / "yunet_2023mar.onnx",
     ]
     yunet_path = next((p for p in candidates if p.exists()), None)
 
