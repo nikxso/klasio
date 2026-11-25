@@ -33,7 +33,7 @@ services:
   # 2. One-Shot Alembic Migration Runner (Prevents concurrent migration race)
   # ----------------------------------------------------------------------------
   migration:
-    image: localhost/atten-backend:staging
+    image: ghcr.io/nikxso/klasio-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -54,7 +54,7 @@ services:
   # 3. FastAPI Application Backend (Runs as non-root user appuser)
   # ----------------------------------------------------------------------------
   api:
-    image: localhost/atten-backend:staging
+    image: ghcr.io/nikxso/klasio-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
