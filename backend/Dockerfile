@@ -11,8 +11,8 @@ WORKDIR /build
 COPY pyproject.toml README.md ./
 
 # Install pip and build dependencies into /install
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir --prefix=/install .
+RUN pip install --no-cache-dir --timeout 100 --retries 5 --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir --timeout 100 --retries 5 --prefix=/install .
 
 # Stage 2: Minimal Runtime Container
 FROM python:3.12-slim AS runtime
