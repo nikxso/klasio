@@ -23,10 +23,11 @@ import {
   Landmark,
 } from 'lucide-react-native';
 
-import { Screen, Card, IconBubble, SectionTitle, Sheet, Button, Chip } from '@/components/ui/kit';
+import { Screen, Card, IconBubble, SectionTitle, Sheet, Button, Chip, AccessRestrictedView } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
+import { extractErrorMessage } from '@/utils/apiError';
 
 interface CampusItem {
   id: string;
@@ -220,8 +221,8 @@ export default function AdminAcademicsScreen() {
         setActiveSheet('NONE');
         await loadAcademicsData();
       } else {
-        const err = await res.json();
-        setErrorMessage(err.detail || 'Failed to create campus');
+        const errorMsg = await extractErrorMessage(res, 'Failed to create campus');
+        setErrorMessage(errorMsg);
       }
     } catch (e: any) {
       setErrorMessage(e?.message || 'Network error');
@@ -254,8 +255,8 @@ export default function AdminAcademicsScreen() {
         setActiveSheet('NONE');
         await loadAcademicsData();
       } else {
-        const err = await res.json();
-        setErrorMessage(err.detail || 'Failed to create department');
+        const errorMsg = await extractErrorMessage(res, 'Failed to create department');
+        setErrorMessage(errorMsg);
       }
     } catch (e: any) {
       setErrorMessage(e?.message || 'Network error');
@@ -294,8 +295,8 @@ export default function AdminAcademicsScreen() {
         setActiveSheet('NONE');
         await loadAcademicsData();
       } else {
-        const err = await res.json();
-        setErrorMessage(err.detail || 'Failed to create subject');
+        const errorMsg = await extractErrorMessage(res, 'Failed to create subject');
+        setErrorMessage(errorMsg);
       }
     } catch (e: any) {
       setErrorMessage(e?.message || 'Network error');
@@ -332,8 +333,8 @@ export default function AdminAcademicsScreen() {
         setActiveSheet('NONE');
         await loadAcademicsData();
       } else {
-        const err = await res.json();
-        setErrorMessage(err.detail || 'Failed to create section');
+        const errorMsg = await extractErrorMessage(res, 'Failed to create section');
+        setErrorMessage(errorMsg);
       }
     } catch (e: any) {
       setErrorMessage(e?.message || 'Network error');
@@ -370,8 +371,8 @@ export default function AdminAcademicsScreen() {
         setActiveSheet('NONE');
         await loadAcademicsData();
       } else {
-        const err = await res.json();
-        setErrorMessage(err.detail || 'Failed to assign faculty');
+        const errorMsg = await extractErrorMessage(res, 'Failed to assign faculty');
+        setErrorMessage(errorMsg);
       }
     } catch (e: any) {
       setErrorMessage(e?.message || 'Network error');
@@ -380,10 +381,27 @@ export default function AdminAcademicsScreen() {
     }
   };
 
+  if (!SessionStore.canManageAcademics()) {
+    return (
+      <AccessRestrictedView
+        title="Academic Catalog Restricted"
+        message="Your role does not grant permission to view or manage academic programs, departments, or course structures."
+        requiredCapability="academic_structure.view or academic_structure.manage"
+      />
+    );
+  }
+
   return (
     <Screen
       title="Academics"
       subtitle="Departments, Subjects, Sections & Assignments"
+      onBack={() => {
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/(faculty)');
+        }
+      }}
       scrollable
     >
       {/* Campuses Overview */}
@@ -435,67 +453,90 @@ export default function AdminAcademicsScreen() {
       </View>
 
       <SectionTitle>Quick Actions</SectionTitle>
-      <View style={styles.actionsGrid}>
-        {/* 0. Add Campus */}
-        <Card
-          onPress={() => {
-            setErrorMessage(null);
-            setActiveSheet('CAMPUS');
-          }}
-          style={styles.actionCard}
-        >
-          <Landmark size={24} color={Colors.forest} />
-          <Text style={styles.actionLabel}>Add campus</Text>
-        </Card>
+      {SessionStore.canEditAcademics() ? (
+        <View style={styles.actionsGrid}>
+          {/* 0. Add Campus */}
+          <Card
+            onPress={() => {
+              setErrorMessage(null);
+              setActiveSheet('CAMPUS');
+            }}
+            style={styles.actionCard}
+            accessibilityRole="button"
+            accessibilityLabel="Add campus"
+            accessibilityHint="Opens sheet to establish a new campus"
+          >
+            <Landmark size={24} color={Colors.forest} />
+            <Text style={styles.actionLabel}>Add campus</Text>
+          </Card>
 
-        {/* 1. Add Department */}
-        <Card
-          onPress={() => {
-            setErrorMessage(null);
-            setActiveSheet('DEPT');
-          }}
-          style={styles.actionCard}
-        >
-          <Building2 size={24} color={Colors.forest} />
-          <Text style={styles.actionLabel}>Add department</Text>
-        </Card>
+          {/* 1. Add Department */}
+          <Card
+            onPress={() => {
+              setErrorMessage(null);
+              setActiveSheet('DEPT');
+            }}
+            style={styles.actionCard}
+            accessibilityRole="button"
+            accessibilityLabel="Add department"
+            accessibilityHint="Opens sheet to create a department"
+          >
+            <Building2 size={24} color={Colors.forest} />
+            <Text style={styles.actionLabel}>Add department</Text>
+          </Card>
 
-        {/* 2. Add Subject */}
-        <Card
-          onPress={() => {
-            setErrorMessage(null);
-            setActiveSheet('SUBJECT');
-          }}
-          style={styles.actionCard}
-        >
-          <BookOpen size={24} color={Colors.forest} />
-          <Text style={styles.actionLabel}>Add subject</Text>
-        </Card>
+          {/* 2. Add Subject */}
+          <Card
+            onPress={() => {
+              setErrorMessage(null);
+              setActiveSheet('SUBJECT');
+            }}
+            style={styles.actionCard}
+            accessibilityRole="button"
+            accessibilityLabel="Add subject"
+            accessibilityHint="Opens sheet to create a subject"
+          >
+            <BookOpen size={24} color={Colors.forest} />
+            <Text style={styles.actionLabel}>Add subject</Text>
+          </Card>
 
-        {/* 3. Add Section */}
-        <Card
-          onPress={() => {
-            setErrorMessage(null);
-            setActiveSheet('SECTION');
-          }}
-          style={styles.actionCard}
-        >
-          <Plus size={24} color={Colors.forest} />
-          <Text style={styles.actionLabel}>Add section</Text>
-        </Card>
+          {/* 3. Add Section */}
+          <Card
+            onPress={() => {
+              setErrorMessage(null);
+              setActiveSheet('SECTION');
+            }}
+            style={styles.actionCard}
+            accessibilityRole="button"
+            accessibilityLabel="Add section"
+            accessibilityHint="Opens sheet to add a class section"
+          >
+            <Plus size={24} color={Colors.forest} />
+            <Text style={styles.actionLabel}>Add section</Text>
+          </Card>
 
-        {/* 4. Assign Teacher */}
-        <Card
-          onPress={() => {
-            setErrorMessage(null);
-            setActiveSheet('ASSIGN');
-          }}
-          style={styles.actionCard}
-        >
-          <Link2 size={24} color={Colors.forest} />
-          <Text style={styles.actionLabel}>Assign teacher</Text>
+          {/* 4. Assign Teacher */}
+          <Card
+            onPress={() => {
+              setErrorMessage(null);
+              setActiveSheet('ASSIGN');
+            }}
+            style={styles.actionCard}
+            accessibilityRole="button"
+            accessibilityLabel="Assign teacher"
+            accessibilityHint="Opens sheet to assign faculty to section"
+          >
+            <Link2 size={24} color={Colors.forest} />
+            <Text style={styles.actionLabel}>Assign teacher</Text>
+          </Card>
+        </View>
+      ) : (
+        <Card style={{ padding: 14, alignItems: 'center', marginVertical: 8 }}>
+          <Text style={{ color: Colors.soft, fontSize: 13, textAlign: 'center' }}>
+            Catalog Read-Only: Structure creation and teacher assignment require Registrar or Administrator privileges.
+          </Text>
         </Card>
-      </View>
+      )}
 
       {/* --- SHEET 0: ADD CAMPUS --- */}
       <Sheet visible={activeSheet === 'CAMPUS'} onClose={() => setActiveSheet('NONE')}>

@@ -26,10 +26,24 @@ import { useCameraDetection } from '@/hooks/useCameraDetection';
 import { ScannerHud } from '@/components/scanner/ScannerHud';
 import { CandidateList } from '@/components/scanner/CandidateList';
 import { AttendanceReviewSheet } from '@/components/scanner/AttendanceReviewSheet';
+import { AccessRestrictedView } from '@/components/ui/kit';
+import { SessionStore } from '@/storage/sessionStore';
 import { BIOMETRIC_CONFIG } from '@/config/biometrics';
 
 export default function FacultyScanningScreen() {
   const router = useRouter();
+
+  if (!SessionStore.canScanAttendance()) {
+    return (
+      <AccessRestrictedView
+        title="Attendance Scanner Restricted"
+        message="Live camera attendance scanning requires authorized teaching or attendance permissions."
+        requiredCapability="attendance.session.start"
+        onBack={() => router.replace('/(faculty)')}
+      />
+    );
+  }
+
   const params = useLocalSearchParams<{
     sectionId?: string;
     subject?: string;

@@ -60,8 +60,8 @@ async def test_engine():
         )
         await conn.execute(
             text("""
-                INSERT INTO deployment_config (singleton_id, institution_id, deployment_mode, attendance_shortage_threshold)
-                VALUES (1, '00000000-0000-0000-0000-000000000001', 'SINGLE_INSTITUTION_SELF_HOSTED', 75.0)
+                INSERT INTO deployment_config (singleton_id, institution_id, deployment_mode, attendance_shortage_threshold, created_at, updated_at)
+                VALUES (1, '00000000-0000-0000-0000-000000000001', 'SINGLE_INSTITUTION_SELF_HOSTED', 75.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (singleton_id) DO NOTHING
             """)
         )

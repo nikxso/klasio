@@ -467,26 +467,38 @@ async def create_admin_user(
     inst = inst_res.scalar_one_or_none()
     membership = None
     if inst:
-        membership = InstitutionMembership(
-            institution_id=inst.id,
-            user_id=new_user.id,
-            status=MembershipStatus.ACTIVE,
+        mem_stmt = select(InstitutionMembership).where(
+            InstitutionMembership.institution_id == inst.id,
+            InstitutionMembership.user_id == new_user.id,
         )
-        db.add(membership)
-        await db.flush()
+        membership = (await db.execute(mem_stmt)).scalar_one_or_none()
+        if not membership:
+            membership = InstitutionMembership(
+                institution_id=inst.id,
+                user_id=new_user.id,
+                status=MembershipStatus.ACTIVE,
+            )
+            db.add(membership)
+            await db.flush()
         # Seed matching canonical role template if available
         role_tpl_res = await db.execute(select(RoleTemplate).where(RoleTemplate.code == new_user.role.value))
         role_tpl = role_tpl_res.scalar_one_or_none()
         if role_tpl:
-            ra = RoleAssignment(
-                institution_id=inst.id,
-                membership_id=membership.id,
-                role_template_id=role_tpl.id,
-                status=AssignmentStatus.ACTIVE,
-                reason="Initial role assignment on account creation",
+            ra_stmt = select(RoleAssignment).where(
+                RoleAssignment.membership_id == membership.id,
+                RoleAssignment.role_template_id == role_tpl.id,
             )
-            db.add(ra)
-            await db.flush()
+            existing_ra = (await db.execute(ra_stmt)).scalar_one_or_none()
+            if not existing_ra:
+                ra = RoleAssignment(
+                    institution_id=inst.id,
+                    membership_id=membership.id,
+                    role_template_id=role_tpl.id,
+                    status=AssignmentStatus.ACTIVE,
+                    reason="Initial role assignment on account creation",
+                )
+                db.add(ra)
+                await db.flush()
 
     active_roles = [new_user.role.value]
     return AdminUserListItem(

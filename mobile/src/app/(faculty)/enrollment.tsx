@@ -33,16 +33,31 @@ import {
 } from 'lucide-react-native';
 
 import { Colors, Radii } from '@/theme/tokens';
+import { AccessRestrictedView } from '@/components/ui/kit';
+import { SessionStore } from '@/storage/sessionStore';
 import { useFaceEnrollment } from '@/hooks/useFaceEnrollment';
 
 const POSES = [
   { label: 'Look straight ahead', sublabel: 'Neutral expression', icon: Smile, step: 'FRONTAL' as const },
   { label: 'Turn slightly left', sublabel: 'Keep eyes level', icon: ArrowLeft, step: 'SLIGHT_LEFT' as const },
   { label: 'Turn slightly right', sublabel: 'Keep eyes level', icon: ArrowRight, step: 'SLIGHT_RIGHT' as const },
+  { label: 'Look directly into camera', sublabel: 'Center face for profile photo', icon: ScanFace, step: 'PROFILE_PHOTO' as const },
 ];
 
 export default function FacultyEnrollmentScreen() {
   const router = useRouter();
+
+  if (!SessionStore.canConductAssistedEnrollment()) {
+    return (
+      <AccessRestrictedView
+        title="Biometric Enrollment Restricted"
+        message="Assisted biometric enrollment requires Biometric Enrollment Officer or authorized faculty permissions."
+        requiredCapability="biometrics.enroll.assisted"
+        onBack={() => router.replace('/(faculty)')}
+      />
+    );
+  }
+
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     studentUserId?: string;
@@ -154,7 +169,7 @@ export default function FacultyEnrollmentScreen() {
           <View style={styles.guidanceBox}>
             <Text style={styles.guidanceTitle}>Guided Multi-Sample Capture</Text>
             <Text style={styles.guidanceBody}>
-              The student will be guided through 3 consecutive genuine face observations:
+              The student will be guided through 4 consecutive genuine face observations:
             </Text>
             <View style={styles.stepItem}>
               <Text style={styles.stepNum}>1.</Text>
@@ -167,6 +182,10 @@ export default function FacultyEnrollmentScreen() {
             <View style={styles.stepItem}>
               <Text style={styles.stepNum}>3.</Text>
               <Text style={styles.stepText}>Turn head slightly to the right</Text>
+            </View>
+            <View style={styles.stepItem}>
+              <Text style={styles.stepNum}>4.</Text>
+              <Text style={styles.stepText}>Direct eye-on-camera snapshot for profile photo</Text>
             </View>
           </View>
 

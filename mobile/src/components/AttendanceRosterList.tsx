@@ -20,6 +20,7 @@ interface AttendanceRosterListProps {
   onToggleStatus: (studentUserId: string, newStatus: 'PRESENT' | 'ABSENT' | 'EXCUSED') => void;
   onSelectStudent?: (student: RosterStudentItemProps) => void;
   readOnly?: boolean;
+  version?: number | string | null;
 }
 
 export function AttendanceRosterList({
@@ -28,6 +29,7 @@ export function AttendanceRosterList({
   onToggleStatus,
   onSelectStudent,
   readOnly = false,
+  version,
 }: AttendanceRosterListProps) {
   if (!students || students.length === 0) {
     return (
@@ -59,7 +61,7 @@ export function AttendanceRosterList({
               accessibilityRole="button"
               accessibilityLabel={`View ${student.studentName}'s profile`}
             >
-              <Avatar name={student.studentName} userId={student.studentUserId} size={40} />
+              <Avatar name={student.studentName} userId={student.studentUserId} version={version} size={40} />
 
               <View style={styles.studentInfo}>
                 <View style={styles.nameRow}>

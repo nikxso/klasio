@@ -254,45 +254,68 @@ export default function FacultyHomeScreen() {
         ))}
       </View>
 
-      {SessionStore.canAccessAdmin() && (
+      {(SessionStore.canManagePeople() ||
+        SessionStore.canManageAcademics() ||
+        SessionStore.canManageDelegations() ||
+        SessionStore.canViewReports()) && (
         <View style={{ marginTop: 24, marginBottom: 16 }}>
           <SectionTitle title="Department & Administration" />
           <View style={styles.adminGrid}>
-            <Pressable
-              onPress={() => router.push('/(admin)/(tabs)/people' as any)}
-              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
-            >
-              <Users size={22} color={Colors.forest} />
-              <Text style={styles.adminCardTitle}>People</Text>
-              <Text style={styles.adminCardSub}>Faculty & Students</Text>
-            </Pressable>
+            {SessionStore.canManagePeople() && (
+              <Pressable
+                onPress={() => router.push('/(faculty)/people' as any)}
+                style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+                accessibilityRole="button"
+                accessibilityLabel="People: Faculty & Students"
+                accessibilityHint="Navigates to departmental and student roster management"
+              >
+                <Users size={22} color={Colors.forest} />
+                <Text style={styles.adminCardTitle}>People</Text>
+                <Text style={styles.adminCardSub}>Faculty & Students</Text>
+              </Pressable>
+            )}
 
-            <Pressable
-              onPress={() => router.push('/(admin)/(tabs)/academics' as any)}
-              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
-            >
-              <GraduationCap size={22} color={Colors.forest} />
-              <Text style={styles.adminCardTitle}>Academics</Text>
-              <Text style={styles.adminCardSub}>Sections & Courses</Text>
-            </Pressable>
+            {SessionStore.canManageAcademics() && (
+              <Pressable
+                onPress={() => router.push('/(faculty)/academics' as any)}
+                style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Academics: Sections & Courses"
+                accessibilityHint="Navigates to curriculum and section catalog"
+              >
+                <GraduationCap size={22} color={Colors.forest} />
+                <Text style={styles.adminCardTitle}>Academics</Text>
+                <Text style={styles.adminCardSub}>Sections & Courses</Text>
+              </Pressable>
+            )}
 
-            <Pressable
-              onPress={() => router.push('/(faculty)/delegations' as any)}
-              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
-            >
-              <UserCheck size={22} color={Colors.forest} />
-              <Text style={styles.adminCardTitle}>Delegations</Text>
-              <Text style={styles.adminCardSub}>Substitutes</Text>
-            </Pressable>
+            {SessionStore.canManageDelegations() && (
+              <Pressable
+                onPress={() => router.push('/(faculty)/delegations' as any)}
+                style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Delegations: Substitutes"
+                accessibilityHint="Navigates to substitute faculty delegation requests"
+              >
+                <UserCheck size={22} color={Colors.forest} />
+                <Text style={styles.adminCardTitle}>Delegations</Text>
+                <Text style={styles.adminCardSub}>Substitutes</Text>
+              </Pressable>
+            )}
 
-            <Pressable
-              onPress={() => router.push('/(faculty)/reports' as any)}
-              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
-            >
-              <BarChart3 size={22} color={Colors.forest} />
-              <Text style={styles.adminCardTitle}>Reports</Text>
-              <Text style={styles.adminCardSub}>Attendance Trends</Text>
-            </Pressable>
+            {SessionStore.canViewReports() && (
+              <Pressable
+                onPress={() => router.push('/(faculty)/reports' as any)}
+                style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Reports: Attendance Trends"
+                accessibilityHint="Navigates to attendance trend analytics"
+              >
+                <BarChart3 size={22} color={Colors.forest} />
+                <Text style={styles.adminCardTitle}>Reports</Text>
+                <Text style={styles.adminCardSub}>Attendance Trends</Text>
+              </Pressable>
+            )}
           </View>
         </View>
       )}

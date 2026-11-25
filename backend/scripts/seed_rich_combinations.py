@@ -177,7 +177,7 @@ async def seed_rich_combinations(session: AsyncSession):
         users[spec["inst_id"]] = u
 
     # 6. Face profiles for students
-    registered_student_ids = ["S1", "S2", "S3", "21CS031", "21CS032", "21CS033", "21CS034", "21CS035"]
+    registered_student_ids = ["S1", "S2", "S3", "21CS031", "21CS032", "21CS033", "21CS034", "21CS035", "21CS036"]
     for sid in registered_student_ids:
         stu_u = users[sid]
         fp_res = await session.execute(

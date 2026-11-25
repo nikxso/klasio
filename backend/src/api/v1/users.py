@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from typing import Optional
 import uuid
+import cv2
+import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -31,29 +33,9 @@ async def verify_user_photo_scope(current_user: User, target_user_id: uuid.UUID,
     if current_user.id == target_user_id or current_user.role == UserRole.ADMIN:
         return
 
-    if current_user.role == UserRole.FACULTY:
-        # Check if faculty teaches at least one section where student is actively enrolled
-        enr_stmt = select(StudentEnrollment.class_section_id).where(
-            and_(
-                StudentEnrollment.student_user_id == target_user_id,
-                StudentEnrollment.enrollment_status == EnrollmentStatus.ACTIVE,
-            )
-        )
-        enr_res = await db.execute(enr_stmt)
-        section_ids = set(enr_res.scalars().all())
-        if section_ids:
-            ta_stmt = select(TeachingAssignment.id).where(
-                and_(
-                    TeachingAssignment.faculty_user_id == current_user.id,
-                    TeachingAssignment.is_active == True,
-                    TeachingAssignment.class_section_id.in_(section_ids),
-                )
-            )
-            ta_res = await db.execute(ta_stmt)
-            if ta_res.scalars().first():
-                return
-
-    raise OutOfScopeError(f"User {current_user.id} is not authorized to access/modify photo for user {target_user_id}")
+    from src.services.biometric_service import BiometricService
+    service = BiometricService(db)
+    await service._verify_operator_enrollment_scope(current_user, target_user_id)
 
 
 @router.get("/{user_id}/profile-photo", summary="Retrieve a user display profile photo")
@@ -68,8 +50,76 @@ async def get_profile_photo(
     """
     photo_path = UPLOAD_DIR / f"{user_id}.jpg"
     if not photo_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile photo not found")
-    return FileResponse(photo_path, media_type="image/jpeg")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile photo not found",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+    return FileResponse(
+        photo_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=60, must-revalidate"},
+    )
+
+
+def align_and_crop_portrait(img_bytes: bytes, target_size=(512, 512)) -> bytes:
+    """
+    Detects face and crops a square, centered, level portrait photo with natural headroom.
+    Guarantees consistent 512x512 headshot alignment for student avatars.
+    """
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return img_bytes
+
+    h, w, _ = img.shape
+    yunet_path = Path("/home/dope/Documents/atten/mobile/src/lab/models/yunet_2023mar.onnx")
+
+    faces = None
+    if yunet_path.exists():
+        try:
+            detector = cv2.FaceDetectorYN_create(str(yunet_path), "", (w, h), score_threshold=0.4)
+            detector.setInputSize((w, h))
+            _, faces = detector.detect(img)
+        except Exception:
+            faces = None
+
+    if faces is not None and len(faces) > 0:
+        box = faces[0][:4]
+        fx, fy, fw, fh = box
+        face_size = max(fw, fh)
+        crop_size = int(face_size * 1.85)
+        cx = fx + fw / 2.0
+        cy = fy + fh / 2.0 - (0.08 * face_size)
+    else:
+        # Fallback to centered square with upper headroom bias
+        crop_size = min(w, h)
+        cx = w / 2.0
+        cy = min(h / 2.0, crop_size / 2.0 + (h - crop_size) * 0.25)
+
+    x1 = int(round(cx - crop_size / 2.0))
+    y1 = int(round(cy - crop_size / 2.0))
+    x2 = x1 + crop_size
+    y2 = y1 + crop_size
+
+    pad_left = max(0, -x1)
+    pad_top = max(0, -y1)
+    pad_right = max(0, x2 - w)
+    pad_bottom = max(0, y2 - h)
+
+    if pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0:
+        img_padded = cv2.copyMakeBorder(img, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REFLECT_101)
+        x1 += pad_left
+        y1 += pad_top
+        x2 += pad_left
+        y2 += pad_top
+        crop = img_padded[y1:y2, x1:x2]
+    else:
+        crop = img[y1:y2, x1:x2]
+
+    resized = cv2.resize(crop, target_size, interpolation=cv2.INTER_AREA)
+    _, encoded = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+    return encoded.tobytes()
 
 
 @router.post("/{user_id}/profile-photo", status_code=status.HTTP_200_OK, summary="Upload or replace user profile photo")
@@ -110,6 +160,8 @@ async def upload_profile_photo(
 
     if len(contents) == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded photo is empty")
+
+    contents = align_and_crop_portrait(contents)
 
     with open(photo_path, "wb") as f:
         f.write(contents)

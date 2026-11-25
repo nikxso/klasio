@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
+  RefreshControl,
 } from 'react-native';
-import { useRouter, useNavigation } from 'expo-router';
+import { useRouter, useNavigation, useFocusEffect } from 'expo-router';
 import {
   ScanFace,
   Bell,
@@ -39,11 +40,31 @@ export default function StudentProfileScreen() {
       setCacheBuster(Date.now());
     }
     initUser();
+
+    // Subscribe to SessionStore real-time updates (e.g. immediately upon enrollment)
+    const unsub = SessionStore.subscribe((session) => {
+      if (session?.user) {
+        setUser(session.user);
+        setCacheBuster(Date.now());
+      }
+    });
+    return unsub;
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      const stored = SessionStore.getUser();
+      if (stored) {
+        setUser(stored);
+      }
+      setCacheBuster(Date.now());
+    }, [])
+  );
 
   const studentName = user?.fullName || 'Enrolled Student';
   const studentId = user?.id;
   const studentRoll = user?.institutionalId || 'STUDENT';
+  const isRegistered = user?.faceRegistrationState === 'REGISTERED';
 
   const handleConfirmSignOut = async () => {
     setIsSigningOut(true);
@@ -63,11 +84,25 @@ export default function StudentProfileScreen() {
   };
 
   return (
-    <Screen scrollable>
+    <Screen
+      scrollable
+      refreshControl={
+        <RefreshControl
+          refreshing={false}
+          onRefresh={() => {
+            const stored = SessionStore.getUser();
+            if (stored) setUser(stored);
+            setCacheBuster(Date.now());
+          }}
+          colors={[Colors.primary, Colors.forest]}
+        />
+      }
+    >
       <View style={styles.headerBlock}>
         <Avatar
           name={studentName}
           userId={studentId}
+          version={cacheBuster}
           photoUrl={studentId ? `${API_BASE_URL}/api/v1/users/${studentId}/profile-photo?t=${cacheBuster}` : null}
           size={76}
         />
@@ -87,12 +122,16 @@ export default function StudentProfileScreen() {
             pressed && { opacity: 0.7 },
           ]}
         >
-          <IconBubble icon={ScanFace} tone="lilac" size={40} />
+          <IconBubble icon={ScanFace} tone={isRegistered ? 'forest' : 'lilac'} size={40} />
           <View style={styles.infoCol}>
             <Text style={styles.infoTitle}>Face ID</Text>
-            <Text style={styles.infoSubtitle}>Active · Template Verified</Text>
+            <Text style={styles.infoSubtitle}>
+              {isRegistered ? 'Active · Template Verified' : 'Not configured · Tap to enroll'}
+            </Text>
           </View>
-          <Chip tone="forest">Active</Chip>
+          <Chip tone={isRegistered ? 'forest' : 'amber'}>
+            {isRegistered ? 'Active' : 'Not Set'}
+          </Chip>
         </Pressable>
       </Card>
 

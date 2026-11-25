@@ -131,7 +131,16 @@ async function getSessionDb() {
   }
 }
 
+const sessionListeners = new Set<(session: AuthSession | null) => void>();
+
 export const SessionStore = {
+  subscribe(listener: (session: AuthSession | null) => void): () => void {
+    sessionListeners.add(listener);
+    return () => {
+      sessionListeners.delete(listener);
+    };
+  },
+
   setDatabase(db: any): void {
     customDbOverride = db;
   },
@@ -142,6 +151,13 @@ export const SessionStore = {
 
   async setSession(session: AuthSession | null): Promise<void> {
     activeSession = session;
+    sessionListeners.forEach((listener) => {
+      try {
+        listener(session);
+      } catch (err) {
+        console.warn('[SessionStore] Listener callback error:', err);
+      }
+    });
     try {
       const db = await getSessionDb();
       if (session) {
@@ -317,9 +333,174 @@ export const SessionStore = {
         'ACCESS_ADMIN',
         'IT_ADMIN',
         'PRIVACY_BIOMETRIC_OFFICER',
+        'PRIVACY_BIOMETRIC_GOVERNANCE',
         'DEPARTMENT_HEAD',
         'DEPARTMENT_HEAD_COORDINATOR',
+        'ACADEMIC_REGISTRAR',
+        'PROGRAM_COORDINATOR',
+        'TIMETABLE_COORDINATOR',
+        'ADMISSIONS_OFFICER',
+        'ENROLLMENT_OFFICER',
+        'STUDENT_RECORDS_OFFICER',
       ])
+    );
+  },
+
+  canManagePeople(): boolean {
+    return (
+      this.hasPermission('membership.view') ||
+      this.hasPermission('membership.invite') ||
+      this.hasPermission('membership.manage') ||
+      this.hasPermission('role_assignment.view') ||
+      this.hasPermission('student_records.update') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'CAMPUS_ADMIN',
+        'ACCESS_ADMIN',
+        'DEPARTMENT_HEAD',
+        'DEPARTMENT_HEAD_COORDINATOR',
+        'ACADEMIC_REGISTRAR',
+        'STUDENT_RECORDS_OFFICER',
+      ])
+    );
+  },
+
+  canManageAccessControl(): boolean {
+    return (
+      this.hasPermission('role_assignment.create') ||
+      this.hasPermission('role_assignment.revoke') ||
+      this.hasPermission('security.policy.manage') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'ACCESS_ADMIN',
+      ])
+    );
+  },
+
+  canManageAcademics(): boolean {
+    return (
+      this.hasPermission('academic_structure.view') ||
+      this.hasPermission('academic_structure.create') ||
+      this.hasPermission('academic_structure.update') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'CAMPUS_ADMIN',
+        'ACADEMIC_REGISTRAR',
+        'DEPARTMENT_HEAD',
+        'DEPARTMENT_HEAD_COORDINATOR',
+        'PROGRAM_COORDINATOR',
+        'TIMETABLE_COORDINATOR',
+      ])
+    );
+  },
+
+  canEditAcademics(): boolean {
+    return (
+      this.hasPermission('academic_structure.create') ||
+      this.hasPermission('academic_structure.update') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'CAMPUS_ADMIN',
+        'ACADEMIC_REGISTRAR',
+      ])
+    );
+  },
+
+  canManageSettings(): boolean {
+    return (
+      this.hasPermission('institution.manage') ||
+      this.hasPermission('technical_settings.manage') ||
+      this.hasPermission('security.policy.manage') ||
+      this.hasPermission('biometrics.policy.manage') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'IT_ADMIN',
+        'PRIVACY_BIOMETRIC_OFFICER',
+        'PRIVACY_BIOMETRIC_GOVERNANCE',
+      ])
+    );
+  },
+
+  canViewReports(): boolean {
+    return (
+      this.hasPermission('reports.view') ||
+      this.hasPermission('reports.export') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'CAMPUS_ADMIN',
+        'DEPARTMENT_HEAD',
+        'DEPARTMENT_HEAD_COORDINATOR',
+        'FACULTY',
+        'ATTENDANCE_AUDITOR',
+        'INSTITUTIONAL_AUDITOR',
+        'CLASS_ADVISOR',
+      ])
+    );
+  },
+
+  canExportReports(): boolean {
+    return (
+      this.hasPermission('reports.export') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'DEPARTMENT_HEAD',
+        'DEPARTMENT_HEAD_COORDINATOR',
+        'FACULTY',
+        'ATTENDANCE_AUDITOR',
+        'INSTITUTIONAL_AUDITOR',
+      ])
+    );
+  },
+
+  canConductAssistedEnrollment(): boolean {
+    return (
+      this.hasPermission('biometrics.enroll.assisted') ||
+      this.hasAnyRole([
+        'BIOMETRIC_ENROLLMENT_OFFICER',
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'FACULTY',
+      ])
+    );
+  },
+
+  canManageDelegations(): boolean {
+    return (
+      this.hasPermission('delegation.create') ||
+      this.hasPermission('delegation.approve') ||
+      this.hasPermission('role.delegate') ||
+      this.canApproveDelegation() ||
+      this.hasAnyRole([
+        'FACULTY',
+        'DEPARTMENT_HEAD',
+        'DEPARTMENT_HEAD_COORDINATOR',
+        'ADMIN',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'CAMPUS_ADMIN',
+      ])
+    );
+  },
+
+  canViewClasses(): boolean {
+    return (
+      this.canScanAttendance() ||
+      this.hasPermission('academic_structure.view') ||
+      this.hasAnyRole(['FACULTY', 'TEACHING_ASSISTANT', 'CLASS_ADVISOR'])
     );
   },
 

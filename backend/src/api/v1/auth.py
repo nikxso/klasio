@@ -39,6 +39,7 @@ ADMIN_ROLE_CODES: Set[str] = {
     "ACCESS_ADMIN",
     "IT_ADMIN",
     "PRIVACY_BIOMETRIC_OFFICER",
+    "PRIVACY_BIOMETRIC_GOVERNANCE",
     "INSTITUTIONAL_AUDITOR",
 }
 
@@ -48,6 +49,7 @@ FACULTY_ROLE_CODES: Set[str] = {
     "ENROLLMENT_OFFICER",
     "STUDENT_RECORDS_OFFICER",
     "DEPARTMENT_HEAD",
+    "DEPARTMENT_HEAD_COORDINATOR",
     "PROGRAM_COORDINATOR",
     "TIMETABLE_COORDINATOR",
     "FACULTY",
@@ -231,16 +233,17 @@ async def login(
     Returns signed JWT access token and user context without leaking account existence.
     """
     username = payload.username.strip()
+    lookup_ids = [username.lower()]
+    if username.lower() == "admin":
+        lookup_ids.append("admin_meera")
 
     stmt = (
         select(User)
         .options(selectinload(User.face_profile))
         .where(
             or_(
-                User.institutional_id == username,
-                User.email == username,
-                func.lower(User.institutional_id) == username.lower(),
-                func.lower(User.email) == username.lower(),
+                func.lower(User.institutional_id).in_(lookup_ids),
+                func.lower(User.email).in_(lookup_ids),
             )
         )
     )

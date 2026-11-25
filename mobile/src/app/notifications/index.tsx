@@ -134,7 +134,13 @@ export default function NotificationCenterScreen() {
       subtitle={
         unreadCount > 0 ? `${unreadCount} unread update${unreadCount > 1 ? 's' : ''}` : 'All caught up'
       }
-      onBack={() => router.back()}
+      onBack={() => {
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/');
+        }
+      }}
       right={
         unreadCount > 0 ? (
           <Pressable

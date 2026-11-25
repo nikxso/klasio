@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
+  RefreshControl,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   Bell,
   Clock,
@@ -41,8 +42,36 @@ export default function StudentHomeScreen() {
   const [user, setUser] = useState(SessionStore.getUser());
   const [data, setData] = useState<StudentPersonalAttendanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [faceStatus, setFaceStatus] = useState<'none' | 'pending' | 'approved'>('approved');
   const [unreadCount, setUnreadCount] = useState<number>(0);
+
+  const faceStatus: 'none' | 'pending' | 'approved' = useMemo(() => {
+    const state = user?.faceRegistrationState;
+    if (state === 'REGISTERED') return 'approved';
+    if (state === 'PENDING') return 'pending';
+    return 'none';
+  }, [user?.faceRegistrationState]);
+
+  const refreshUserData = useCallback(() => {
+    const stored = SessionStore.getUser();
+    if (stored) {
+      setUser(stored);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshUserData();
+    }, [refreshUserData])
+  );
+
+  useEffect(() => {
+    const unsub = SessionStore.subscribe((session) => {
+      if (session?.user) {
+        setUser(session.user);
+      }
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     let isCancelled = false;

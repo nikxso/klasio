@@ -497,7 +497,20 @@ def test_openapi_response_status_codes_and_schemas_consistency(
 
 
 RUNTIME_EXTENDED_SCHEMA_PROPERTIES = {
-    "UserContextResponse": {"institution_id", "role_assignments", "permissions"},
+    "UserContextResponse": {
+        "institution_id",
+        "role_assignments",
+        "permissions",
+        "authorization_snapshot",
+        "authorization_version",
+        "membership_id",
+    },
+    "SubmitAttendanceSessionRequest": {
+        "actor_membership_id",
+        "authorization_version",
+        "delegation_id",
+        "authorizing_role_assignment_id",
+    },
 }
 
 

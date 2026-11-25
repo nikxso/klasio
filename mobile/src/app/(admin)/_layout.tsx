@@ -1,7 +1,23 @@
 import React from 'react';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
+import { SessionStore } from '@/storage/sessionStore';
+import { AccessRestrictedView } from '@/components/ui/kit';
 
 export default function AdminStackLayout() {
+  const router = useRouter();
+  const user = SessionStore.getUser();
+
+  if (user?.role?.toUpperCase() === 'STUDENT') {
+    return (
+      <AccessRestrictedView
+        title="Admin Console Restricted"
+        message="Student accounts cannot access administrative consoles or institutional configurations."
+        requiredCapability="institution.manage or campus.manage"
+        onBack={() => router.replace('/(student)')}
+      />
+    );
+  }
+
   return (
     <Stack
       screenOptions={{

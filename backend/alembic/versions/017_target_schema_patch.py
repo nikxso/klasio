@@ -72,6 +72,16 @@ def upgrade() -> None:
         )
     )
 
+    # Ensure all existing users have membership in DEFAULT_INST_ID
+    op.execute(
+        sa.text(
+            f"INSERT INTO institution_memberships (id, institution_id, user_id, status, joined_at, created_at, updated_at) "
+            f"SELECT gen_random_uuid(), '{DEFAULT_INST_ID}', u.id, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+            f"FROM users u "
+            f"ON CONFLICT (institution_id, user_id) DO NOTHING;"
+        )
+    )
+
     # -------------------------------------------------------------------------
     # 2. Academic Programs Table
     # -------------------------------------------------------------------------
@@ -701,8 +711,13 @@ def upgrade() -> None:
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
-
-            DROP TRIGGER IF EXISTS trg_user_auto_membership ON users;
+            """
+        )
+    )
+    op.execute(sa.text("DROP TRIGGER IF EXISTS trg_user_auto_membership ON users;"))
+    op.execute(
+        sa.text(
+            """
             CREATE TRIGGER trg_user_auto_membership
             AFTER INSERT ON users
             FOR EACH ROW

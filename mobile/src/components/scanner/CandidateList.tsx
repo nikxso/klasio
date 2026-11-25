@@ -7,6 +7,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { CheckCircle2, User } from 'lucide-react-native';
+import { Avatar } from '@/components/ui/kit';
 import type {
   AccumulatedRecognitionCandidate,
   ScannerStabilityState,
@@ -72,7 +73,7 @@ export const CandidateList: React.FC<CandidateListProps> = ({
                 activeOpacity={0.8}
               >
                 <View style={styles.candidateAvatar}>
-                  <User size={13} color="#ffffff" />
+                  <Avatar name={studentName} userId={c.studentUserId} size={22} />
                 </View>
                 <View style={styles.candidateDetails}>
                   <Text style={styles.candidateName} numberOfLines={1}>

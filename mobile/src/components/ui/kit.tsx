@@ -14,6 +14,8 @@ import Svg, { Circle } from 'react-native-svg';
 import { ChevronLeft } from 'lucide-react-native';
 import { Colors, Radii, Shadows, Tone, ToneColors } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
+export { AccessRestrictedView } from './AccessRestrictedView';
+export type { AccessRestrictedViewProps } from './AccessRestrictedView';
 
 // ---------------------------------------------------------------------------
 // Screen Container
@@ -27,6 +29,7 @@ interface ScreenProps {
   right?: ReactNode;
   hero?: ReactNode;
   scrollable?: boolean;
+  refreshControl?: React.ReactElement;
 }
 
 export function Screen({
@@ -38,6 +41,7 @@ export function Screen({
   right,
   hero,
   scrollable = true,
+  refreshControl,
 }: ScreenProps) {
   const content = (
     <View style={styles.screenInner}>
@@ -88,6 +92,7 @@ export function Screen({
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={refreshControl}
         >
           {content}
         </ScrollView>
@@ -401,22 +406,29 @@ export function Avatar({
   size = 40,
   userId,
   photoUrl,
+  version,
 }: {
   name: string;
   size?: number;
   userId?: string | null;
   photoUrl?: string | null;
+  version?: number | string | null;
 }) {
   const [hasError, setHasError] = useState(false);
-  const effectiveUrl = photoUrl || (userId ? `${API_BASE_URL}/api/v1/users/${userId}/profile-photo` : null);
+  const effectiveUrl = photoUrl
+    ? photoUrl
+    : userId
+    ? `${API_BASE_URL}/api/v1/users/${userId}/profile-photo${version ? `?v=${version}` : ''}`
+    : null;
 
   React.useEffect(() => {
     setHasError(false);
-  }, [userId, photoUrl]);
+  }, [userId, photoUrl, version]);
 
   if (effectiveUrl && !hasError) {
     return (
       <Image
+        key={effectiveUrl}
         source={{ uri: effectiveUrl }}
         style={{
           width: size,

@@ -16,6 +16,7 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
+import cv2
 from PIL import Image
 import onnxruntime as ort
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException

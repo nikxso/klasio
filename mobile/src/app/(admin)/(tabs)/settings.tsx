@@ -20,7 +20,7 @@ import {
   CheckCircle2,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button } from '@/components/ui/kit';
+import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button, AccessRestrictedView } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
@@ -29,6 +29,18 @@ import { API_BASE_URL } from '@/config/api';
 
 export default function AdminSettingsScreen() {
   const router = useRouter();
+
+  if (!SessionStore.canManageSettings()) {
+    return (
+      <AccessRestrictedView
+        title="Settings Restricted"
+        message="Institutional policies, thresholds, and technical configurations require IT or Governance Administration authority."
+        requiredCapability="institution.manage"
+        onBack={() => router.replace('/(admin)')}
+      />
+    );
+  }
+
   const navigation = useNavigation<any>();
   const [user, setUser] = useState<AuthUser | null>(SessionStore.getUser());
   const [facesSheet, setFacesSheet] = useState(false);
@@ -102,7 +114,18 @@ export default function AdminSettingsScreen() {
   const adminUserId = user?.id;
 
   return (
-    <Screen scrollable>
+    <Screen
+      title="Settings"
+      subtitle="Institutional configuration and policy defaults"
+      onBack={() => {
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/(faculty)');
+        }
+      }}
+      scrollable
+    >
       <View style={styles.headerBlock}>
         <Avatar
           name={adminName}

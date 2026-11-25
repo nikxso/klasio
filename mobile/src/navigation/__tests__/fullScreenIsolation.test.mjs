@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 describe('Full-Screen Navigation Isolation & Safe-Area Polishing', () => {
-  const STACK_ROUTES_FACULTY = ['(tabs)', 'section/[id]', 'session/scan', 'delegations', 'enrollment'];
+  const STACK_ROUTES_FACULTY = ['(tabs)', 'section/[id]', 'session/scan', 'delegations', 'enrollment', 'people', 'academics'];
   const STACK_ROUTES_STUDENT = ['(tabs)', 'subject/[id]', 'enrollment'];
 
   test('deep workflow screens are outside (tabs) in Stack navigators', () => {

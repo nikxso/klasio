@@ -28,10 +28,12 @@ import {
   RotateCcw,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, Avatar, Sheet, Button } from '@/components/ui/kit';
+import { Screen, Card, Chip, Avatar, Sheet, Button, AccessRestrictedView } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
+import { useRouter } from 'expo-router';
+import { extractErrorMessage } from '@/utils/apiError';
 
 interface Person {
   id: string;
@@ -137,6 +139,19 @@ interface AuditItem {
 }
 
 export default function AdminPeopleScreen() {
+  const router = useRouter();
+
+  if (!SessionStore.canManagePeople()) {
+    return (
+      <AccessRestrictedView
+        title="People Directory Restricted"
+        message="Viewing or managing institutional memberships and rosters requires administrative or departmental staff authority."
+        requiredCapability="membership.view"
+        onBack={() => router.replace('/(admin)')}
+      />
+    );
+  }
+
   const [who, setWho] = useState<'student' | 'faculty' | 'admin' | 'access'>('student');
   const [accessSubTab, setAccessSubTab] = useState<'memberships' | 'unmapped' | 'delegations' | 'audits'>('memberships');
   const [query, setQuery] = useState('');
@@ -259,8 +274,8 @@ export default function AdminPeopleScreen() {
           if (updated) setSelectedMembership(updated);
         }
       } else {
-        const err = await res.json();
-        setAssignRoleError(err.detail || 'Failed to assign role template');
+        const errorMsg = await extractErrorMessage(res, 'Failed to assign role template');
+        setAssignRoleError(errorMsg);
       }
     } catch (e: any) {
       setAssignRoleError(e?.message || 'Network error');
@@ -465,8 +480,8 @@ export default function AdminPeopleScreen() {
         setShowAddUserSheet(false);
         await loadDirectory();
       } else {
-        const err = await res.json();
-        setUserError(err.detail || 'Failed to create user');
+        const errorMsg = await extractErrorMessage(res, 'Failed to create user');
+        setUserError(errorMsg);
       }
     } catch (e: any) {
       setUserError(e?.message || 'Network error');
@@ -553,8 +568,8 @@ export default function AdminPeopleScreen() {
           loadFacultyAssignments(selectedUser.id);
         }
       } else {
-        const err = await res.json();
-        setGrantRoleError(err.message || err.detail || 'Failed to grant role');
+        const errorMsg = await extractErrorMessage(res, 'Failed to grant role');
+        setGrantRoleError(errorMsg);
       }
     } catch (e: any) {
       setGrantRoleError(e?.message || 'Network error');
@@ -628,8 +643,8 @@ export default function AdminPeopleScreen() {
         setShowAssignClassSheet(false);
         await loadFacultyAssignments(selectedUser.id);
       } else {
-        const err = await res.json();
-        setAssignError(err.detail || 'Failed to assign class');
+        const errorMsg = await extractErrorMessage(res, 'Failed to assign class');
+        setAssignError(errorMsg);
       }
     } catch (e: any) {
       setAssignError(e?.message || 'Network error');
@@ -648,6 +663,13 @@ export default function AdminPeopleScreen() {
     <Screen
       title="People"
       subtitle="Directory, Roles & Teaching Assignments"
+      onBack={() => {
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/(faculty)');
+        }
+      }}
       scrollable
     >
       {/* Segmented Control */}
@@ -679,14 +701,18 @@ export default function AdminPeopleScreen() {
           </Text>
         </Pressable>
 
-        <Pressable
-          onPress={() => setWho('access')}
-          style={[styles.segmentButton, who === 'access' && styles.segmentButtonActive]}
-        >
-          <Text style={[styles.segmentText, who === 'access' && styles.segmentTextActive]}>
-            Access & Roles
-          </Text>
-        </Pressable>
+        {SessionStore.canManageAccessControl() && (
+          <Pressable
+            onPress={() => setWho('access')}
+            style={[styles.segmentButton, who === 'access' && styles.segmentButtonActive]}
+            accessibilityRole="button"
+            accessibilityLabel="Access and Roles Management"
+          >
+            <Text style={[styles.segmentText, who === 'access' && styles.segmentTextActive]}>
+              Access & Roles
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Search & Add User Row */}
@@ -702,16 +728,19 @@ export default function AdminPeopleScreen() {
               style={styles.searchInput}
             />
           </View>
-          <Pressable
-            onPress={() => {
-              setUserError(null);
-              setShowAddUserSheet(true);
-            }}
-            style={styles.addUserButton}
-            accessibilityLabel="Add user"
-          >
-            <Plus size={20} color="#ffffff" />
-          </Pressable>
+          {(SessionStore.hasPermission('membership.invite') || SessionStore.hasAnyRole(['ADMIN', 'INSTITUTION_OWNER', 'CENTRAL_INSTITUTION_ADMIN'])) && (
+            <Pressable
+              onPress={() => {
+                setUserError(null);
+                setShowAddUserSheet(true);
+              }}
+              style={styles.addUserButton}
+              accessibilityRole="button"
+              accessibilityLabel="Add user"
+            >
+              <Plus size={20} color="#ffffff" />
+            </Pressable>
+          )}
         </View>
       )}
 
@@ -1021,18 +1050,22 @@ export default function AdminPeopleScreen() {
           {/* Active Assigned Roles */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
             <Text style={styles.sheetSectionTitle}>Assigned Roles</Text>
-            <Pressable
-              onPress={() => {
-                setGrantRoleError(null);
-                setGrantRoleModalVisible(!grantRoleModalVisible);
-              }}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-            >
-              <Plus size={14} color={Colors.forest} />
-              <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.forest }}>
-                {grantRoleModalVisible ? 'Cancel' : 'Grant Role'}
-              </Text>
-            </Pressable>
+            {SessionStore.canManageAccessControl() && (
+              <Pressable
+                onPress={() => {
+                  setGrantRoleError(null);
+                  setGrantRoleModalVisible(!grantRoleModalVisible);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Grant Role"
+              >
+                <Plus size={14} color={Colors.forest} />
+                <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.forest }}>
+                  {grantRoleModalVisible ? 'Cancel' : 'Grant Role'}
+                </Text>
+              </Pressable>
+            )}
           </View>
 
           {/* List of active roles as chips with remove option */}
@@ -1042,7 +1075,7 @@ export default function AdminPeopleScreen() {
               const isGovernance = rUpper.includes('ADMIN') || rUpper.includes('OWNER') || rUpper.includes('OFFICER');
               const isTeaching = ['FACULTY', 'TEACHING_ASSISTANT', 'CLASS_ADVISOR'].includes(rUpper);
               const chipTone = isGovernance ? 'forest' : isTeaching ? 'lilac' : 'soft';
-              const canRevoke = (selectedUser.roles?.length || 1) > 1;
+              const canRevoke = SessionStore.canManageAccessControl() && (selectedUser.roles?.length || 1) > 1;
 
               return (
                 <View
@@ -1178,15 +1211,19 @@ export default function AdminPeopleScreen() {
           <View style={styles.roleAssignmentRow}>
             {(['STUDENT', 'FACULTY', 'ADMIN'] as const).map((roleOption) => {
               const isCurrent = selectedUser.role.toUpperCase() === roleOption;
+              const canChange = SessionStore.canManageAccessControl() && !roleUpdating && !isCurrent;
               return (
                 <Pressable
                   key={roleOption}
-                  disabled={roleUpdating || isCurrent}
+                  disabled={!canChange}
                   onPress={() => handleUpdateRole(roleOption)}
                   style={[
                     styles.roleAssignBtn,
                     isCurrent && styles.roleAssignBtnActive,
+                    !canChange && !isCurrent && { opacity: 0.5 },
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Set primary role to ${roleOption}`}
                 >
                   <Text
                     style={[
@@ -1211,16 +1248,20 @@ export default function AdminPeopleScreen() {
             <>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
                 <Text style={styles.sheetSectionTitle}>Classes they can take attendance for</Text>
-                <Pressable
-                  onPress={() => {
-                    setAssignError(null);
-                    setShowAssignClassSheet(true);
-                  }}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-                >
-                  <Plus size={14} color={Colors.forest} />
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.forest }}>Assign Class</Text>
-                </Pressable>
+                {SessionStore.canEditAcademics() && (
+                  <Pressable
+                    onPress={() => {
+                      setAssignError(null);
+                      setShowAssignClassSheet(true);
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Assign Class to Faculty"
+                  >
+                    <Plus size={14} color={Colors.forest} />
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.forest }}>Assign Class</Text>
+                  </Pressable>
+                )}
               </View>
 
               <View style={styles.assignedClassesList}>

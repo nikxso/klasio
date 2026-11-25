@@ -30,17 +30,24 @@ import { API_BASE_URL } from '@/config/api';
 import { RoleAssignmentInfo, SessionStore } from '@/storage/sessionStore';
 
 export function resolveTargetRoute(user?: { permissions?: string[]; role?: string } | null): string {
-  if (user?.permissions?.some(p => p.startsWith('institution.') || p.startsWith('campus.') || p.startsWith('academic_structure.'))) {
-    return '/(admin)';
-  }
-  if (user?.permissions?.some(p => p.startsWith('attendance.'))) {
-    return '/(faculty)';
-  }
-  if (user?.permissions?.some(p => p.startsWith('biometrics.enroll.self'))) {
+  const role = user?.role ? user.role.toUpperCase() : '';
+
+  // 1. Explicit Student role or student self-enrollment always routes to student workspace
+  if (role === 'STUDENT' || (user?.permissions?.some(p => p === 'biometrics.enroll.self') && !user?.permissions?.some(p => p === 'attendance.session.start'))) {
     return '/(student)';
   }
-  // Fallback to legacy role
-  const role = user?.role ? user.role.toUpperCase() : '';
+
+  // 2. Direct attendance conduct capabilities (Faculty, TAs)
+  if (user?.permissions?.some(p => p === 'attendance.session.start' || p === 'attendance.session.create') || role === 'FACULTY') {
+    return '/(faculty)';
+  }
+
+  // 3. Central & Campus Administration
+  if (user?.permissions?.some(p => p.startsWith('institution.') || p.startsWith('campus.') || p.startsWith('academic_structure.')) || role === 'ADMIN') {
+    return '/(admin)';
+  }
+
+  // 4. Fallback based on legacy role
   if (role === 'ADMIN') return '/(admin)';
   if (role === 'STUDENT') return '/(student)';
   return '/(faculty)';
@@ -159,12 +166,20 @@ export default function LoginScreen() {
       console.warn('[AUTH] Offline/connection error during login:', e);
       const cached = await SessionStore.initFromStorage();
       if (cached?.user) {
-        setLoading(false);
-        const targetRoute = resolveTargetRoute(cached.user);
-        router.replace(targetRoute as any);
-        return;
+        // Enforce strict identity matching: never restore a cached session belonging to a different user!
+        const requestedId = identifier.trim().toLowerCase();
+        const cachedInstId = (cached.user.institutionalId || '').toLowerCase();
+        const cachedEmail = (cached.user.email || '').toLowerCase();
+        const cachedId = (cached.user.id || '').toLowerCase();
+
+        if (requestedId === cachedInstId || requestedId === cachedEmail || requestedId === cachedId) {
+          setLoading(false);
+          const targetRoute = resolveTargetRoute(cached.user);
+          router.replace(targetRoute as any);
+          return;
+        }
       }
-      setAuthError('Cannot connect to authentication server and no active offline session exists.');
+      setAuthError('Cannot connect to authentication server and no matching offline session exists.');
       setLoading(false);
       return;
     }

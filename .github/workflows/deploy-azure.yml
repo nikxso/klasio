@@ -1,0 +1,66 @@
+name: Deploy Backend to Azure Linux VM
+
+on:
+  push:
+    branches: [main, master, staging]
+    paths:
+      - 'backend/**'
+      - 'nginx/**'
+      - 'docker-compose.staging.yml'
+      - '.github/workflows/deploy-azure.yml'
+  workflow_dispatch:
+    inputs:
+      targetEnvironment:
+        description: 'Target Environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: deploy-azure-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-backend:
+    name: Deploy to Azure VM via SSH
+    runs-on: ubuntu-latest
+    if: vars.AZURE_VM_HOST != '' || secrets.AZURE_VM_HOST != ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute Remote Deployment via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ vars.AZURE_VM_HOST || secrets.AZURE_VM_HOST || '20.244.48.12' }}
+          username: ${{ vars.AZURE_VM_USERNAME || secrets.AZURE_VM_USERNAME || 'deploy' }}
+          key: ${{ secrets.AZURE_SSH_PRIVATE_KEY }}
+          port: ${{ vars.AZURE_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+            PROJECT_DIR="${{ vars.AZURE_PROJECT_PATH || '/home/deploy/klasio' }}"
+            echo "==> Deploying Klasio isolated stack to Azure VM at $PROJECT_DIR..."
+            
+            if [ ! -d "$PROJECT_DIR" ]; then
+              echo "Directory $PROJECT_DIR not found. Cloning repository..."
+              git clone https://github.com/${{ github.repository }}.git "$PROJECT_DIR"
+            fi
+
+            cd "$PROJECT_DIR"
+            echo "==> Pulling latest changes from ${{ github.ref_name }}..."
+            git fetch origin
+            git checkout ${{ github.ref_name }}
+            git pull origin ${{ github.ref_name }}
+
+            echo "==> Launching isolated Klasio Docker Compose stack..."
+            docker compose -p klasio -f docker-compose.staging.yml up -d --build --remove-orphans
+
+            echo "==> Verifying isolated backend health..."
+            sleep 8
+            docker compose -p klasio -f docker-compose.staging.yml ps
+            curl -f http://127.0.0.1:8000/docs > /dev/null && echo "Klasio backend is healthy and responding on port 8000!"

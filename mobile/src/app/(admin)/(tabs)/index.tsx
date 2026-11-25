@@ -19,7 +19,7 @@ import {
   Bell,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, IconBubble, SectionTitle, Avatar } from '@/components/ui/kit';
+import { Screen, Card, Chip, IconBubble, SectionTitle, Avatar, AccessRestrictedView } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
@@ -142,6 +142,32 @@ export default function AdminHomeScreen() {
     setApprovals((prev) => prev.filter((a) => a.id !== id));
   };
 
+  const isInstitutionalAdmin =
+    SessionStore.canManageSettings() ||
+    SessionStore.hasAnyRole([
+      'ADMIN',
+      'INSTITUTION_OWNER',
+      'CENTRAL_INSTITUTION_ADMIN',
+      'CAMPUS_ADMIN',
+    ]);
+
+  if (!isInstitutionalAdmin) {
+    return (
+      <AccessRestrictedView
+        title="Admin Dashboard Restricted"
+        message="Institutional administration overview and system metrics are restricted to Campus and Central Administrators."
+        requiredCapability="institution.manage or campus.manage"
+        onBack={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            router.replace('/(faculty)');
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <Screen
       left={<KlasioLogo variant="lockup" size={24} />}
@@ -198,33 +224,43 @@ export default function AdminHomeScreen() {
           </Card>
         )}
 
-        <Card
-          onPress={() => router.push('/(admin)/academics' as any)}
-          style={styles.attentionCard}
-        >
-          <IconBubble icon={Link2} tone="forest" size={40} />
-          <View style={styles.attentionTextCol}>
-            <Text style={styles.attentionTitle}>Curriculum & Offerings</Text>
-            <Text style={styles.attentionSub}>Configure departments, sections and subjects</Text>
-          </View>
-          <ChevronRight size={18} color={Colors.soft} />
-        </Card>
+        {SessionStore.canManageAcademics() && (
+          <Card
+            onPress={() => router.push('/(admin)/(tabs)/academics' as any)}
+            style={styles.attentionCard}
+            accessibilityRole="button"
+            accessibilityLabel="Curriculum & Offerings"
+            accessibilityHint="Configure departments, sections and subjects"
+          >
+            <IconBubble icon={Link2} tone="forest" size={40} />
+            <View style={styles.attentionTextCol}>
+              <Text style={styles.attentionTitle}>Curriculum & Offerings</Text>
+              <Text style={styles.attentionSub}>Configure departments, sections and subjects</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.soft} />
+          </Card>
+        )}
 
-        <Card
-          onPress={() => router.push('/(admin)/people' as any)}
-          style={styles.attentionCard}
-        >
-          <IconBubble icon={Users} tone="lilac" size={40} />
-          <View style={styles.attentionTextCol}>
-            <Text style={styles.attentionTitle}>People & Role Scopes</Text>
-            <Text style={styles.attentionSub}>Assign faculty assignments and modify user roles</Text>
-          </View>
-          <ChevronRight size={18} color={Colors.soft} />
-        </Card>
+        {SessionStore.canManagePeople() && (
+          <Card
+            onPress={() => router.push('/(admin)/(tabs)/people' as any)}
+            style={styles.attentionCard}
+            accessibilityRole="button"
+            accessibilityLabel="People & Role Scopes"
+            accessibilityHint="Assign faculty assignments and modify user roles"
+          >
+            <IconBubble icon={Users} tone="lilac" size={40} />
+            <View style={styles.attentionTextCol}>
+              <Text style={styles.attentionTitle}>People & Role Scopes</Text>
+              <Text style={styles.attentionSub}>Assign faculty assignments and modify user roles</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.soft} />
+          </Card>
+        )}
       </View>
 
       {/* Face ID Fast Approvals List */}
-      {approvals.length > 0 && (
+      {approvals.length > 0 && (SessionStore.canConductAssistedEnrollment() || SessionStore.canManagePeople()) && (
         <>
           <SectionTitle>Face ID approvals</SectionTitle>
           <Card style={styles.approvalsCard}>
@@ -240,6 +276,8 @@ export default function AdminHomeScreen() {
                   <Pressable
                     onPress={() => handleApprove(student.id)}
                     style={styles.approveButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Approve Face ID registration for ${student.name}`}
                   >
                     <Check size={14} color={Colors.forest} strokeWidth={2.5} />
                     <Text style={styles.approveButtonText}>Approve</Text>

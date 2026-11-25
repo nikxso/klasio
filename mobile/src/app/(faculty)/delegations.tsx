@@ -28,10 +28,12 @@ import {
   Avatar,
   IconBubble,
   Sheet,
+  AccessRestrictedView,
 } from '@/components/ui/kit';
 import { Colors, Radii, Tone } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
+import { extractErrorMessage } from '@/utils/apiError';
 
 export type DelegationType = 'FACULTY_SUBSTITUTE' | 'MANAGEMENT_DELEGATION' | string;
 export type DelegationLifecycleStatus =
@@ -97,6 +99,18 @@ function getTypeLabel(type?: string): string {
 
 export default function DelegationsScreen() {
   const router = useRouter();
+
+  if (!SessionStore.canManageDelegations()) {
+    return (
+      <AccessRestrictedView
+        title="Delegations Restricted"
+        message="Your active role does not permit creating or approving authority delegations."
+        requiredCapability="delegation.create / delegation.approve"
+        onBack={() => router.replace('/(faculty)')}
+      />
+    );
+  }
+
   const [delegations, setDelegations] = useState<DelegationItem[]>([]);
   const [assignments, setAssignments] = useState<{ id: string; subject: string; section: string }[]>([]);
   const [colleagues, setColleagues] = useState<{ id: string; name: string; dept: string; staffId: string }[]>([]);
@@ -338,8 +352,8 @@ export default function DelegationsScreen() {
         setReason('');
         await loadData();
       } else {
-        const err = await res.json();
-        setErrorMessage(err.detail || 'Failed to create substitute delegation');
+        const errorMsg = await extractErrorMessage(res, 'Failed to create substitute delegation');
+        setErrorMessage(errorMsg);
       }
     } catch (e: any) {
       setErrorMessage(e?.message || 'Network error');

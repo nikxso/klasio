@@ -24,7 +24,7 @@ import {
   Info,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, Button, SectionTitle } from '@/components/ui/kit';
+import { Screen, Card, Chip, Button, SectionTitle, AccessRestrictedView } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
@@ -54,6 +54,18 @@ const PERIOD_SLOTS = [
 
 export default function SelectAttendanceContextScreen() {
   const router = useRouter();
+
+  if (!SessionStore.canScanAttendance()) {
+    return (
+      <AccessRestrictedView
+        title="Attendance Scanner Restricted"
+        message="Your active user roles do not permit live classroom attendance scanning."
+        requiredCapability="attendance.session.start"
+        onBack={() => router.replace('/(faculty)')}
+      />
+    );
+  }
+
   const params = useLocalSearchParams<{
     preselectId?: string;
   }>();

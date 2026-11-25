@@ -32,7 +32,7 @@ import Svg, {
   Circle,
 } from 'react-native-svg';
 
-import { Screen, Card, Chip, SectionTitle, Avatar, Button } from '@/components/ui/kit';
+import { Screen, Card, Chip, SectionTitle, Avatar, Button, AccessRestrictedView } from '@/components/ui/kit';
 import { Colors, Radii, Shadows } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
@@ -81,6 +81,18 @@ const CHART_HEIGHT = 110;
 
 export default function FacultyReportsScreen() {
   const router = useRouter();
+
+  if (!SessionStore.canViewReports()) {
+    return (
+      <AccessRestrictedView
+        title="Reports Restricted"
+        message="Attendance analytics and recovery reports are restricted to authorized academic personnel."
+        requiredCapability="reports.view"
+        onBack={() => router.replace('/(faculty)')}
+      />
+    );
+  }
+
   const [reportList, setReportList] = useState<ReportAssignmentData[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -507,33 +519,41 @@ export default function FacultyReportsScreen() {
           </View>
         )}
 
-        <View style={styles.exportButtonsRow}>
-          <Pressable
-            onPress={() => handleExport('roster')}
-            disabled={exporting}
-            style={[styles.exportBtn, styles.exportBtnPrimary]}
-            accessibilityRole="button"
-          >
-            {exporting ? (
-              <ActivityIndicator size="small" color="#ffffff" />
-            ) : (
-              <>
-                <Download size={15} color="#ffffff" />
-                <Text style={styles.exportBtnPrimaryText}>Roster CSV</Text>
-              </>
-            )}
-          </Pressable>
+        {SessionStore.canExportReports() ? (
+          <View style={styles.exportButtonsRow}>
+            <Pressable
+              onPress={() => handleExport('roster')}
+              disabled={exporting}
+              style={[styles.exportBtn, styles.exportBtnPrimary]}
+              accessibilityRole="button"
+              accessibilityLabel="Export Section Roster CSV"
+            >
+              {exporting ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <Download size={15} color="#ffffff" />
+                  <Text style={styles.exportBtnPrimaryText}>Roster CSV</Text>
+                </>
+              )}
+            </Pressable>
 
-          <Pressable
-            onPress={() => handleExport('sessions')}
-            disabled={exporting}
-            style={[styles.exportBtn, styles.exportBtnSecondary]}
-            accessibilityRole="button"
-          >
-            <Download size={15} color={Colors.ink} />
-            <Text style={styles.exportBtnSecondaryText}>Session Logs CSV</Text>
-          </Pressable>
-        </View>
+            <Pressable
+              onPress={() => handleExport('sessions')}
+              disabled={exporting}
+              style={[styles.exportBtn, styles.exportBtnSecondary]}
+              accessibilityRole="button"
+              accessibilityLabel="Export Session Logs CSV"
+            >
+              <Download size={15} color={Colors.ink} />
+              <Text style={styles.exportBtnSecondaryText}>Session Logs CSV</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Text style={{ fontSize: 12, color: Colors.soft, marginTop: 8, fontStyle: 'italic' }}>
+            Report file export requires reports.export permission.
+          </Text>
+        )}
       </Card>
 
       {/* Section Title with Filter Toggles and Count Indicator */}
@@ -615,7 +635,7 @@ export default function FacultyReportsScreen() {
                 key={student.id}
                 style={[styles.studentRow, !isLast && styles.studentRowDivider]}
               >
-                <Avatar name={student.name} size={38} />
+                <Avatar name={student.name} userId={student.id} size={38} />
                 <View style={styles.studentInfo}>
                   <Text style={styles.studentName} numberOfLines={1}>
                     {student.name}

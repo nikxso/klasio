@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, Pressable, TouchableOpacity, TextInput, Image, ActivityIndicator } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { View, Text, StyleSheet, Pressable, TouchableOpacity, TextInput, Image, ActivityIndicator, RefreshControl } from 'react-native';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { ScanFace, Users, ChevronLeft, AlertCircle, Cloud, CloudOff, RefreshCw, Check, Search, UserCheck, Edit3, X } from 'lucide-react-native';
 
 import { Screen, Card, Button, Ring, Bar, Avatar, SectionTitle, Chip, Sheet } from '@/components/ui/kit';
@@ -82,6 +82,48 @@ export default function ClassDetailScreen() {
   const [editInstitutionalId, setEditInstitutionalId] = useState<string>('');
   const [editSaving, setEditSaving] = useState<boolean>(false);
   const [editMsg, setEditMsg] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [rosterVersion, setRosterVersion] = useState<number>(Date.now());
+
+  const syncRosterData = useCallback(async () => {
+    if (!params.id) return;
+    const token = SessionStore.getToken();
+    if (token) {
+      try {
+        const fresh = await RosterRepository.syncAssignmentRoster(params.id, token);
+        if (fresh && fresh.length > 0) {
+          setStudents(
+            fresh.map((c) => ({
+              ...c,
+              pct: 88,
+            }))
+          );
+          setRosterVersion(Date.now());
+          return;
+        }
+      } catch (err) {
+        console.warn('Failed to sync assignment roster:', err);
+      }
+    }
+
+    // Fallback reading from local SQLite cached_rosters
+    const cached = await RosterRepository.getCachedRoster(params.id);
+    if (cached && cached.length > 0) {
+      setStudents(
+        cached.map((c) => ({
+          ...c,
+          pct: 88,
+        }))
+      );
+      setRosterVersion(Date.now());
+    }
+  }, [params.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      syncRosterData();
+    }, [syncRosterData])
+  );
 
   useEffect(() => {
     // 1. Attempt reading from local SQLite cached_rosters
@@ -306,6 +348,7 @@ export default function ClassDetailScreen() {
         )}
 
         <AttendanceRosterList
+          version={rosterVersion}
           students={currentDisplayList.map((s) => ({
             studentUserId: s.studentUserId,
             institutionalId: s.institutionalId,
@@ -478,6 +521,17 @@ export default function ClassDetailScreen() {
       onBack={() => router.back()}
       subtitle={`${params.section || 'CSE 3A'} · ${params.room || 'LH-204'}`}
       title={params.subject || 'Data Structures'}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={async () => {
+            setIsRefreshing(true);
+            await syncRosterData();
+            setIsRefreshing(false);
+          }}
+          colors={[Colors.primary, Colors.forest]}
+        />
+      }
     >
       {isDelegated && (
         <View style={styles.delegatedNotice}>
@@ -738,7 +792,7 @@ export default function ClassDetailScreen() {
                 }}
                 style={[styles.studentRow, !isLast && styles.rowDivider]}
               >
-                <Avatar name={student.studentName} userId={student.studentUserId} size={40} />
+                <Avatar name={student.studentName} userId={student.studentUserId} version={rosterVersion} size={40} />
 
                 <View style={styles.studentInfo}>
                   <View style={styles.nameHeaderRow}>
@@ -967,7 +1021,7 @@ export default function ClassDetailScreen() {
         {selectedStudent && (
           <View style={styles.sheetStudentDetailContainer}>
             <View style={styles.sheetAvatarHeader}>
-              <Avatar name={selectedStudent.studentName} userId={selectedStudent.studentUserId} size={64} />
+              <Avatar name={selectedStudent.studentName} userId={selectedStudent.studentUserId} version={rosterVersion} size={64} />
               <View style={styles.sheetStudentMeta}>
                 <Text style={styles.sheetStudentName}>{selectedStudent.studentName}</Text>
                 <Text style={styles.sheetStudentId}>Roll No: {selectedStudent.institutionalId}</Text>

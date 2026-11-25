@@ -35,6 +35,7 @@ const POSES = [
   { label: 'Look straight ahead', sublabel: 'Neutral expression', icon: Smile, step: 'FRONTAL' as const },
   { label: 'Turn slightly left', sublabel: 'Keep eyes level', icon: ArrowLeft, step: 'SLIGHT_LEFT' as const },
   { label: 'Turn slightly right', sublabel: 'Keep eyes level', icon: ArrowRight, step: 'SLIGHT_RIGHT' as const },
+  { label: 'Look directly into camera', sublabel: 'Center face for profile photo', icon: ScanFace, step: 'PROFILE_PHOTO' as const },
 ];
 
 export default function StudentEnrollmentScreen() {
@@ -121,9 +122,9 @@ export default function StudentEnrollmentScreen() {
           <View style={styles.guidanceRow}>
             <IconBubble icon={ScanFace} tone="lilac" size={40} />
             <View style={styles.guidanceTextCol}>
-              <Text style={styles.guidanceTitle}>Guided Multi-Angle Verification</Text>
+              <Text style={styles.guidanceTitle}>Guided Multi-Angle & Centered Photo</Text>
               <Text style={styles.guidanceDesc}>
-                You will be prompted to look forward, slightly left, and slightly right to capture consistent reference angles.
+                You will be prompted to look forward, slightly left, slightly right, and center your face for your official profile photo.
               </Text>
             </View>
           </View>

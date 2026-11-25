@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.RectF
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
@@ -666,34 +667,171 @@ class DirectPerceptionModule(private val reactContext: ReactApplicationContext) 
         }
     }
 
+    private fun detectLeadingFaceBoundingBox(sourceBitmap: Bitmap): RectF? {
+        val session = ortSession ?: return null
+        val env = ortEnv ?: return null
+        val targetDim = 640
+        val origW = sourceBitmap.width
+        val origH = sourceBitmap.height
+
+        val scaled = if (origW == targetDim && origH == targetDim) {
+            sourceBitmap
+        } else {
+            Bitmap.createScaledBitmap(sourceBitmap, targetDim, targetDim, true)
+        }
+
+        val pixels = IntArray(targetDim * targetDim)
+        scaled.getPixels(pixels, 0, targetDim, 0, 0, targetDim, targetDim)
+
+        val floatBuffer = FloatBuffer.allocate(1 * 3 * targetDim * targetDim)
+        val numPixels = targetDim * targetDim
+
+        for (c in 0 until 3) {
+            for (i in 0 until numPixels) {
+                val p = pixels[i]
+                val v = when (c) {
+                    0 -> (p and 0xFF).toFloat()
+                    1 -> ((p shr 8) and 0xFF).toFloat()
+                    2 -> ((p shr 16) and 0xFF).toFloat()
+                    else -> 0f
+                }
+                floatBuffer.put(v)
+            }
+        }
+        floatBuffer.rewind()
+
+        val tensor = OnnxTensor.createTensor(
+            env,
+            floatBuffer,
+            longArrayOf(1, 3, targetDim.toLong(), targetDim.toLong())
+        )
+        val outputs = session.run(mapOf("input" to tensor))
+
+        val strides = intArrayOf(8, 16, 32)
+        val rawBoxes = mutableListOf<FloatArray>()
+        val rawScores = mutableListOf<Float>()
+
+        for (stride in strides) {
+            val clsTensor = outputs.get("cls_$stride").get() as OnnxTensor
+            val objTensor = outputs.get("obj_$stride").get() as OnnxTensor
+            val bboxTensor = outputs.get("bbox_$stride").get() as OnnxTensor
+
+            val clsBuf = clsTensor.floatBuffer
+            val objBuf = objTensor.floatBuffer
+            val bboxBuf = bboxTensor.floatBuffer
+
+            val gridW = targetDim / stride
+            val numAnchors = clsBuf.capacity()
+
+            for (i in 0 until numAnchors) {
+                val clsVal = clsBuf.get(i)
+                val objVal = objBuf.get(i)
+                val score = sqrt(max(0.0, (clsVal * objVal).toDouble())).toFloat()
+
+                if (score >= 0.40f) {
+                    val c = (i % gridW).toFloat()
+                    val r = (i / gridW).toFloat()
+
+                    val dx = bboxBuf.get(i * 4 + 0)
+                    val dy = bboxBuf.get(i * 4 + 1)
+                    val dw = bboxBuf.get(i * 4 + 2)
+                    val dh = bboxBuf.get(i * 4 + 3)
+
+                    val cx = (c + dx) * stride
+                    val cy = (r + dy) * stride
+                    val w = exp(dw.toDouble()).toFloat() * stride
+                    val h = exp(dh.toDouble()).toFloat() * stride
+                    val x = cx - w / 2f
+                    val y = cy - h / 2f
+
+                    rawBoxes.add(floatArrayOf(x, y, w, h))
+                    rawScores.add(score)
+                }
+            }
+        }
+
+        tensor.close()
+        outputs.close()
+        if (scaled != sourceBitmap) {
+            scaled.recycle()
+        }
+
+        val keep = runNms(rawBoxes, rawScores, 0.4f)
+        if (keep.isEmpty()) return null
+
+        val topIdx = keep[0]
+        val box = rawBoxes[topIdx]
+
+        val scaleX = origW.toFloat() / targetDim
+        val scaleY = origH.toFloat() / targetDim
+
+        val fx = box[0] * scaleX
+        val fy = box[1] * scaleY
+        val fw = box[2] * scaleX
+        val fh = box[3] * scaleY
+
+        return RectF(fx, fy, fx + fw, fy + fh)
+    }
+
     @ReactMethod
     fun capturePhotoFromCamera(viewTag: Int, promise: Promise) {
         scope.launch {
             try {
                 val (rawBitmap, _) = grabBitmapFromCamera(viewTag)
-                val maxDim = 512
                 val srcW = rawBitmap.width
                 val srcH = rawBitmap.height
-                val scale = min(maxDim.toFloat() / srcW, maxDim.toFloat() / srcH)
-                val targetW = (srcW * scale).toInt()
-                val targetH = (srcH * scale).toInt()
 
-                val scaledBitmap = Bitmap.createScaledBitmap(rawBitmap, targetW, targetH, true)
+                val detectedFace = try {
+                    detectLeadingFaceBoundingBox(rawBitmap)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Face detection during photo capture fallback to center crop: ${e.message}")
+                    null
+                }
+
+                val targetDim = 512
+                val croppedBitmap = if (detectedFace != null) {
+                    val fw = detectedFace.width()
+                    val fh = detectedFace.height()
+                    val faceDim = max(fw, fh)
+                    val cropSize = (faceDim * 1.85f).toInt()
+                    val cx = detectedFace.centerX()
+                    // Slight vertical offset (headroom) so eyes sit comfortably at ~42% from top
+                    val cy = detectedFace.centerY() - (0.08f * faceDim)
+
+                    var left = (cx - cropSize / 2f).toInt()
+                    var top = (cy - cropSize / 2f).toInt()
+
+                    left = max(0, min(srcW - cropSize, left))
+                    top = max(0, min(srcH - cropSize, top))
+                    val actualCropSize = min(cropSize, min(srcW - left, srcH - top))
+
+                    Bitmap.createBitmap(rawBitmap, max(0, left), max(0, top), max(1, actualCropSize), max(1, actualCropSize))
+                } else {
+                    val side = min(srcW, srcH)
+                    val left = (srcW - side) / 2
+                    val top = max(0, min(srcH - side, (srcH - side) / 3))
+                    Bitmap.createBitmap(rawBitmap, left, top, side, side)
+                }
+
+                val finalBitmap = Bitmap.createScaledBitmap(croppedBitmap, targetDim, targetDim, true)
                 val bos = ByteArrayOutputStream()
-                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, bos)
+                finalBitmap.compress(Bitmap.CompressFormat.JPEG, 90, bos)
                 val bytes = bos.toByteArray()
                 val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
                 val result = Arguments.createMap().apply {
                     putBoolean("success", true)
                     putString("base64", b64)
-                    putInt("width", targetW)
-                    putInt("height", targetH)
+                    putInt("width", targetDim)
+                    putInt("height", targetDim)
                     putInt("sizeBytes", bytes.size)
                 }
 
-                if (scaledBitmap != rawBitmap) {
-                    scaledBitmap.recycle()
+                if (croppedBitmap != rawBitmap && croppedBitmap != finalBitmap) {
+                    croppedBitmap.recycle()
+                }
+                if (finalBitmap != rawBitmap) {
+                    finalBitmap.recycle()
                 }
 
                 promise.resolve(result)

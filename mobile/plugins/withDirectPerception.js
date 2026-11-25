@@ -130,6 +130,29 @@ async function copyNativeFilesAndAssets(config) {
     }
   }
 
+  // 5. Ensure ProGuard / R8 rules for ONNX Runtime & VisionCamera
+  const proguardPath = path.join(platformRoot, 'app/proguard-rules.pro');
+  if (fs.existsSync(proguardPath)) {
+    let proguard = fs.readFileSync(proguardPath, 'utf8');
+    const rules = [
+      '-keep class ai.onnxruntime.** { *; }',
+      '-dontwarn ai.onnxruntime.**',
+      '-keep class com.klasio.app.perception.** { *; }',
+      '-keep class com.mrousavy.camera.** { *; }',
+      '-dontwarn com.mrousavy.camera.**',
+    ];
+    let modified = false;
+    for (const rule of rules) {
+      if (!proguard.includes(rule)) {
+        proguard += `\n${rule}`;
+        modified = true;
+      }
+    }
+    if (modified) {
+      fs.writeFileSync(proguardPath, proguard);
+    }
+  }
+
   return config;
 }
 

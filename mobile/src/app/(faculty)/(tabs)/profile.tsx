@@ -131,61 +131,84 @@ export default function FacultyProfileScreen() {
       </View>
 
       {/* Institutional & Departmental Management Tools (Unified UX - No Workspace Switching) */}
-      {SessionStore.canAccessAdmin() && (
+      {(SessionStore.canManagePeople() ||
+        SessionStore.canManageAcademics() ||
+        SessionStore.canManageDelegations()) && (
         <>
           <Text style={styles.sectionHeader}>Departmental & Institutional Oversight</Text>
           <Card style={styles.cardGroup}>
-            <Pressable
-              onPress={() => router.push('/(admin)/(tabs)/people' as any)}
-              style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
-            >
-              <View style={styles.actionLeft}>
-                <IconBubble icon={Users} tone="forest" size={36} />
-                <View>
-                  <Text style={styles.actionTitle}>People & Student Rosters</Text>
-                  <Text style={styles.actionSubtitle}>Department faculty, staff, and enrolled students</Text>
-                </View>
-              </View>
-              <ChevronRight size={18} color={Colors.soft} />
-            </Pressable>
+            {SessionStore.canManagePeople() && (
+              <>
+                <Pressable
+                  onPress={() => router.push('/(faculty)/people' as any)}
+                  style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="People & Student Rosters"
+                  accessibilityHint="Manage department faculty, staff, and enrolled students"
+                >
+                  <View style={styles.actionLeft}>
+                    <IconBubble icon={Users} tone="forest" size={36} />
+                    <View>
+                      <Text style={styles.actionTitle}>People & Student Rosters</Text>
+                      <Text style={styles.actionSubtitle}>Department faculty, staff, and enrolled students</Text>
+                    </View>
+                  </View>
+                  <ChevronRight size={18} color={Colors.soft} />
+                </Pressable>
+                <View style={styles.divider} />
+              </>
+            )}
 
-            <View style={styles.divider} />
+            {SessionStore.canManageAcademics() && (
+              <>
+                <Pressable
+                  onPress={() => router.push('/(faculty)/academics' as any)}
+                  style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Academics & Class Sections"
+                  accessibilityHint="View and manage curriculum, terms, sections, and assignments"
+                >
+                  <View style={styles.actionLeft}>
+                    <IconBubble icon={GraduationCap} tone="lilac" size={36} />
+                    <View>
+                      <Text style={styles.actionTitle}>Academics & Class Sections</Text>
+                      <Text style={styles.actionSubtitle}>Curriculum, terms, sections, and assignments</Text>
+                    </View>
+                  </View>
+                  <ChevronRight size={18} color={Colors.soft} />
+                </Pressable>
+                <View style={styles.divider} />
+              </>
+            )}
 
-            <Pressable
-              onPress={() => router.push('/(admin)/(tabs)/academics' as any)}
-              style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
-            >
-              <View style={styles.actionLeft}>
-                <IconBubble icon={GraduationCap} tone="lilac" size={36} />
-                <View>
-                  <Text style={styles.actionTitle}>Academics & Class Sections</Text>
-                  <Text style={styles.actionSubtitle}>Curriculum, terms, sections, and assignments</Text>
-                </View>
-              </View>
-              <ChevronRight size={18} color={Colors.soft} />
-            </Pressable>
-
-            <View style={styles.divider} />
-
-            <Pressable
-              onPress={() => router.push('/(faculty)/delegations' as any)}
-              style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
-            >
-              <View style={styles.actionLeft}>
-                <IconBubble icon={UserCheck} tone="apricot" size={36} />
-                <View>
-                  <Text style={styles.actionTitle}>Substitute Delegations</Text>
-                  <Text style={styles.actionSubtitle}>Request or approve faculty classroom substitutions</Text>
-                </View>
-              </View>
-              <ChevronRight size={18} color={Colors.soft} />
-            </Pressable>
-
-            <View style={styles.divider} />
+            {SessionStore.canManageDelegations() && (
+              <>
+                <Pressable
+                  onPress={() => router.push('/(faculty)/delegations' as any)}
+                  style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Substitute Delegations"
+                  accessibilityHint="Request or approve faculty classroom substitutions"
+                >
+                  <View style={styles.actionLeft}>
+                    <IconBubble icon={UserCheck} tone="apricot" size={36} />
+                    <View>
+                      <Text style={styles.actionTitle}>Substitute Delegations</Text>
+                      <Text style={styles.actionSubtitle}>Request or approve faculty classroom substitutions</Text>
+                    </View>
+                  </View>
+                  <ChevronRight size={18} color={Colors.soft} />
+                </Pressable>
+                <View style={styles.divider} />
+              </>
+            )}
 
             <Pressable
               onPress={() => router.push('/notifications' as any)}
               style={({ pressed }) => [styles.actionRow, pressed && { opacity: 0.7 }]}
+              accessibilityRole="button"
+              accessibilityLabel="In-App Notification Center"
+              accessibilityHint="View authority alerts, amendments, and governance notifications"
             >
               <View style={styles.actionLeft}>
                 <IconBubble icon={Bell} tone="amber" size={36} />

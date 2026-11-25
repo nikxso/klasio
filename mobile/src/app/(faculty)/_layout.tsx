@@ -1,7 +1,23 @@
 import React from 'react';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
+import { SessionStore } from '@/storage/sessionStore';
+import { AccessRestrictedView } from '@/components/ui/kit';
 
 export default function FacultyStackLayout() {
+  const router = useRouter();
+  const user = SessionStore.getUser();
+
+  if (user?.role?.toUpperCase() === 'STUDENT') {
+    return (
+      <AccessRestrictedView
+        title="Faculty Workspace Restricted"
+        message="Student accounts cannot access faculty or administrative workflows."
+        requiredCapability="attendance.session.start or faculty role"
+        onBack={() => router.replace('/(student)')}
+      />
+    );
+  }
+
   return (
     <Stack
       screenOptions={{
@@ -15,6 +31,8 @@ export default function FacultyStackLayout() {
       <Stack.Screen name="session/scan" options={{ headerShown: false }} />
       <Stack.Screen name="delegations" options={{ headerShown: false }} />
       <Stack.Screen name="enrollment" options={{ headerShown: false }} />
+      <Stack.Screen name="people" options={{ headerShown: false }} />
+      <Stack.Screen name="academics" options={{ headerShown: false }} />
     </Stack>
   );
 }

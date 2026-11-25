@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/theme/tokens';
+import { SessionStore } from '@/storage/sessionStore';
 import type { FigmaBottomTabBarProps } from './types';
 
 interface TabItemButtonProps {
@@ -119,11 +120,46 @@ export function FigmaBottomTabBar({
   const insets = useSafeAreaInsets();
   const bottomPadding = Math.max(insets.bottom, 10);
 
+  // If the active screen requested hiding the tab bar, hide it completely
+  const currentRoute = state.routes[state.index];
+  const currentOptions = descriptors[currentRoute?.key]?.options;
+  if ((currentOptions?.tabBarStyle as any)?.display === 'none') {
+    return null;
+  }
+
   const visibleRoutes = state.routes.filter((route) => {
     const { options } = descriptors[route.key];
     const expoHref = (options as { href?: string | null }).href;
-    return expoHref !== null;
+    if (expoHref === null) return false;
+
+    // Dynamic Role & Capability Check on tab routes:
+    if (route.name === 'index') {
+      const isAdminTabs = state.routes.some((r) => r.name === 'people' || r.name === 'settings');
+      if (isAdminTabs) {
+        const isInstitutionalAdmin =
+          SessionStore.canManageSettings() ||
+          SessionStore.hasAnyRole([
+            'ADMIN',
+            'INSTITUTION_OWNER',
+            'CENTRAL_INSTITUTION_ADMIN',
+            'CAMPUS_ADMIN',
+          ]);
+        if (!isInstitutionalAdmin) return false;
+      }
+    }
+    if (route.name === 'people' && !SessionStore.canManagePeople()) return false;
+    if (route.name === 'academics' && !SessionStore.canManageAcademics()) return false;
+    if (route.name === 'settings' && !SessionStore.canManageSettings()) return false;
+    if (route.name === 'assignments' && !SessionStore.canViewClasses()) return false;
+    if (route.name === 'reports' && !SessionStore.canViewReports()) return false;
+
+    return true;
   });
+
+  // If there are no routes or only 1 route without centerAction, hide the navbar
+  if (visibleRoutes.length <= 1 && !centerAction) {
+    return null;
+  }
 
   const renderTabItem = (route: typeof state.routes[number]) => {
     const isFocused = state.routes[state.index].key === route.key;

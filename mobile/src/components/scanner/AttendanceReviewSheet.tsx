@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Info,
 } from 'lucide-react-native';
+import { Avatar } from '@/components/ui/kit';
 import type { AccumulatedRecognitionCandidate } from '../../perception/contracts';
 
 export interface AttendanceReviewSheetProps {
@@ -117,7 +118,7 @@ export const AttendanceReviewSheet: React.FC<AttendanceReviewSheetProps> = ({
                 return (
                   <View key={c.studentUserId || index} style={styles.candidateCard}>
                     <View style={styles.candidateAvatar}>
-                      <User size={18} color="#ffffff" />
+                      <Avatar name={name} userId={c.studentUserId} size={38} />
                     </View>
                     <View style={styles.candidateInfo}>
                       <Text style={styles.candidateName}>{name}</Text>

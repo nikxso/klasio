@@ -265,6 +265,28 @@ def require_roles(*allowed_roles: UserRole) -> Callable:
     ) -> User:
         legacy_allowed = (current_user.role in allowed_roles)
 
+        if not legacy_allowed and (UserRole.ADMIN in allowed_roles or UserRole.FACULTY in allowed_roles):
+            from datetime import datetime, timezone
+            from src.api.v1.auth import ADMIN_ROLE_CODES, FACULTY_ROLE_CODES
+            now = datetime.now(timezone.utc)
+            ra_stmt = (
+                select(RoleTemplate.code)
+                .join(RoleAssignment, RoleAssignment.role_template_id == RoleTemplate.id)
+                .join(InstitutionMembership, RoleAssignment.membership_id == InstitutionMembership.id)
+                .where(
+                    InstitutionMembership.user_id == current_user.id,
+                    RoleAssignment.status == AssignmentStatus.ACTIVE,
+                    RoleAssignment.valid_from <= now,
+                    or_(RoleAssignment.valid_until.is_(None), RoleAssignment.valid_until > now),
+                    RoleTemplate.is_active.is_(True),
+                )
+            )
+            codes = set((await db.execute(ra_stmt)).scalars().all())
+            if UserRole.ADMIN in allowed_roles and (codes & ADMIN_ROLE_CODES or "DEPARTMENT_HEAD" in codes or "DEPARTMENT_HEAD_COORDINATOR" in codes):
+                legacy_allowed = True
+            elif UserRole.FACULTY in allowed_roles and (codes & FACULTY_ROLE_CODES):
+                legacy_allowed = True
+
         # Feature-flagged shadow evaluation hook
         settings = get_settings()
         if getattr(settings, "ENABLE_SHADOW_AUTHORIZATION", False):
