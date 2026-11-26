@@ -7,6 +7,7 @@ import { useFonts } from 'expo-font';
 import { Colors } from '@/theme/tokens';
 import { SessionStore } from '@/storage/sessionStore';
 import { useAutoSync } from '@/services/autoSyncService';
+import { checkForAppUpdates } from '@/services/updateService';
 
 LogBox.ignoreAllLogs(true);
 
@@ -44,6 +45,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     SessionStore.initFromStorage().catch(() => {});
+    checkForAppUpdates(true).catch(() => {});
   }, []);
 
   // Startup check: require DirectPerception native perception module on Android
