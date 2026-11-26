@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LogBox, NativeModules, Platform, StyleSheet, Text, View } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Colors } from '@/theme/tokens';
+import { SessionStore } from '@/storage/sessionStore';
 
 LogBox.ignoreAllLogs(true);
 
@@ -37,6 +38,10 @@ export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     'ChangaOne-Regular': require('../../assets/fonts/ChangaOne-Regular.ttf'),
   });
+
+  useEffect(() => {
+    SessionStore.initFromStorage().catch(() => {});
+  }, []);
 
   // Startup check: require DirectPerception native perception module on Android
   const isDirectPerceptionMissing = Platform.OS === 'android' && !NativeModules.DirectPerception;

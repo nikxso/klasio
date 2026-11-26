@@ -45,9 +45,27 @@ export default function StudentEnrollmentScreen() {
 
   // Authenticated student context
   const currentUser = SessionStore.getUser();
-  const studentUserId = currentUser?.id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94';
-  const institutionalId = currentUser?.institutionalId || 'S3';
-  const studentName = currentUser?.fullName || 'Student S3';
+
+  if (!currentUser) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.cream, padding: 24 }}>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.ink, marginBottom: 8 }}>Authentication Required</Text>
+        <Text style={{ fontSize: 14, color: Colors.soft, textAlign: 'center', marginBottom: 20 }}>
+          Please sign in to your student account before registering biometric credentials.
+        </Text>
+        <Pressable
+          onPress={() => router.replace('/')}
+          style={{ paddingHorizontal: 20, paddingVertical: 12, backgroundColor: Colors.forest, borderRadius: 14 }}
+        >
+          <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 14 }}>Return to Sign In</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const studentUserId = currentUser.id;
+  const institutionalId = currentUser.institutionalId || '';
+  const studentName = currentUser.fullName || 'Student';
 
   // -1: Introduction / Consent screen; 0: Active guided camera registration
   const [sessionActive, setSessionActive] = useState<boolean>(false);

@@ -363,7 +363,7 @@ export function useCameraDetection(options: UseCameraDetectionOptions) {
     async function initClassGallery() {
       try {
         await embedderRef.current.initialize();
-        const assignmentId = sectionId || 'ac8bf5c4-851a-4206-acf5-c8b174b1ae04';
+        const assignmentId = sectionId || '';
         const token = SessionStore.getToken();
 
         if (token && assignmentId) {

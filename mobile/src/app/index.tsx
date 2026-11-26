@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,12 +14,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import {
-  GraduationCap,
-  Presentation,
-  ShieldCheck,
   Eye,
   EyeOff,
   AlertCircle,
+  ShieldCheck,
 } from 'lucide-react-native';
 
 import { Colors, Radii } from '@/theme/tokens';
@@ -53,50 +51,39 @@ export function resolveTargetRoute(user?: { permissions?: string[]; role?: strin
   return '/(faculty)';
 }
 
-export type RoleKey = 'student' | 'faculty' | 'admin';
-
-interface RoleOption {
-  key: RoleKey;
-  label: string;
-  icon: typeof GraduationCap;
-  defaultId: string;
-}
-
-const ROLES: RoleOption[] = [
-  {
-    key: 'student',
-    label: 'Student',
-    icon: GraduationCap,
-    defaultId: 'S3',
-  },
-  {
-    key: 'faculty',
-    label: 'Faculty',
-    icon: Presentation,
-    defaultId: 'prof_alan',
-  },
-  {
-    key: 'admin',
-    label: 'Admin',
-    icon: ShieldCheck,
-    defaultId: 'admin_meera',
-  },
-];
-
 export default function LoginScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const [checkingSession, setCheckingSession] = useState(true);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const handleAutofill = (roleKey: RoleKey) => {
-    setAuthError(null);
-    const roleConfig = ROLES.find((r) => r.key === roleKey)!;
-    setIdentifier(roleConfig.defaultId);
-    setPassword('password');
-  };
+  useEffect(() => {
+    let isMounted = true;
+    async function checkExistingSession() {
+      try {
+        const session = SessionStore.getSession() || (await SessionStore.initFromStorage());
+        if (session?.user && session?.token && isMounted) {
+          const targetRoute = resolveTargetRoute(session.user);
+          router.replace(targetRoute as any);
+          return;
+        }
+      } catch (err) {
+        console.warn('[AUTH] Error checking existing session on launch:', err);
+      } finally {
+        if (isMounted) {
+          setCheckingSession(false);
+        }
+      }
+    }
+    checkExistingSession();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleSignIn = async () => {
     if (!identifier.trim()) {
@@ -179,13 +166,24 @@ export default function LoginScreen() {
           return;
         }
       }
-      setAuthError('Cannot connect to authentication server and no matching offline session exists.');
+      setAuthError('Unable to connect to attendance server. Please check your network connection.');
       setLoading(false);
       return;
     }
   };
 
-  const insets = useSafeAreaInsets();
+  if (checkingSession) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <StatusBar style="light" />
+        <View style={styles.loadingCard}>
+          <KlasioLogo variant="mark" size={56} />
+          <ActivityIndicator size="small" color={Colors.forest} style={{ marginTop: 20 }} />
+          <Text style={styles.loadingText}>Restoring session...</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -233,7 +231,7 @@ export default function LoginScreen() {
           {/* Form Content Area */}
           <View style={styles.formSection}>
             <Text style={styles.formTitle}>Sign In</Text>
-            <Text style={styles.formSubtitle}>Access your attendance and courses</Text>
+            <Text style={styles.formSubtitle}>Enter your institutional credentials to access attendance</Text>
 
             {/* Error Banner */}
             {authError && (
@@ -250,7 +248,7 @@ export default function LoginScreen() {
                 style={styles.input}
                 value={identifier}
                 onChangeText={setIdentifier}
-                placeholder="Enter Institutional ID"
+                placeholder="Enter Institutional ID (e.g. S10294 or faculty ID)"
                 placeholderTextColor={Colors.soft}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -301,57 +299,13 @@ export default function LoginScreen() {
               </Button>
             </View>
 
-            {/* Debug Quick Autofill Tray */}
-            <View style={styles.autofillSection}>
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>Quick Autofill (Debug)</Text>
-                <View style={styles.dividerLine} />
-              </View>
-
-              <View style={styles.autofillGrid}>
-                {ROLES.map((role) => {
-                  const IconComponent = role.icon;
-                  const isCurrent = identifier === role.defaultId;
-
-                  return (
-                    <Pressable
-                      key={role.key}
-                      onPress={() => handleAutofill(role.key)}
-                      style={[
-                        styles.autofillCard,
-                        isCurrent ? styles.autofillCardActive : styles.autofillCardInactive,
-                      ]}
-                      accessibilityLabel={`Autofill ${role.label}`}
-                    >
-                      <IconComponent
-                        size={18}
-                        color={isCurrent ? Colors.forest : Colors.soft}
-                      />
-                      <Text
-                        style={[
-                          styles.autofillLabel,
-                          isCurrent ? styles.autofillLabelActive : styles.autofillLabelInactive,
-                        ]}
-                      >
-                        {role.label}
-                      </Text>
-                      <Text style={styles.autofillIdText}>{role.defaultId}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            {/* Developer Lab Shortcut */}
-            <Pressable
-              onPress={() => router.push('/lab/perception')}
-              style={styles.labLink}
-            >
-              <Text style={styles.labLinkText}>
-                🔬 Open Perception Diagnostic Lab
+            {/* Institutional Security Notice */}
+            <View style={styles.securityNotice}>
+              <ShieldCheck size={16} color={Colors.soft} />
+              <Text style={styles.securityNoticeText}>
+                Secured by Klasio Biometric Architecture • Privacy Compliant
               </Text>
-            </Pressable>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -363,6 +317,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.cream,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.cream,
+  },
+  loadingCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: Colors.soft,
+    marginTop: 12,
+    fontWeight: '500',
   },
   keyboardContainer: {
     flex: 1,
@@ -424,7 +394,7 @@ const styles = StyleSheet.create({
   formSection: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingTop: 28,
     paddingBottom: 32,
   },
   formTitle: {
@@ -436,16 +406,17 @@ const styles = StyleSheet.create({
   formSubtitle: {
     fontSize: 14,
     color: Colors.soft,
-    marginBottom: 20,
+    marginBottom: 24,
+    lineHeight: 20,
   },
   fieldContainer: {
-    marginBottom: 16,
+    marginBottom: 18,
   },
   fieldLabel: {
-    fontSize: 12,
-    color: Colors.soft,
-    marginBottom: 6,
-    fontWeight: '500',
+    fontSize: 13,
+    color: Colors.ink,
+    marginBottom: 8,
+    fontWeight: '600',
   },
   input: {
     backgroundColor: Colors.card,
@@ -477,7 +448,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   submitContainer: {
-    marginTop: 8,
+    marginTop: 12,
   },
   errorBanner: {
     flexDirection: 'row',
@@ -488,7 +459,7 @@ const styles = StyleSheet.create({
     borderRadius: Radii.md,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    marginBottom: 16,
+    marginBottom: 18,
     gap: 8,
   },
   errorBannerText: {
@@ -497,70 +468,17 @@ const styles = StyleSheet.create({
     color: '#b91c1c',
     lineHeight: 18,
   },
-  autofillSection: {
-    marginTop: 26,
-  },
-  dividerRow: {
+  securityNotice: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
-    gap: 10,
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 36,
+    paddingHorizontal: 12,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: Colors.line,
-  },
-  dividerText: {
-    fontSize: 11,
-    color: Colors.soft,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  autofillGrid: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  autofillCard: {
-    flex: 1,
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    gap: 3,
-    borderWidth: 1.5,
-  },
-  autofillCardActive: {
-    borderColor: Colors.forest,
-    backgroundColor: Colors.forest50,
-  },
-  autofillCardInactive: {
-    borderColor: Colors.line,
-    backgroundColor: Colors.card,
-  },
-  autofillLabel: {
+  securityNoticeText: {
     fontSize: 12,
-    fontWeight: '600',
-  },
-  autofillLabelActive: {
-    color: Colors.forest,
-  },
-  autofillLabelInactive: {
-    color: Colors.ink,
-  },
-  autofillIdText: {
-    fontSize: 10,
     color: Colors.soft,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-  },
-  labLink: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  labLinkText: {
-    fontSize: 13,
-    color: Colors.soft,
-    textDecorationLine: 'underline',
+    textAlign: 'center',
   },
 });

@@ -18,6 +18,7 @@ import {
   Smartphone,
   ChevronRight,
   CheckCircle2,
+  Server,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, IconBubble, Avatar, Sheet, Button, AccessRestrictedView } from '@/components/ui/kit';
@@ -244,6 +245,20 @@ export default function AdminSettingsScreen() {
           <View style={styles.infoCol}>
             <Text style={styles.infoTitle}>System Broadcasts</Text>
             <Text style={styles.infoSubtitle}>Automated shortage warnings enabled</Text>
+          </View>
+          <Chip tone="forest">Active</Chip>
+        </View>
+      </Card>
+
+      <Text style={styles.sectionHeader}>Server Infrastructure</Text>
+      <Card style={styles.cardGroup}>
+        <View style={styles.infoRow}>
+          <IconBubble icon={Server} tone="forest" size={40} />
+          <View style={styles.infoCol}>
+            <Text style={styles.infoTitle}>Backend Endpoint</Text>
+            <Text style={styles.infoSubtitle} numberOfLines={1} ellipsizeMode="middle">
+              {API_BASE_URL}
+            </Text>
           </View>
           <Chip tone="forest">Active</Chip>
         </View>

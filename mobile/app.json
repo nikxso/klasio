@@ -12,6 +12,7 @@
     },
     "android": {
       "package": "com.klasio.app",
+      "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.CAMERA"
       ],

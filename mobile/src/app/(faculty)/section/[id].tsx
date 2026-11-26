@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { View, Text, StyleSheet, Pressable, TouchableOpacity, TextInput, Image, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TouchableOpacity, TextInput, Image, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { ScanFace, Users, ChevronLeft, AlertCircle, Cloud, CloudOff, RefreshCw, Check, Search, UserCheck, Edit3, X } from 'lucide-react-native';
 
@@ -31,6 +31,7 @@ export default function ClassDetailScreen() {
     held: string;
     avg: string;
     isDelegated: string;
+    delegationId?: string;
     regularFaculty: string;
     initialMode?: string;
     slot?: string;
@@ -473,18 +474,27 @@ export default function ClassDetailScreen() {
 
                 const currentUser = SessionStore.getUser();
                 const token = SessionStore.getToken();
-                const facultyId = currentUser?.id || '2215c8c4-d597-40fb-abfd-14c7dbf3dd58';
+                if (!currentUser?.id) {
+                  Alert.alert('Session Error', 'Active faculty session required to record attendance.');
+                  return;
+                }
+                const facultyId = currentUser.id;
+                const assignmentId = params.id;
+                if (!assignmentId) {
+                  Alert.alert('Error', 'Class section assignment ID is missing.');
+                  return;
+                }
 
                 await AttendanceRepository.finalizeSession({
                   clientSessionUuid: clientUuid,
-                  teachingAssignmentId: params.id || 'ac8bf5c4-851a-4206-acf5-c8b174b1ae04',
+                  teachingAssignmentId: assignmentId,
                   sessionDate: today,
                   periodSlotOrSequence: selectedSlot,
                   applicabilityStatus: applicabilityStatus,
                   statusReason: applicabilityStatus !== 'COUNTED' ? statusReason : null,
                   regularFacultyUserId: facultyId,
                   conductingFacultyUserId: facultyId,
-                  substituteDelegationId: isDelegated ? 'del-1' : null,
+                  substituteDelegationId: isDelegated ? (params.delegationId || null) : null,
                   finalizedAt: nowIso,
                   records,
                 });

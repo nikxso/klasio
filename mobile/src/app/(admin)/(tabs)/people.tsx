@@ -620,7 +620,12 @@ export default function AdminPeopleScreen() {
     setAssignError(null);
 
     const targetSection = allSections.find((s) => s.id === pickedSectionId);
-    const termId = targetSection?.academic_term_id || '0b0487b0-5be5-484f-80c1-8d5e2a0a7c94';
+    const termId = targetSection?.academic_term_id;
+    if (!termId) {
+      setAssignError('Selected class section does not have an associated academic term.');
+      setAssigning(false);
+      return;
+    }
     const token = SessionStore.getToken();
 
     try {
