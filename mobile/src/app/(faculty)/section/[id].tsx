@@ -62,6 +62,7 @@ export default function ClassDetailScreen() {
   const [syncStatus, setSyncStatus] = useState<'IDLE' | 'SAVED_OFFLINE' | 'SYNCING' | 'SYNCED' | 'SYNC_FAILED'>('IDLE');
   const [recordedTodaySlots, setRecordedTodaySlots] = useState<Set<number>>(new Set());
   const [recordedSessionsMap, setRecordedSessionsMap] = useState<Map<number, LocalSessionRow>>(new Map());
+  const [heldSessions, setHeldSessions] = useState<LocalSessionRow[]>([]);
   const [currentSessionRecords, setCurrentSessionRecords] = useState<Record<string, string>>({});
   const [amendmentHistory, setAmendmentHistory] = useState<LocalAmendmentAuditRow[]>([]);
   const [customSlots, setCustomSlots] = useState<number[]>([]);
@@ -159,26 +160,66 @@ export default function ClassDetailScreen() {
           });
       }
 
-      // Data-driven slot discovery: Query already finalized/recorded sessions for today
-      AttendanceRepository.listSessionsForAssignment(params.id).then((sessions) => {
-        const todayIso = new Date().toISOString().split('T')[0];
-        const forToday = sessions.filter((s) => s.sessionDate === todayIso);
-        const map = new Map<number, LocalSessionRow>();
-        forToday.forEach((s) => map.set(s.periodSlotOrSequence, s));
-        setRecordedSessionsMap(map);
-        const taken = new Set(forToday.map((s) => s.periodSlotOrSequence));
-        setRecordedTodaySlots(taken);
+      // Data-driven slot discovery: Query already finalized/recorded sessions for today & full history
+      const refreshSessions = async () => {
+        try {
+          const localSessions = await AttendanceRepository.listSessionsForAssignment(params.id);
+          const merged: LocalSessionRow[] = [...localSessions];
 
-        if (!params.slot) {
-          let nextAvailable = 1;
-          while (taken.has(nextAvailable)) {
-            nextAvailable++;
+          const token = SessionStore.getToken();
+          if (token) {
+            try {
+              const res = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments/${params.id}/sessions`, {
+                headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+              });
+              if (res.ok) {
+                const remote = await res.json();
+                if (Array.isArray(remote)) {
+                  const localUuids = new Set(localSessions.map((s) => s.clientSessionUuid));
+                  for (const r of remote) {
+                    if (!localUuids.has(r.client_session_uuid)) {
+                      merged.push({
+                        clientSessionUuid: r.client_session_uuid,
+                        teachingAssignmentId: r.teaching_assignment_id,
+                        sessionDate: r.session_date,
+                        periodSlotOrSequence: r.period_slot_or_sequence,
+                        applicabilityStatus: r.applicability_status,
+                        statusReason: r.status_reason,
+                        regularFacultyUserId: r.conducting_faculty_user_id || '',
+                        conductingFacultyUserId: r.conducting_faculty_user_id || '',
+                        substituteDelegationId: null,
+                        sessionStatus: r.session_status,
+                        finalizedAt: r.finalized_at,
+                        createdAt: r.finalized_at,
+                        updatedAt: r.finalized_at,
+                      });
+                    }
+                  }
+                }
+              }
+            } catch (_) {}
           }
-          setSelectedSlot(nextAvailable);
-        }
-      }).catch(() => {
-        // Fallback gracefully in testing / uninitialized SQLite
-      });
+
+          setHeldSessions(merged);
+
+          const todayIso = new Date().toISOString().split('T')[0];
+          const forToday = merged.filter((s) => s.sessionDate === todayIso);
+          const map = new Map<number, LocalSessionRow>();
+          forToday.forEach((s) => map.set(s.periodSlotOrSequence, s));
+          setRecordedSessionsMap(map);
+          const taken = new Set(forToday.map((s) => s.periodSlotOrSequence));
+          setRecordedTodaySlots(taken);
+
+          if (!params.slot) {
+            let nextAvailable = 1;
+            while (taken.has(nextAvailable)) {
+              nextAvailable++;
+            }
+            setSelectedSlot(nextAvailable);
+          }
+        } catch (_) {}
+      };
+      refreshSessions();
     }
   }, [params.id, params.slot]);
 
@@ -244,6 +285,102 @@ export default function ClassDetailScreen() {
   const avgPct = Number(params.avg || '88');
   const heldCount = Number(params.held || '38');
   const isDelegated = params.isDelegated === 'true';
+
+  const handleDirectCancelClass = async () => {
+    if (!statusReason.trim()) {
+      Alert.alert('Reason Required', 'Please enter a reason for cancelling this session.');
+      return;
+    }
+    const currentUser = SessionStore.getUser();
+    const token = SessionStore.getToken();
+    if (!currentUser?.id) {
+      Alert.alert('Session Error', 'Active faculty session required.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const today = nowIso.slice(0, 10);
+    const clientUuid =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          });
+
+    const records = students.map((s) => ({
+      studentUserId: s.studentUserId,
+      attendanceStatus: 'EXCUSED' as const,
+      markSource: 'MANUAL_MARK' as const,
+      candidateConfidence: null,
+      recordedAt: nowIso,
+    }));
+
+    try {
+      await AttendanceRepository.finalizeSession({
+        clientSessionUuid: clientUuid,
+        teachingAssignmentId: params.id,
+        sessionDate: today,
+        periodSlotOrSequence: selectedSlot,
+        applicabilityStatus: 'CANCELLED',
+        statusReason: statusReason.trim(),
+        regularFacultyUserId: currentUser.id,
+        conductingFacultyUserId: currentUser.id,
+        substituteDelegationId: isDelegated ? (params.delegationId || null) : null,
+        finalizedAt: nowIso,
+        records,
+      });
+
+      const newSessionRow: LocalSessionRow = {
+        clientSessionUuid: clientUuid,
+        teachingAssignmentId: params.id,
+        sessionDate: today,
+        periodSlotOrSequence: selectedSlot,
+        applicabilityStatus: 'CANCELLED',
+        statusReason: statusReason.trim(),
+        regularFacultyUserId: currentUser.id,
+        conductingFacultyUserId: currentUser.id,
+        substituteDelegationId: isDelegated ? (params.delegationId || null) : null,
+        sessionStatus: 'FINALIZED',
+        finalizedAt: nowIso,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      setRecordedTodaySlots((prev) => new Set([...prev, selectedSlot]));
+      setRecordedSessionsMap((prev) => {
+        const m = new Map(prev);
+        m.set(selectedSlot, newSessionRow);
+        return m;
+      });
+      setHeldSessions((prev) => [newSessionRow, ...prev.filter((s) => s.clientSessionUuid !== clientUuid)]);
+
+      setSyncStatus('SYNCING');
+      try {
+        await AttendanceSyncWorker.processPendingQueue(undefined, token);
+        const qStatus = await AttendanceRepository.getSyncStatus(clientUuid);
+        if (qStatus && qStatus.syncStatus === 'ACKNOWLEDGED') {
+          setSyncStatus('SYNCED');
+          Alert.alert('Class Cancelled', `Period ${selectedSlot} marked as cancelled and synced to server.`);
+        } else {
+          setSyncStatus('SAVED_OFFLINE');
+          Alert.alert(
+            'Saved Offline',
+            `Period ${selectedSlot} cancellation saved in local offline storage. It will automatically synchronize in few seconds once connected.`
+          );
+        }
+      } catch {
+        setSyncStatus('SAVED_OFFLINE');
+        Alert.alert(
+          'Saved Offline',
+          `Period ${selectedSlot} cancellation saved in local offline storage. It will automatically synchronize in few seconds once connected.`
+        );
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to save cancellation');
+    }
+  };
 
   // Parse accumulated recognition candidates from scanning session if available
   const candidatesFromScan = useMemo<AccumulatedRecognitionCandidate[]>(() => {
@@ -505,11 +642,20 @@ export default function ClassDetailScreen() {
                   const qStatus = await AttendanceRepository.getSyncStatus(clientUuid);
                   if (qStatus && qStatus.syncStatus === 'ACKNOWLEDGED') {
                     setSyncStatus('SYNCED');
+                    Alert.alert('Session Synchronized', `Period ${selectedSlot} synchronized with server.`);
                   } else {
                     setSyncStatus('SAVED_OFFLINE');
+                    Alert.alert(
+                      'Saved Offline',
+                      `Period ${selectedSlot} (${applicabilityStatus.toLowerCase()}) saved offline. It will automatically synchronize in few seconds once connected.`
+                    );
                   }
                 } catch {
                   setSyncStatus('SAVED_OFFLINE');
+                  Alert.alert(
+                    'Saved Offline',
+                    `Period ${selectedSlot} (${applicabilityStatus.toLowerCase()}) saved offline. It will automatically synchronize in few seconds once connected.`
+                  );
                 }
               } catch (e) {
                 console.warn('Local finalization note:', e);
@@ -712,6 +858,28 @@ export default function ClassDetailScreen() {
             </Button>
           )}
         </View>
+      ) : applicabilityStatus === 'CANCELLED' ? (
+        <View style={{ marginTop: 8 }}>
+          <Button
+            variant="primary"
+            style={[styles.takeAttendanceButton, { backgroundColor: Colors.rose }]}
+            icon={<AlertCircle size={20} color="#ffffff" />}
+            disabled={statusReason.trim().length === 0}
+            onPress={handleDirectCancelClass}
+          >
+            {statusReason.trim().length === 0
+              ? 'Reason required to cancel'
+              : `Confirm Cancellation · Period ${selectedSlot}`}
+          </Button>
+          <TouchableOpacity
+            onPress={() => setMarkingMode(true)}
+            style={{ marginTop: 10, marginBottom: 8, alignItems: 'center' }}
+          >
+            <Text style={{ fontSize: 13, color: Colors.soft, textDecorationLine: 'underline' }}>
+              Mark cancellation per student manually
+            </Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <>
           <Button
@@ -823,6 +991,74 @@ export default function ClassDetailScreen() {
               </Pressable>
             );
           })}
+      </View>
+
+      {/* Held Classes History */}
+      <View style={styles.historyContainer}>
+        <SectionTitle>Held classes history ({heldSessions.length})</SectionTitle>
+        {heldSessions.length === 0 ? (
+          <Card style={styles.historyCard}>
+            <View style={{ padding: 16, alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, color: Colors.soft }}>
+                No recorded attendance sessions for this section yet.
+              </Text>
+            </View>
+          </Card>
+        ) : (
+          <View style={styles.historyCard}>
+            {heldSessions.map((session, idx) => {
+              const isLast = idx === heldSessions.length - 1;
+              const isToday = session.sessionDate === new Date().toISOString().split('T')[0];
+              const isCounted = session.applicabilityStatus === 'COUNTED';
+              const isCancelled = session.applicabilityStatus === 'CANCELLED';
+              const isSelected = selectedSlot === session.periodSlotOrSequence;
+
+              return (
+                <Pressable
+                  key={session.clientSessionUuid || idx}
+                  onPress={() => {
+                    setSelectedSlot(session.periodSlotOrSequence);
+                    if (isToday) {
+                      setRecordedSessionsMap((prev) => {
+                        const m = new Map(prev);
+                        m.set(session.periodSlotOrSequence, session);
+                        return m;
+                      });
+                    }
+                  }}
+                  style={[
+                    styles.historyRow,
+                    !isLast && styles.rowDivider,
+                    isSelected && { backgroundColor: '#f5f0e8' },
+                  ]}
+                >
+                  <View style={styles.historyHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <Text style={styles.historyStudentName} numberOfLines={1}>
+                        {session.sessionDate} · Period {session.periodSlotOrSequence}
+                      </Text>
+                      {isToday && <Chip tone="forest">Today</Chip>}
+                    </View>
+                    <Chip tone={isCounted ? 'forest' : isCancelled ? 'rose' : 'amber'}>
+                      {session.applicabilityStatus}
+                    </Chip>
+                  </View>
+                  {session.statusReason ? (
+                    <Text style={styles.historyReason}>"{session.statusReason}"</Text>
+                  ) : null}
+                  <View style={styles.historyFooter}>
+                    <Text style={styles.historyMeta}>
+                      Status: {session.sessionStatus || 'FINALIZED'}
+                    </Text>
+                    <Text style={[styles.historyMeta, { color: Colors.forest, fontWeight: '600' }]}>
+                      {isSelected ? 'Selected ✓' : 'Tap to inspect slot'}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
       </View>
 
       {/* Amendment Audit History */}

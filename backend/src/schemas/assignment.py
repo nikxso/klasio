@@ -41,6 +41,11 @@ class TeachingAssignmentCreate(BaseModel):
     is_active: bool = True
 
 
+class TeachingAssignmentUpdate(BaseModel):
+    faculty_user_id: Optional[uuid.UUID] = None
+    is_active: Optional[bool] = None
+
+
 class TeachingAssignmentResponse(TeachingAssignmentCreate):
     id: uuid.UUID
     created_by_user_id: uuid.UUID

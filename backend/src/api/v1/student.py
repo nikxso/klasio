@@ -30,6 +30,7 @@ class StudentDailySessionItem(BaseModel):
     subject_name: str
     faculty_name: str
     attendance_status: str
+    applicability_status: str = "COUNTED"
     status_reason: Optional[str] = None
 
 
@@ -115,7 +116,13 @@ async def get_student_calendar_attendance(
         if not ta:
             continue
         rec = rec_map.get(s.id)
-        status_val = rec.attendance_status.value if rec else AttendanceStatus.ABSENT.value
+        app_val = s.applicability_status.value if hasattr(s.applicability_status, "value") else str(s.applicability_status)
+        if app_val == "CANCELLED":
+            status_val = "CANCELLED"
+        elif app_val == "EXEMPT":
+            status_val = "EXCUSED"
+        else:
+            status_val = rec.attendance_status.value if rec else AttendanceStatus.ABSENT.value
 
         result.append(
             StudentDailySessionItem(
@@ -127,6 +134,7 @@ async def get_student_calendar_attendance(
                 subject_name=ta.subject.name if ta.subject else "Subject",
                 faculty_name=ta.faculty_user.full_name if ta.faculty_user else "Faculty",
                 attendance_status=status_val,
+                applicability_status=app_val,
                 status_reason=s.status_reason,
             )
         )

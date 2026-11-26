@@ -8,6 +8,7 @@ import {
   ScrollView,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import {
   Search,
@@ -26,6 +27,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   RotateCcw,
+  Trash2,
+  Edit3,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, Avatar, Sheet, Button, AccessRestrictedView } from '@/components/ui/kit';
@@ -177,6 +180,14 @@ export default function AdminPeopleScreen() {
   const [selectedUser, setSelectedUser] = useState<Person | null>(null);
   const [showAddUserSheet, setShowAddUserSheet] = useState(false);
   const [showAssignClassSheet, setShowAssignClassSheet] = useState(false);
+
+  // Edit User State
+  const [isEditingUser, setIsEditingUser] = useState(false);
+  const [editUserName, setEditUserName] = useState('');
+  const [editUserEmail, setEditUserEmail] = useState('');
+  const [editUserId, setEditUserId] = useState('');
+  const [editUserError, setEditUserError] = useState<string | null>(null);
+  const [editUserSubmitting, setEditUserSubmitting] = useState(false);
 
   // Add User Form State
   const [newFullName, setNewFullName] = useState('');
@@ -433,6 +444,11 @@ export default function AdminPeopleScreen() {
 
   const handleSelectUser = (person: Person) => {
     setSelectedUser(person);
+    setEditUserName(person.name);
+    setEditUserEmail(person.email);
+    setEditUserId(person.identifier);
+    setIsEditingUser(false);
+    setEditUserError(null);
     setGrantRoleModalVisible(false);
     setGrantRoleError(null);
     const hasTeachingCapability =
@@ -443,7 +459,132 @@ export default function AdminPeopleScreen() {
         ));
     if (hasTeachingCapability) {
       loadFacultyAssignments(person.id);
+    } else {
+      setFacultyAssignments([]);
     }
+  };
+
+  // Update User Details
+  const handleUpdateUserDetails = async () => {
+    if (!selectedUser || !editUserName.trim() || !editUserEmail.trim() || !editUserId.trim()) {
+      setEditUserError('Full name, email, and institutional ID are required.');
+      return;
+    }
+    setEditUserSubmitting(true);
+    setEditUserError(null);
+    const token = SessionStore.getToken();
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/users/${selectedUser.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          full_name: editUserName.trim(),
+          email: editUserEmail.trim().toLowerCase(),
+          institutional_id: editUserId.trim(),
+        }),
+      });
+
+      if (res.ok) {
+        const updated = await res.json();
+        setSelectedUser({
+          ...selectedUser,
+          name: updated.name,
+          email: updated.email,
+          identifier: updated.identifier,
+          sub: updated.subtitle || `${updated.role} · ${updated.identifier}`,
+        });
+        setIsEditingUser(false);
+        await loadDirectory();
+      } else {
+        const msg = await extractErrorMessage(res, 'Failed to update user details');
+        setEditUserError(msg);
+      }
+    } catch (e: any) {
+      setEditUserError(e?.message || 'Network error');
+    } finally {
+      setEditUserSubmitting(false);
+    }
+  };
+
+  // Delete / Deactivate User
+  const handleDeleteUser = (hardDelete: boolean) => {
+    if (!selectedUser) return;
+    const title = hardDelete ? 'Permanently Delete User' : 'Deactivate User';
+    const msg = hardDelete
+      ? `Permanently delete ${selectedUser.name}? If any historical attendance or academic records exist, the account will be deactivated instead to protect compliance.`
+      : `Deactivate ${selectedUser.name}? This will suspend account access and active roles while keeping historical attendance intact.`;
+
+    Alert.alert(title, msg, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: hardDelete ? 'Delete Permanently' : 'Deactivate',
+        style: 'destructive',
+        onPress: async () => {
+          const token = SessionStore.getToken();
+          try {
+            const url = `${API_BASE_URL}/api/v1/admin/users/${selectedUser.id}${hardDelete ? '?hard_delete=true' : ''}`;
+            const res = await fetch(url, {
+              method: 'DELETE',
+              headers: {
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+            });
+            if (res.ok) {
+              const resData = await res.json();
+              Alert.alert('Success', resData.message || 'User status updated');
+              setSelectedUser(null);
+              await loadDirectory();
+            } else {
+              const errMsg = await extractErrorMessage(res, 'Failed to delete user');
+              Alert.alert('Action Failed', errMsg);
+            }
+          } catch (e: any) {
+            Alert.alert('Error', e?.message || 'Network error');
+          }
+        },
+      },
+    ]);
+  };
+
+  // Remove Teaching Assignment
+  const handleRemoveTeachingAssignment = (assignmentId: string) => {
+    Alert.alert(
+      'Remove Teaching Assignment',
+      'Are you sure you want to remove this teaching assignment? If sessions were already conducted, the assignment will be deactivated to preserve audit records.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            const token = SessionStore.getToken();
+            try {
+              const res = await fetch(`${API_BASE_URL}/api/v1/admin/assignments/${assignmentId}`, {
+                method: 'DELETE',
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+              });
+              if (res.ok) {
+                if (selectedUser) {
+                  await loadFacultyAssignments(selectedUser.id);
+                }
+              } else {
+                const msg = await extractErrorMessage(res, 'Failed to remove assignment');
+                Alert.alert('Cannot Remove', msg);
+              }
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'Network error');
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Create User
@@ -1050,7 +1191,60 @@ export default function AdminPeopleScreen() {
                 {selectedUser.email} · {selectedUser.identifier}
               </Text>
             </View>
+            <Pressable
+              onPress={() => setIsEditingUser(!isEditingUser)}
+              style={styles.editUserHeaderBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Edit user profile"
+            >
+              <Edit3 size={18} color={isEditingUser ? Colors.forest : Colors.soft} />
+            </Pressable>
           </View>
+
+          {isEditingUser && (
+            <View style={styles.editUserBox}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.ink, marginBottom: 8 }}>
+                Edit Account Details
+              </Text>
+              {editUserError && <Text style={styles.errorBanner}>{editUserError}</Text>}
+              <Text style={styles.inputLabel}>Full Name</Text>
+              <TextInput
+                value={editUserName}
+                onChangeText={setEditUserName}
+                style={styles.textInput}
+              />
+              <Text style={styles.inputLabel}>Email</Text>
+              <TextInput
+                value={editUserEmail}
+                onChangeText={setEditUserEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                style={styles.textInput}
+              />
+              <Text style={styles.inputLabel}>Institutional ID</Text>
+              <TextInput
+                value={editUserId}
+                onChangeText={setEditUserId}
+                autoCapitalize="characters"
+                style={styles.textInput}
+              />
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                <Button
+                  tone="forest"
+                  disabled={editUserSubmitting}
+                  onPress={handleUpdateUserDetails}
+                >
+                  {editUserSubmitting ? 'Saving…' : 'Save Details'}
+                </Button>
+                <Button
+                  tone="soft"
+                  onPress={() => setIsEditingUser(false)}
+                >
+                  Cancel
+                </Button>
+              </View>
+            </View>
+          )}
 
           {/* Active Assigned Roles */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
@@ -1273,7 +1467,7 @@ export default function AdminPeopleScreen() {
                 {facultyAssignments.length > 0 ? (
                   facultyAssignments.map((a) => (
                     <View key={a.id} style={styles.assignedClassRow}>
-                      <View>
+                      <View style={{ flex: 1 }}>
                         <Text style={styles.assignedClassText}>
                           {a.subject_code} · {a.subject_name}
                         </Text>
@@ -1281,7 +1475,15 @@ export default function AdminPeopleScreen() {
                           Section: {a.section_code}
                         </Text>
                       </View>
-                      <Check size={18} color={Colors.forest} strokeWidth={2.5} />
+                      <Pressable
+                        onPress={() => handleRemoveTeachingAssignment(a.id)}
+                        hitSlop={8}
+                        style={{ padding: 6 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove assignment for ${a.subject_code}`}
+                      >
+                        <Trash2 size={16} color={Colors.rose} />
+                      </Pressable>
                     </View>
                   ))
                 ) : (
@@ -1293,7 +1495,28 @@ export default function AdminPeopleScreen() {
             </>
           )}
 
-          <View style={{ marginTop: 24 }}>
+          {/* Account Actions: Deactivate / Delete */}
+          <Text style={[styles.sheetSectionTitle, { marginTop: 18 }]}>Account Actions</Text>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 6, marginBottom: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Button
+                tone="apricot"
+                onPress={() => handleDeleteUser(false)}
+              >
+                Deactivate
+              </Button>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button
+                tone="rose"
+                onPress={() => handleDeleteUser(true)}
+              >
+                Delete Account
+              </Button>
+            </View>
+          </View>
+
+          <View style={{ marginTop: 16 }}>
             <Button tone="soft" onPress={() => setSelectedUser(null)}>
               Close
             </Button>
@@ -1813,5 +2036,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.ink,
     lineHeight: 16,
+  },
+  editUserHeaderBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editUserBox: {
+    backgroundColor: Colors.card,
+    borderRadius: Radii.card,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    padding: 12,
+    marginTop: 12,
+    marginBottom: 8,
   },
 });

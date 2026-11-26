@@ -1,4 +1,4 @@
-import React, { ReactNode, useState } from 'react';
+import React, { ReactNode, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,9 @@ import {
   Modal,
   Platform,
   Image,
+  Keyboard,
+  Dimensions,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
@@ -87,18 +90,24 @@ export function Screen({
 
   return (
     <SafeAreaView style={styles.screenContainer} edges={['top', 'left', 'right', 'bottom']}>
-      {scrollable ? (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={refreshControl}
-        >
-          {content}
-        </ScrollView>
-      ) : (
-        content
-      )}
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoiding}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        {scrollable ? (
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={refreshControl}
+          >
+            {content}
+          </ScrollView>
+        ) : (
+          content
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -502,22 +511,71 @@ interface SheetProps {
 }
 
 export function Sheet({ visible, onClose, children }: SheetProps) {
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardHeight(0);
+      return;
+    }
+
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [visible]);
+
+  const screenHeight = Dimensions.get('window').height;
+  const maxSheetHeight = keyboardHeight > 0
+    ? Math.max(screenHeight - keyboardHeight - 48, 220)
+    : screenHeight * 0.85;
+
   return (
     <Modal
       visible={visible}
       animationType="fade"
       transparent
       onRequestClose={onClose}
+      statusBarTranslucent
     >
-      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+      <View
+        style={[
+          styles.sheetBackdrop,
+          keyboardHeight > 0 && { paddingBottom: keyboardHeight },
+        ]}
+      >
         <Pressable
-          style={styles.sheetContent}
-          onPress={(e) => e.stopPropagation()}
+          style={StyleSheet.absoluteFill}
+          onPress={() => {
+            Keyboard.dismiss();
+            onClose();
+          }}
+          accessibilityLabel="Dismiss sheet"
+        />
+        <View
+          style={[styles.sheetContent, { maxHeight: maxSheetHeight }]}
         >
           <View style={styles.sheetHandle} />
-          {children}
-        </Pressable>
-      </Pressable>
+          <ScrollView
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.sheetScrollContent}
+          >
+            {children}
+          </ScrollView>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -529,6 +587,9 @@ const styles = StyleSheet.create({
   screenContainer: {
     flex: 1,
     backgroundColor: Colors.cream,
+  },
+  keyboardAvoiding: {
+    flex: 1,
   },
   scrollView: {
     flex: 1,
@@ -718,7 +779,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 32,
     paddingHorizontal: 24,
     paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 44 : 28,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+    width: '100%',
   },
   sheetHandle: {
     width: 40,
@@ -726,6 +788,10 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: Colors.line,
     alignSelf: 'center',
-    marginBottom: 18,
+    marginBottom: 14,
+  },
+  sheetScrollContent: {
+    paddingBottom: 24,
+    flexGrow: 0,
   },
 });

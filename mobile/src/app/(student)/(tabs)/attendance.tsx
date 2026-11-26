@@ -69,9 +69,12 @@ export default function StudentAttendanceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
 
-  // Month navigation: default to November 2026 per current semester progression
-  const [currentDate, setCurrentDate] = useState(() => new Date(2026, 10, 2)); // Nov 2, 2026
-  const [selectedDate, setSelectedDate] = useState('2026-11-02');
+  // Month navigation: default to today's date
+  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
 
   const touchStartXRef = useRef<number>(0);
 
@@ -342,12 +345,20 @@ export default function StudentAttendanceScreen() {
                   tone={
                     session.attendance_status === 'PRESENT'
                       ? 'forest'
+                      : (session.attendance_status as any) === 'CANCELLED'
+                      ? 'soft'
                       : session.attendance_status === 'ABSENT'
                       ? 'rose'
                       : 'amber'
                   }
                 >
-                  {session.attendance_status === 'PRESENT' ? 'Attended' : session.attendance_status === 'ABSENT' ? 'Missed' : 'Excused'}
+                  {session.attendance_status === 'PRESENT'
+                    ? 'Attended'
+                    : (session.attendance_status as any) === 'CANCELLED'
+                    ? 'Cancelled'
+                    : session.attendance_status === 'ABSENT'
+                    ? 'Missed'
+                    : 'Excused'}
                 </Chip>
               </View>
 

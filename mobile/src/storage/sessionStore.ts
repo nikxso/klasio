@@ -66,6 +66,7 @@ const PERMISSION_ALIASES: Record<string, string[]> = {
 };
 
 let activeSession: AuthSession | null = null;
+let isInitialized = false;
 let customDbOverride: any = null;
 
 function shouldLogWarning(e: any): boolean {
@@ -145,12 +146,18 @@ export const SessionStore = {
     customDbOverride = db;
   },
 
+  isInitialized(): boolean {
+    return isInitialized;
+  },
+
   resetMemoryForTesting(): void {
     activeSession = null;
+    isInitialized = false;
   },
 
   async setSession(session: AuthSession | null): Promise<void> {
     activeSession = session;
+    isInitialized = true;
     sessionListeners.forEach((listener) => {
       try {
         listener(session);
@@ -215,6 +222,7 @@ export const SessionStore = {
       }>(
         'SELECT token, user_json, membership_id, authorization_snapshot_json, authorization_version FROM local_auth_session WHERE id = 1;'
       );
+      isInitialized = true;
       if (row?.token && row?.user_json) {
         const parsedUser = JSON.parse(row.user_json);
         if (row.membership_id) parsedUser.membershipId = row.membership_id;
@@ -228,9 +236,18 @@ export const SessionStore = {
           token: row.token,
           user: parsedUser,
         };
+        sessionListeners.forEach((listener) => {
+          try {
+            listener(activeSession);
+          } catch (err) {
+            console.warn('[SessionStore] Listener callback error:', err);
+          }
+        });
         return activeSession;
       }
+      activeSession = null;
     } catch (e: any) {
+      isInitialized = true;
       if (shouldLogWarning(e)) {
         console.error('[SessionStore] initFromStorage error:', e?.message || e);
       }
@@ -530,6 +547,14 @@ export const SessionStore = {
 
   async clearSession(preservePendingSync: boolean = true): Promise<void> {
     activeSession = null;
+    isInitialized = true;
+    sessionListeners.forEach((listener) => {
+      try {
+        listener(null);
+      } catch (err) {
+        console.warn('[SessionStore] Listener callback error:', err);
+      }
+    });
     try {
       const db = await getSessionDb();
       await db.runAsync('DELETE FROM local_auth_session WHERE id = 1;');
@@ -545,6 +570,14 @@ export const SessionStore = {
 
   clear(): void {
     activeSession = null;
+    isInitialized = true;
+    sessionListeners.forEach((listener) => {
+      try {
+        listener(null);
+      } catch (err) {
+        console.warn('[SessionStore] Listener callback error:', err);
+      }
+    });
     this.clearSession(true).catch(() => {});
   },
 };

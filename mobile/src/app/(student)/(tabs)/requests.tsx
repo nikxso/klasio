@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   Pressable,
   TextInput,
   ScrollView,
+  Alert,
 } from 'react-native';
 import {
   Plus,
@@ -31,6 +32,7 @@ import {
   CachedStudentRequest,
   RequestState,
 } from '@/storage/requestRepository';
+import { StudentRepository } from '@/storage/studentRepository';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
 
@@ -43,10 +45,25 @@ export default function StudentRequestsScreen() {
   const [noteText, setNoteText] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const recentDates = useMemo(() => {
+    const list: string[] = [];
+    const now = new Date();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      list.push(d.toISOString().split('T')[0]);
+    }
+    return list;
+  }, []);
+
   const loadRequests = useCallback(async () => {
     const user = SessionStore.getUser();
-    const token = SessionStore.getToken();
-    if (!user || !token) return;
+    let token = SessionStore.getToken();
+    if (!token) {
+      const stored = await SessionStore.initFromStorage();
+      token = stored?.token || undefined;
+    }
+    if (!user) return;
 
     try {
       const cached = await RequestRepository.getRequests(user.id);
@@ -60,62 +77,97 @@ export default function StudentRequestsScreen() {
       };
 
       // 1. Sync live requests from backend
-      const res = await fetch(`${API_BASE_URL}/api/v1/student/requests`, { headers });
-      if (res.ok) {
-        const live = await res.json();
-        if (Array.isArray(live)) {
-          const mapped: CachedStudentRequest[] = live.map((r: any) => ({
-            id: r.id,
-            studentUserId: r.student_user_id,
-            teachingAssignmentId: r.teaching_assignment_id,
-            subjectName: r.subject_name || 'Subject',
-            sessionDate: r.session_date,
-            studentNote: r.student_note,
-            status:
-              r.status === 'APPROVED'
-                ? 'Accepted'
-                : r.status === 'REJECTED'
-                ? 'Not accepted'
-                : r.status === 'UNDER_REVIEW'
-                ? 'Being reviewed'
-                : 'Sent',
-            resolutionNote: r.resolution_note,
-            createdAt: r.created_at,
-          }));
-          setRequests(mapped);
-          await RequestRepository.saveRequests(mapped);
-        }
+      if (token) {
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/v1/student/requests`, { headers });
+          if (res.ok) {
+            const live = await res.json();
+            if (Array.isArray(live)) {
+              const mapped: CachedStudentRequest[] = live.map((r: any) => ({
+                id: r.id,
+                studentUserId: r.student_user_id,
+                teachingAssignmentId: r.teaching_assignment_id,
+                subjectName: r.subject_name || 'Subject',
+                sessionDate: r.session_date,
+                studentNote: r.student_note,
+                status:
+                  r.status === 'APPROVED'
+                    ? 'Accepted'
+                    : r.status === 'REJECTED'
+                    ? 'Not accepted'
+                    : r.status === 'UNDER_REVIEW'
+                    ? 'Being reviewed'
+                    : 'Sent',
+                resolutionNote: r.resolution_note,
+                createdAt: r.created_at,
+              }));
+              setRequests(mapped);
+              await RequestRepository.saveRequests(mapped);
+            }
+          }
+        } catch (_) {}
       }
 
       // 2. Fetch student's real enrolled subjects for grievance picker
-      const attRes = await fetch(`${API_BASE_URL}/api/v1/student/attendance`, { headers });
-      if (attRes.ok) {
-        const attData = await attRes.json();
-        if (Array.isArray(attData.subjects)) {
-          const mappedSubs = attData.subjects.map((s: any) => ({
-            id: s.teaching_assignment_id,
-            name: s.subject_name,
-          }));
-          setSubjects(mappedSubs);
-          if (mappedSubs.length > 0 && !selectedSubject) {
-            setSelectedSubject(mappedSubs[0]);
+      let mappedSubs: { id: string; name: string }[] = [];
+      if (token) {
+        try {
+          const attRes = await fetch(`${API_BASE_URL}/api/v1/student/attendance`, { headers });
+          if (attRes.ok) {
+            const attData = await attRes.json();
+            if (Array.isArray(attData.subjects)) {
+              mappedSubs = attData.subjects.map((s: any) => ({
+                id: s.teaching_assignment_id,
+                name: s.subject_name,
+              }));
+            }
           }
-        }
+        } catch (_) {}
+      }
+
+      // Fallback to SQLite cached attendance summary if offline or fetch failed
+      if (mappedSubs.length === 0 && user?.id) {
+        try {
+          const cachedAtt = await StudentRepository.getCachedAttendance(user.id);
+          if (cachedAtt?.data?.subjects && cachedAtt.data.subjects.length > 0) {
+            mappedSubs = cachedAtt.data.subjects.map((s: any) => ({
+              id: s.teaching_assignment_id,
+              name: s.subject_name,
+            }));
+          }
+        } catch (_) {}
+      }
+
+      if (mappedSubs.length > 0) {
+        setSubjects(mappedSubs);
+        setSelectedSubject((prev) => prev || mappedSubs[0]);
       }
     } catch (e) {
       console.warn('Failed to load student requests:', e);
     }
-  }, [selectedSubject]);
+  }, []);
 
   useEffect(() => {
     loadRequests();
   }, [loadRequests]);
 
   const handleSendRequest = async () => {
-    if (!noteText.trim() || !selectedSubject) return;
+    if (!noteText.trim()) {
+      Alert.alert('Details Required', 'Please enter a note explaining what attendance mistake occurred.');
+      return;
+    }
+    if (!selectedSubject) {
+      Alert.alert('Subject Required', 'Please select an enrolled subject to report.');
+      return;
+    }
+
     setSubmitting(true);
     const user = SessionStore.getUser();
-    const token = SessionStore.getToken();
+    let token = SessionStore.getToken();
+    if (!token) {
+      const stored = await SessionStore.initFromStorage();
+      token = stored?.token || undefined;
+    }
 
     try {
       if (user) {
@@ -132,21 +184,27 @@ export default function StudentRequestsScreen() {
       setNoteText('');
       setSheetVisible(false);
 
+      let wasSynced = false;
       if (token) {
-        await fetch(`${API_BASE_URL}/api/v1/student/requests`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            teaching_assignment_id: selectedSubject.id,
-            session_date: selectedDate,
-            student_note: noteText.trim(),
-          }),
-        });
-        await loadRequests();
+        try {
+          const syncResult = await RequestRepository.syncPendingRequests(token);
+          if (syncResult.synced > 0) {
+            wasSynced = true;
+            await loadRequests();
+          }
+        } catch (_) {}
       }
+
+      if (wasSynced) {
+        Alert.alert('Report Submitted', 'Your attendance mistake report has been submitted to your faculty.');
+      } else {
+        Alert.alert(
+          'Saved Offline',
+          'Your report is saved offline. It will automatically submit in a few seconds once internet is available.'
+        );
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to submit report');
     } finally {
       setSubmitting(false);
     }
@@ -285,7 +343,7 @@ export default function StudentRequestsScreen() {
 
         <Text style={styles.inputLabel}>Date (YYYY-MM-DD)</Text>
         <View style={styles.chipsRow}>
-          {['2026-11-03', '2026-11-02', '2026-10-31', '2026-10-29'].map((d) => (
+          {recentDates.map((d, idx) => (
             <Pressable
               key={d}
               onPress={() => setSelectedDate(d)}
@@ -300,7 +358,7 @@ export default function StudentRequestsScreen() {
                   selectedDate === d && styles.subjectChipTextActive,
                 ]}
               >
-                {d}
+                {idx === 0 ? 'Today' : idx === 1 ? 'Yesterday' : d.slice(5)}
               </Text>
             </Pressable>
           ))}

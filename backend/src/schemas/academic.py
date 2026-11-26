@@ -10,6 +10,11 @@ class DepartmentCreate(BaseModel):
     name: str = Field(..., max_length=255)
 
 
+class DepartmentUpdate(BaseModel):
+    code: Optional[str] = Field(None, max_length=32)
+    name: Optional[str] = Field(None, max_length=255)
+
+
 class DepartmentResponse(DepartmentCreate):
     id: uuid.UUID
     created_at: datetime
@@ -49,6 +54,13 @@ class SubjectCreate(BaseModel):
     is_active: bool = True
 
 
+class SubjectUpdate(BaseModel):
+    code: Optional[str] = Field(None, max_length=32)
+    name: Optional[str] = Field(None, max_length=255)
+    credits: Optional[int] = Field(None, ge=1, le=10)
+    is_active: Optional[bool] = None
+
+
 class SubjectResponse(SubjectCreate):
     id: uuid.UUID
     created_at: datetime
@@ -62,6 +74,11 @@ class ClassSectionCreate(BaseModel):
     department_id: uuid.UUID
     academic_term_id: uuid.UUID
     cohort_year: int = Field(..., ge=2000, le=2100)
+
+
+class ClassSectionUpdate(BaseModel):
+    section_code: Optional[str] = Field(None, max_length=64)
+    cohort_year: Optional[int] = Field(None, ge=2000, le=2100)
 
 
 class ClassSectionResponse(ClassSectionCreate):

@@ -85,6 +85,19 @@ export default function LoginScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    const unsub = SessionStore.subscribe((session) => {
+      if (!session) {
+        setCheckingSession(false);
+        setIdentifier('');
+        setPassword('');
+        setAuthError(null);
+        setLoading(false);
+      }
+    });
+    return unsub;
+  }, []);
+
   const handleSignIn = async () => {
     if (!identifier.trim()) {
       setAuthError('Please enter your Institutional ID.');

@@ -83,6 +83,11 @@ export default function AdminSettingsScreen() {
       }
     }
     initUser();
+
+    const unsub = SessionStore.subscribe((session) => {
+      setUser(session?.user ?? null);
+    });
+    return unsub;
   }, []);
 
   const handlePushUpdate = () => {
@@ -96,11 +101,8 @@ export default function AdminSettingsScreen() {
   const handleConfirmSignOut = async () => {
     setIsSigningOut(true);
     try {
-      await SessionStore.clearSession(true);
       setShowSignOutSheet(false);
-      try {
-        router.dismissAll();
-      } catch (_) {}
+      await SessionStore.clearSession(true);
       router.replace('/');
     } catch (e) {
       console.warn('Sign out error:', e);

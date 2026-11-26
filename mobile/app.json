@@ -13,6 +13,7 @@
     "android": {
       "package": "com.klasio.app",
       "usesCleartextTraffic": true,
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.CAMERA"
       ],

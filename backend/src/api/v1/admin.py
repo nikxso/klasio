@@ -53,14 +53,18 @@ from src.schemas.academic import (
     AcademicTermCreate,
     AcademicTermResponse,
     ClassSectionCreate,
+    ClassSectionUpdate,
     ClassSectionResponse,
     DepartmentCreate,
+    DepartmentUpdate,
     DepartmentResponse,
     SubjectCreate,
+    SubjectUpdate,
     SubjectResponse,
 )
 from src.schemas.assignment import (
     TeachingAssignmentCreate,
+    TeachingAssignmentUpdate,
     TeachingAssignmentResponse,
 )
 from src.schemas.enrollment import (
@@ -97,6 +101,65 @@ async def create_department(
     await db.flush()
     await db.refresh(dept)
     return dept
+
+
+@router.patch("/departments/{department_id}", response_model=DepartmentResponse, summary="Update department details")
+async def update_department(
+    department_id: uuid.UUID,
+    payload: DepartmentUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(Department).where(Department.id == department_id)
+    res = await db.execute(stmt)
+    dept = res.scalar_one_or_none()
+    if not dept:
+        raise EntityNotFoundError(f"Department {department_id} not found")
+
+    if payload.code is not None:
+        new_code = payload.code.strip().upper()
+        exist_stmt = select(Department).where(
+            Department.institution_id == dept.institution_id,
+            Department.code == new_code,
+            Department.id != department_id,
+        )
+        if (await db.execute(exist_stmt)).scalar_one_or_none():
+            raise ConflictError(f"Department code '{new_code}' already exists")
+        dept.code = new_code
+
+    if payload.name is not None:
+        dept.name = payload.name.strip()
+
+    await db.flush()
+    await db.refresh(dept)
+    return dept
+
+
+@router.delete("/departments/{department_id}", status_code=status.HTTP_200_OK, summary="Delete a department")
+async def delete_department(
+    department_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(Department).where(Department.id == department_id)
+    res = await db.execute(stmt)
+    dept = res.scalar_one_or_none()
+    if not dept:
+        raise EntityNotFoundError(f"Department {department_id} not found")
+
+    subj_count_stmt = select(func.count(Subject.id)).where(Subject.department_id == department_id)
+    sec_count_stmt = select(func.count(ClassSection.id)).where(ClassSection.department_id == department_id)
+    subj_count = (await db.execute(subj_count_stmt)).scalar() or 0
+    sec_count = (await db.execute(sec_count_stmt)).scalar() or 0
+
+    if subj_count > 0 or sec_count > 0:
+        raise ConflictError(
+            f"Cannot delete department '{dept.code}': {subj_count} subjects and {sec_count} class sections are linked to it. Please reassign or delete them first."
+        )
+
+    await db.delete(dept)
+    await db.flush()
+    return {"message": f"Department '{dept.code}' deleted successfully", "id": str(department_id)}
 
 
 @router.get("/terms", response_model=List[AcademicTermResponse], summary="List all academic terms")
@@ -162,6 +225,67 @@ async def create_subject(
     return subject
 
 
+@router.patch("/subjects/{subject_id}", response_model=SubjectResponse, summary="Update subject details")
+async def update_subject(
+    subject_id: uuid.UUID,
+    payload: SubjectUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(Subject).where(Subject.id == subject_id)
+    res = await db.execute(stmt)
+    subj = res.scalar_one_or_none()
+    if not subj:
+        raise EntityNotFoundError(f"Subject {subject_id} not found")
+
+    if payload.code is not None:
+        new_code = payload.code.strip().upper()
+        exist_stmt = select(Subject).where(
+            Subject.department_id == subj.department_id,
+            Subject.code == new_code,
+            Subject.id != subject_id,
+        )
+        if (await db.execute(exist_stmt)).scalar_one_or_none():
+            raise ConflictError(f"Subject code '{new_code}' already exists in this department")
+        subj.code = new_code
+
+    if payload.name is not None:
+        subj.name = payload.name.strip()
+    if payload.credits is not None:
+        subj.credits = payload.credits
+    if payload.is_active is not None:
+        subj.is_active = payload.is_active
+
+    await db.flush()
+    await db.refresh(subj)
+    return subj
+
+
+@router.delete("/subjects/{subject_id}", status_code=status.HTTP_200_OK, summary="Delete a subject")
+async def delete_subject(
+    subject_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(Subject).where(Subject.id == subject_id)
+    res = await db.execute(stmt)
+    subj = res.scalar_one_or_none()
+    if not subj:
+        raise EntityNotFoundError(f"Subject {subject_id} not found")
+
+    from src.models.assignment import TeachingAssignment
+    assign_count_stmt = select(func.count(TeachingAssignment.id)).where(TeachingAssignment.subject_id == subject_id)
+    assign_count = (await db.execute(assign_count_stmt)).scalar() or 0
+    if assign_count > 0:
+        raise ConflictError(
+            f"Cannot delete subject '{subj.code}': {assign_count} teaching assignments reference it. Deactivate the subject instead."
+        )
+
+    await db.delete(subj)
+    await db.flush()
+    return {"message": f"Subject '{subj.code}' deleted successfully", "id": str(subject_id)}
+
+
 @router.get("/sections", response_model=List[ClassSectionResponse], summary="List class sections")
 async def list_sections(
     department_id: Optional[uuid.UUID] = Query(None),
@@ -192,6 +316,59 @@ async def create_section(
     await db.flush()
     await db.refresh(section)
     return section
+
+
+@router.patch("/sections/{section_id}", response_model=ClassSectionResponse, summary="Update class section")
+async def update_section(
+    section_id: uuid.UUID,
+    payload: ClassSectionUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(ClassSection).where(ClassSection.id == section_id)
+    res = await db.execute(stmt)
+    sec = res.scalar_one_or_none()
+    if not sec:
+        raise EntityNotFoundError(f"Class section {section_id} not found")
+
+    if payload.section_code is not None:
+        new_code = payload.section_code.strip().upper()
+        sec.section_code = new_code
+    if payload.cohort_year is not None:
+        sec.cohort_year = payload.cohort_year
+
+    await db.flush()
+    await db.refresh(sec)
+    return sec
+
+
+@router.delete("/sections/{section_id}", status_code=status.HTTP_200_OK, summary="Delete a class section")
+async def delete_section(
+    section_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(ClassSection).where(ClassSection.id == section_id)
+    res = await db.execute(stmt)
+    sec = res.scalar_one_or_none()
+    if not sec:
+        raise EntityNotFoundError(f"Class section {section_id} not found")
+
+    from src.models.assignment import TeachingAssignment
+    from src.models.enrollment import StudentEnrollment
+    assign_count_stmt = select(func.count(TeachingAssignment.id)).where(TeachingAssignment.class_section_id == section_id)
+    enr_count_stmt = select(func.count(StudentEnrollment.id)).where(StudentEnrollment.class_section_id == section_id)
+    assign_count = (await db.execute(assign_count_stmt)).scalar() or 0
+    enr_count = (await db.execute(enr_count_stmt)).scalar() or 0
+
+    if assign_count > 0 or enr_count > 0:
+        raise ConflictError(
+            f"Cannot delete class section '{sec.section_code}': {assign_count} assignments and {enr_count} student enrollments exist for this section."
+        )
+
+    await db.delete(sec)
+    await db.flush()
+    return {"message": f"Class section '{sec.section_code}' deleted successfully", "id": str(section_id)}
 
 
 @router.post("/assignments", response_model=TeachingAssignmentResponse, status_code=status.HTTP_201_CREATED)
@@ -229,6 +406,64 @@ async def create_teaching_assignment(
     await db.flush()
     await db.refresh(assignment)
     return assignment
+
+
+@router.patch("/assignments/{assignment_id}", response_model=TeachingAssignmentResponse, summary="Update teaching assignment")
+async def update_teaching_assignment(
+    assignment_id: uuid.UUID,
+    payload: TeachingAssignmentUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(TeachingAssignment).where(TeachingAssignment.id == assignment_id)
+    res = await db.execute(stmt)
+    assignment = res.scalar_one_or_none()
+    if not assignment:
+        raise EntityNotFoundError(f"Teaching assignment {assignment_id} not found")
+
+    if payload.faculty_user_id is not None:
+        fac_stmt = select(User).where(User.id == payload.faculty_user_id)
+        faculty = (await db.execute(fac_stmt)).scalar_one_or_none()
+        if not faculty:
+            raise EntityNotFoundError(f"Faculty user {payload.faculty_user_id} not found")
+        assignment.faculty_user_id = payload.faculty_user_id
+
+    if payload.is_active is not None:
+        assignment.is_active = payload.is_active
+
+    await db.flush()
+    await db.refresh(assignment)
+    return assignment
+
+
+@router.delete("/assignments/{assignment_id}", status_code=status.HTTP_200_OK, summary="Delete or deactivate teaching assignment")
+async def delete_teaching_assignment(
+    assignment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(TeachingAssignment).where(TeachingAssignment.id == assignment_id)
+    res = await db.execute(stmt)
+    assignment = res.scalar_one_or_none()
+    if not assignment:
+        raise EntityNotFoundError(f"Teaching assignment {assignment_id} not found")
+
+    from src.models.attendance import AttendanceSession
+    sess_count_stmt = select(func.count(AttendanceSession.id)).where(AttendanceSession.teaching_assignment_id == assignment_id)
+    sess_count = (await db.execute(sess_count_stmt)).scalar() or 0
+
+    if sess_count > 0:
+        assignment.is_active = False
+        await db.flush()
+        return {
+            "message": f"Teaching assignment deactivated because {sess_count} historical attendance sessions exist.",
+            "id": str(assignment_id),
+            "deactivated": True,
+        }
+
+    await db.delete(assignment)
+    await db.flush()
+    return {"message": "Teaching assignment deleted successfully", "id": str(assignment_id), "deactivated": False}
 
 
 @router.post("/enrollments", response_model=StudentEnrollmentResponse, status_code=status.HTTP_201_CREATED)
@@ -419,6 +654,13 @@ class AdminUserCreate(BaseModel):
     institutional_id: str
     password: str
     role: UserRole
+
+
+class AdminUserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    institutional_id: Optional[str] = None
+    account_status: Optional[AccountStatus] = None
 
 
 class UserRoleUpdate(BaseModel):
@@ -778,6 +1020,161 @@ async def update_user_role(
     )
 
 
+@router.patch("/users/{user_id}", response_model=AdminUserListItem, summary="Update user details")
+async def update_admin_user(
+    user_id: uuid.UUID,
+    payload: AdminUserUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = select(User).where(User.id == user_id)
+    res = await db.execute(stmt)
+    user = res.scalar_one_or_none()
+    if not user:
+        raise EntityNotFoundError(f"User {user_id} not found")
+
+    if payload.email is not None:
+        new_email = payload.email.strip().lower()
+        exist_stmt = select(User).where(User.email == new_email, User.id != user_id)
+        if (await db.execute(exist_stmt)).scalar_one_or_none():
+            raise ConflictError(f"Email '{new_email}' is already in use by another user")
+        user.email = new_email
+
+    if payload.institutional_id is not None:
+        new_id = payload.institutional_id.strip()
+        exist_stmt = select(User).where(User.institutional_id == new_id, User.id != user_id)
+        if (await db.execute(exist_stmt)).scalar_one_or_none():
+            raise ConflictError(f"Institutional ID '{new_id}' is already in use by another user")
+        user.institutional_id = new_id
+
+    if payload.full_name is not None:
+        user.full_name = payload.full_name.strip()
+
+    if payload.account_status is not None:
+        user.account_status = payload.account_status
+
+    await db.flush()
+    await db.refresh(user)
+
+    inst_id, _ = await resolve_tenant_and_membership(None, admin_user, db)
+    mem_stmt = (
+        select(InstitutionMembership)
+        .options(selectinload(InstitutionMembership.role_assignments).selectinload(RoleAssignment.role_template))
+        .where(
+            InstitutionMembership.user_id == user.id,
+            InstitutionMembership.institution_id == inst_id,
+        )
+    )
+    membership = (await db.execute(mem_stmt)).scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    active_roles: List[str] = []
+    if membership:
+        for ra in membership.role_assignments:
+            if ra.status == AssignmentStatus.ACTIVE and (ra.valid_until is None or ra.valid_until > now):
+                if ra.role_template and ra.role_template.code not in active_roles:
+                    active_roles.append(ra.role_template.code)
+    if user.role and user.role.value not in active_roles:
+        active_roles.append(user.role.value)
+
+    subtitle_roles = ", ".join(r.replace("_", " ").title() for r in active_roles)
+    return AdminUserListItem(
+        id=user.id,
+        name=user.full_name,
+        email=user.email,
+        role=user.role.value,
+        identifier=user.institutional_id,
+        subtitle=f"{subtitle_roles} · {user.institutional_id}",
+        tag=None,
+        roles=active_roles,
+        membership_id=membership.id if membership else None,
+    )
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_200_OK, summary="Deactivate or delete user")
+async def delete_admin_user(
+    user_id: uuid.UUID,
+    hard_delete: bool = Query(False),
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    if user_id == admin_user.id:
+        raise ConflictError("You cannot delete or deactivate your own account")
+
+    stmt = select(User).where(User.id == user_id)
+    res = await db.execute(stmt)
+    user = res.scalar_one_or_none()
+    if not user:
+        raise EntityNotFoundError(f"User {user_id} not found")
+
+    from src.models.attendance import AttendanceRecord, AttendanceSession
+    from src.models.enrollment import StudentEnrollment
+    from src.models.assignment import TeachingAssignment
+
+    # Check for linked operational / audit data
+    sess_count = (await db.execute(
+        select(func.count(AttendanceSession.id)).where(
+            (AttendanceSession.conducting_faculty_user_id == user.id)
+            | (AttendanceSession.regular_faculty_user_id == user.id)
+        )
+    )).scalar() or 0
+
+    att_count = (await db.execute(
+        select(func.count(AttendanceRecord.id)).where(AttendanceRecord.student_user_id == user.id)
+    )).scalar() or 0
+
+    enr_count = (await db.execute(
+        select(func.count(StudentEnrollment.id)).where(StudentEnrollment.student_user_id == user.id)
+    )).scalar() or 0
+
+    assign_count = (await db.execute(
+        select(func.count(TeachingAssignment.id)).where(TeachingAssignment.faculty_user_id == user.id)
+    )).scalar() or 0
+
+    has_history = sess_count > 0 or att_count > 0 or enr_count > 0 or assign_count > 0
+
+    if not hard_delete or has_history:
+        # Soft-deactivate to guarantee immutable attendance history
+        user.account_status = AccountStatus.ARCHIVED
+        mem_stmt = select(InstitutionMembership).where(InstitutionMembership.user_id == user.id)
+        memberships = (await db.execute(mem_stmt)).scalars().all()
+        for m in memberships:
+            m.status = MembershipStatus.SUSPENDED
+            ra_stmt = select(RoleAssignment).where(RoleAssignment.membership_id == m.id)
+            ras = (await db.execute(ra_stmt)).scalars().all()
+            for ra in ras:
+                ra.status = AssignmentStatus.REVOKED
+        await db.flush()
+        detail = (
+            f"User '{user.full_name}' deactivated and suspended. Attendance and academic audit records preserved."
+            if has_history
+            else f"User '{user.full_name}' deactivated."
+        )
+        return {"message": detail, "id": str(user.id), "deactivated": True}
+
+    # If hard delete requested and user has zero historical attendance or academic dependencies:
+    mem_stmt = select(InstitutionMembership).where(InstitutionMembership.user_id == user.id)
+    memberships = (await db.execute(mem_stmt)).scalars().all()
+    for m in memberships:
+        ra_stmt = select(RoleAssignment).where(RoleAssignment.membership_id == m.id)
+        ras = (await db.execute(ra_stmt)).scalars().all()
+        for ra in ras:
+            await db.delete(ra)
+        await db.delete(m)
+
+    try:
+        from src.models.enrollment import StudentFaceProfile
+        fp_stmt = select(StudentFaceProfile).where(StudentFaceProfile.student_user_id == user.id)
+        fps = (await db.execute(fp_stmt)).scalars().all()
+        for fp in fps:
+            await db.delete(fp)
+    except Exception:
+        pass
+
+    await db.delete(user)
+    await db.flush()
+    return {"message": f"User '{user.full_name}' permanently deleted.", "id": str(user.id), "deactivated": False}
+
+
 @router.get("/faculty/{faculty_id}/assignments", response_model=List[FacultyAssignmentItem], summary="Get teaching assignments for faculty")
 async def get_faculty_assignments(
     faculty_id: uuid.UUID,
@@ -903,6 +1300,43 @@ async def update_campus(
     db.add(audit)
     await db.flush()
     return campus
+
+
+@router.delete("/campuses/{campus_id}", status_code=status.HTTP_200_OK, summary="Delete a campus")
+async def delete_campus(
+    campus_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    inst_id, membership = await resolve_tenant_and_membership(None, admin_user, db)
+    stmt = select(Campus).where(Campus.id == campus_id, Campus.institution_id == inst_id)
+    campus = (await db.execute(stmt)).scalar_one_or_none()
+    if not campus:
+        raise EntityNotFoundError(f"Campus {campus_id} not found in this institution")
+
+    sec_count = (await db.execute(select(func.count(ClassSection.id)).where(ClassSection.campus_id == campus_id))).scalar() or 0
+    if sec_count > 0:
+        raise ConflictError(
+            f"Cannot delete campus '{campus.code}': {sec_count} class sections are assigned to it. Reassign or delete sections first."
+        )
+
+    await db.delete(campus)
+    await db.flush()
+
+    audit = AuthorizationAudit(
+        actor_user_id=admin_user.id,
+        actor_membership_id=membership.id,
+        institution_id=inst_id,
+        action="campus.delete",
+        permission_code="campus.delete",
+        target_resource_type="CAMPUS",
+        target_resource_id=str(campus.id),
+        outcome=AuditOutcome.ALLOWED,
+        reason=f"Deleted campus {campus.code}",
+    )
+    db.add(audit)
+    await db.flush()
+    return {"message": f"Campus '{campus.code}' deleted successfully", "id": str(campus_id)}
 
 
 # ==========================================

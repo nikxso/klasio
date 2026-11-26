@@ -57,17 +57,38 @@ export default function FacultyProfileScreen() {
       }
     }
     initUserAndQueue();
+
+    const unsub = SessionStore.subscribe((session) => {
+      setUser(session?.user ?? null);
+    });
+    return unsub;
   }, []);
 
   const handleSyncNow = async () => {
     setSyncing(true);
     try {
       const session = await SessionStore.initFromStorage();
-      await AttendanceSyncWorker.processPendingQueue(undefined, session?.token || SessionStore.getToken());
-      const items = await AttendanceSyncWorker.getPendingQueueItems();
+      const res = await AttendanceSyncWorker.processPendingQueue(
+        undefined,
+        session?.token || SessionStore.getToken(),
+        undefined,
+        true
+      );
+      const items = await AttendanceSyncWorker.getPendingQueueItems(50, undefined, true);
       setPendingQueueCount(items.length);
-    } catch {
-      // Offline fallback
+
+      if (res.processed === 0) {
+        Alert.alert('Everything Synced', 'All attendance sessions are already synchronized with the server.');
+      } else if (res.succeeded > 0 && res.failed === 0) {
+        Alert.alert('Sync Successful', `Successfully synchronized ${res.succeeded} offline attendance session(s).`);
+      } else if (res.failed > 0) {
+        Alert.alert(
+          'Sync Incomplete',
+          `${res.succeeded} session(s) synced. ${res.failed} session(s) remaining offline awaiting network connectivity.`
+        );
+      }
+    } catch (err: any) {
+      Alert.alert('Sync Failed', 'Could not connect to the synchronization server. Please check your internet connection.');
     } finally {
       setSyncing(false);
     }
@@ -84,11 +105,8 @@ export default function FacultyProfileScreen() {
   const handleConfirmSignOut = async () => {
     setIsSigningOut(true);
     try {
-      await SessionStore.clearSession(true);
       setShowSignOutSheet(false);
-      try {
-        router.dismissAll();
-      } catch (_) {}
+      await SessionStore.clearSession(true);
       router.replace('/');
     } catch (e) {
       console.warn('Sign out error:', e);

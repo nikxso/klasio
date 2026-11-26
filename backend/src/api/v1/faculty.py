@@ -1,8 +1,8 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 import uuid
 from fastapi import APIRouter, Depends, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, and_, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,8 @@ from src.core.exceptions import OutOfScopeError, EntityNotFoundError
 from src.core.permissions import require_faculty, require_faculty_or_admin
 from src.database import get_db_session
 from src.models.assignment import SubstituteDelegation, TeachingAssignment
-from src.models.user import User
+from src.models.attendance import AttendanceSession, AttendanceSessionStatus
+from src.models.user import User, UserRole
 from src.schemas.assignment import (
     ClassRosterResponse,
     CreateDelegationRequest,
@@ -387,4 +388,89 @@ async def update_student_detail(
         "full_name": student.full_name,
         "email": student.email,
     }
+
+
+class FacultyHeldSessionItem(BaseModel):
+    id: uuid.UUID
+    client_session_uuid: uuid.UUID
+    teaching_assignment_id: uuid.UUID
+    session_date: date
+    period_slot_or_sequence: int
+    applicability_status: str
+    status_reason: Optional[str] = None
+    session_status: str
+    records_count: int
+    present_count: int
+    absent_count: int
+    excused_count: int
+    finalized_at: datetime
+    conducting_faculty_user_id: Optional[uuid.UUID] = None
+    conducting_faculty_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+@router.get(
+    "/assignments/{teaching_assignment_id}/sessions",
+    response_model=List[FacultyHeldSessionItem],
+    summary="Retrieve chronological history of held classes and sessions for teaching assignment",
+)
+async def get_assignment_held_sessions(
+    teaching_assignment_id: uuid.UUID,
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    current_faculty: User = Depends(require_faculty_or_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    scoping_service = ScopingService(db)
+    if current_faculty.role != UserRole.ADMIN:
+        await scoping_service.verify_faculty_scope(
+            faculty_user_id=current_faculty.id,
+            teaching_assignment_id=teaching_assignment_id,
+            session_date=date.today(),
+        )
+
+    stmt = (
+        select(AttendanceSession)
+        .options(selectinload(AttendanceSession.conducting_faculty_user))
+        .where(
+            and_(
+                AttendanceSession.teaching_assignment_id == teaching_assignment_id,
+                AttendanceSession.session_status == AttendanceSessionStatus.FINALIZED,
+            )
+        )
+    )
+    if start_date:
+        stmt = stmt.where(AttendanceSession.session_date >= start_date)
+    if end_date:
+        stmt = stmt.where(AttendanceSession.session_date <= end_date)
+
+    stmt = stmt.order_by(
+        AttendanceSession.session_date.desc(),
+        AttendanceSession.period_slot_or_sequence.desc(),
+    )
+    res = await db.execute(stmt)
+    sessions = res.scalars().all()
+
+    return [
+        FacultyHeldSessionItem(
+            id=s.id,
+            client_session_uuid=s.client_session_uuid,
+            teaching_assignment_id=s.teaching_assignment_id,
+            session_date=s.session_date,
+            period_slot_or_sequence=s.period_slot_or_sequence,
+            applicability_status=s.applicability_status.value if hasattr(s.applicability_status, "value") else str(s.applicability_status),
+            status_reason=s.status_reason,
+            session_status=s.session_status.value if hasattr(s.session_status, "value") else str(s.session_status),
+            records_count=s.records_count,
+            present_count=s.present_count,
+            absent_count=s.absent_count,
+            excused_count=s.excused_count,
+            finalized_at=s.finalized_at,
+            conducting_faculty_user_id=s.conducting_faculty_user_id,
+            conducting_faculty_name=s.conducting_faculty_user.full_name if s.conducting_faculty_user else None,
+        )
+        for s in sessions
+    ]
+
 

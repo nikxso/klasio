@@ -276,22 +276,62 @@ export class AttendanceSyncWorker {
   }
 
   /**
+   * Resets recoverable failed items in sync queue back to PENDING.
+   * Useful when manual sync is triggered or recovering from network/payload state.
+   */
+  static async resetFailedQueueItems(customDb?: any): Promise<void> {
+    const db = await resolveDb(customDb);
+    const nowIso = new Date().toISOString();
+    await db.run(
+      `UPDATE sync_queue 
+       SET sync_status = 'PENDING', next_retry_at = NULL, updated_at = ? 
+       WHERE sync_status = 'FAILED' 
+         AND (last_error IS NULL OR (last_error NOT LIKE '%Conflict%' AND last_error NOT LIKE '%409%'));`,
+      [nowIso]
+    );
+  }
+
+  /**
    * Processes all currently pending queue items using the provided or default fetch transport.
    */
   static async processPendingQueue(
     transport?: HttpTransportFn,
     authToken?: string,
-    customDb?: any
+    customDb?: any,
+    retryFailed: boolean = true
   ): Promise<{ processed: number; succeeded: number; failed: number }> {
+    if (retryFailed) {
+      await AttendanceSyncWorker.resetFailedQueueItems(customDb).catch(() => {});
+    }
+
     const defaultTransport: HttpTransportFn = async (endpoint, payload, token) => {
       try {
+        // Sanitize non-UUID dummy values before network transmission to FastAPI backend
+        const isUuid = (val: any) =>
+          typeof val === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+        const cleanPayload = { ...payload };
+        if (cleanPayload.authorizingRoleAssignmentId && !isUuid(cleanPayload.authorizingRoleAssignmentId)) {
+          delete cleanPayload.authorizingRoleAssignmentId;
+        }
+        if (cleanPayload.actorMembershipId && !isUuid(cleanPayload.actorMembershipId)) {
+          delete cleanPayload.actorMembershipId;
+        }
+        if (cleanPayload.delegationId && !isUuid(cleanPayload.delegationId)) {
+          delete cleanPayload.delegationId;
+        }
+        if (cleanPayload.substituteDelegationId && !isUuid(cleanPayload.substituteDelegationId)) {
+          delete cleanPayload.substituteDelegationId;
+        }
+
         const res = await fetch(getApiUrl(endpoint), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(cleanPayload),
         });
         const data = await res.json().catch(() => ({}));
         return { statusCode: res.status, data };

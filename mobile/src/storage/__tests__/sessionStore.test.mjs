@@ -253,8 +253,17 @@ describe('SessionStore IAC v1', () => {
     assert.equal(SessionStore.canApproveDelegation(), true);
     assert.equal(SessionStore.hasAnyRole(['DEPARTMENT_HEAD']), true);
 
-    // 4. Clear session and ensure DB row is removed
+    // 4. Clear session and ensure DB row is removed and listeners notified
+    let notifiedSession = 'not_called';
+    const unsub = SessionStore.subscribe((s) => {
+      notifiedSession = s;
+    });
+
     await SessionStore.clearSession(true);
+    assert.equal(notifiedSession, null, 'clearSession must notify listeners with null');
+    assert.equal(SessionStore.isInitialized(), true, 'isInitialized must be true after clearSession');
+    unsub();
+
     SessionStore.resetMemoryForTesting();
     const afterClear = await SessionStore.initFromStorage();
     assert.equal(afterClear, null);

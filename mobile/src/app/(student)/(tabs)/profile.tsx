@@ -41,12 +41,10 @@ export default function StudentProfileScreen() {
     }
     initUser();
 
-    // Subscribe to SessionStore real-time updates (e.g. immediately upon enrollment)
+    // Subscribe to SessionStore real-time updates (e.g. immediately upon enrollment or signout)
     const unsub = SessionStore.subscribe((session) => {
-      if (session?.user) {
-        setUser(session.user);
-        setCacheBuster(Date.now());
-      }
+      setUser(session?.user ?? null);
+      setCacheBuster(Date.now());
     });
     return unsub;
   }, []);
@@ -69,11 +67,8 @@ export default function StudentProfileScreen() {
   const handleConfirmSignOut = async () => {
     setIsSigningOut(true);
     try {
-      await SessionStore.clearSession(true);
       setShowSignOutSheet(false);
-      try {
-        router.dismissAll();
-      } catch (_) {}
+      await SessionStore.clearSession(true);
       router.replace('/');
     } catch (e) {
       console.warn('Sign out error:', e);

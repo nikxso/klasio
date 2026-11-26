@@ -6,6 +6,7 @@ import { LogBox, NativeModules, Platform, StyleSheet, Text, View } from 'react-n
 import { useFonts } from 'expo-font';
 import { Colors } from '@/theme/tokens';
 import { SessionStore } from '@/storage/sessionStore';
+import { useAutoSync } from '@/services/autoSyncService';
 
 LogBox.ignoreAllLogs(true);
 
@@ -38,6 +39,8 @@ export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     'ChangaOne-Regular': require('../../assets/fonts/ChangaOne-Regular.ttf'),
   });
+
+  useAutoSync();
 
   useEffect(() => {
     SessionStore.initFromStorage().catch(() => {});

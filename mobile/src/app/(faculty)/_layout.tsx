@@ -1,11 +1,19 @@
 import React from 'react';
-import { Stack, useRouter } from 'expo-router';
-import { SessionStore } from '@/storage/sessionStore';
+import { Stack, useRouter, Redirect } from 'expo-router';
+import { useSession } from '@/hooks/useSession';
 import { AccessRestrictedView } from '@/components/ui/kit';
 
 export default function FacultyStackLayout() {
   const router = useRouter();
-  const user = SessionStore.getUser();
+  const { user, isAuthenticated, isLoaded } = useSession();
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Redirect href="/" />;
+  }
 
   if (user?.role?.toUpperCase() === 'STUDENT') {
     return (

@@ -76,11 +76,17 @@ export default function SubjectAttendanceHistoryScreen() {
     setError(null);
 
     try {
+      let token = SessionStore.getToken();
+      if (!token) {
+        const stored = await SessionStore.initFromStorage();
+        token = stored?.token || undefined;
+      }
       const endpoint = `${API_BASE_URL}/api/v1/student/subjects/${teachingAssignmentId}/history`;
       const response = await fetch(endpoint, {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
 

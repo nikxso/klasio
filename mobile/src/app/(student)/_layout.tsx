@@ -1,7 +1,17 @@
 import React from 'react';
-import { Stack } from 'expo-router';
+import { Stack, Redirect } from 'expo-router';
+import { useSession } from '@/hooks/useSession';
 
 export default function StudentStackLayout() {
+  const { isAuthenticated, isLoaded } = useSession();
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!isAuthenticated) {
+    return <Redirect href="/" />;
+  }
   return (
     <Stack
       screenOptions={{

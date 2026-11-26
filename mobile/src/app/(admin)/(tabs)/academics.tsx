@@ -16,11 +16,10 @@ import {
   Plus,
   BookOpen,
   Link2,
-  Users,
-  Check,
   Layers,
-  GraduationCap,
   Landmark,
+  Trash2,
+  Edit3,
 } from 'lucide-react-native';
 
 import { Screen, Card, IconBubble, SectionTitle, Sheet, Button, Chip, AccessRestrictedView } from '@/components/ui/kit';
@@ -55,6 +54,7 @@ interface SubjectItem {
   code: string;
   name: string;
   department_id: string;
+  credits?: number;
 }
 
 interface SectionItem {
@@ -62,6 +62,7 @@ interface SectionItem {
   section_code: string;
   department_id: string;
   academic_term_id: string;
+  cohort_year?: number;
 }
 
 interface FacultyUserItem {
@@ -72,6 +73,7 @@ interface FacultyUserItem {
 
 export default function AdminAcademicsScreen() {
   const router = useRouter();
+  const [catalogTab, setCatalogTab] = useState<'DEPTS' | 'SUBJECTS' | 'SECTIONS' | 'CAMPUSES'>('DEPTS');
   const [campuses, setCampuses] = useState<CampusItem[]>([]);
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [rawDepartments, setRawDepartments] = useState<{ id: string; code: string; name: string }[]>([]);
@@ -81,10 +83,28 @@ export default function AdminAcademicsScreen() {
   const [facultyUsers, setFacultyUsers] = useState<FacultyUserItem[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Modal Sheet Visibility States
+  // Modal Sheet Visibility States (Create)
   const [activeSheet, setActiveSheet] = useState<'NONE' | 'CAMPUS' | 'DEPT' | 'SUBJECT' | 'SECTION' | 'ASSIGN'>('NONE');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Edit Sheet States
+  const [editingDept, setEditingDept] = useState<DepartmentItem | null>(null);
+  const [editDeptCode, setEditDeptCode] = useState('');
+  const [editDeptName, setEditDeptName] = useState('');
+
+  const [editingSubject, setEditingSubject] = useState<SubjectItem | null>(null);
+  const [editSubCode, setEditSubCode] = useState('');
+  const [editSubName, setEditSubName] = useState('');
+  const [editSubCredits, setEditSubCredits] = useState('3');
+
+  const [editingSection, setEditingSection] = useState<SectionItem | null>(null);
+  const [editSecCode, setEditSecCode] = useState('');
+  const [editSecCohort, setEditSecCohort] = useState('2026');
+
+  const [editingCampus, setEditingCampus] = useState<CampusItem | null>(null);
+  const [editCampusName, setEditCampusName] = useState('');
+  const [editCampusStatus, setEditCampusStatus] = useState('ACTIVE');
 
   // Form States: Add Campus
   const [campusCode, setCampusCode] = useState('');
@@ -247,7 +267,7 @@ export default function AdminAcademicsScreen() {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ code: deptCode.trim(), name: deptName.trim() }),
+        body: JSON.stringify({ code: deptCode.trim().toUpperCase(), name: deptName.trim() }),
       });
       if (res.ok) {
         setDeptCode('');
@@ -282,7 +302,7 @@ export default function AdminAcademicsScreen() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          code: subCode.trim(),
+          code: subCode.trim().toUpperCase(),
           name: subName.trim(),
           department_id: subDeptId,
           credits: parseInt(subCredits, 10) || 3,
@@ -322,7 +342,7 @@ export default function AdminAcademicsScreen() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          section_code: secCode.trim(),
+          section_code: secCode.trim().toUpperCase(),
           department_id: secDeptId,
           academic_term_id: secTermId,
           cohort_year: parseInt(secCohort, 10) || 2026,
@@ -381,6 +401,298 @@ export default function AdminAcademicsScreen() {
     }
   };
 
+  // --- UPDATE & DELETE HANDLERS ---
+
+  // Update Department
+  const handleUpdateDepartment = async () => {
+    if (!editingDept || !editDeptCode.trim() || !editDeptName.trim()) {
+      setErrorMessage('Please enter both Code and Name.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/departments/${editingDept.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ code: editDeptCode.trim().toUpperCase(), name: editDeptName.trim() }),
+      });
+      if (res.ok) {
+        setEditingDept(null);
+        await loadAcademicsData();
+      } else {
+        const errorMsg = await extractErrorMessage(res, 'Failed to update department');
+        setErrorMessage(errorMsg);
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Delete Department
+  const handleDeleteDepartment = (dept: DepartmentItem) => {
+    Alert.alert(
+      'Delete Department',
+      `Are you sure you want to delete ${dept.code} (${dept.name})? This will fail if subjects or sections are linked.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setSubmitting(true);
+            try {
+              const token = SessionStore.getToken();
+              const res = await fetch(`${API_BASE_URL}/api/v1/admin/departments/${dept.id}`, {
+                method: 'DELETE',
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+              });
+              if (res.ok) {
+                setEditingDept(null);
+                await loadAcademicsData();
+              } else {
+                const msg = await extractErrorMessage(res, 'Failed to delete department');
+                Alert.alert('Cannot Delete', msg);
+              }
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'Network error');
+            } finally {
+              setSubmitting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Update Subject
+  const handleUpdateSubject = async () => {
+    if (!editingSubject || !editSubCode.trim() || !editSubName.trim()) {
+      setErrorMessage('Please enter Code and Name.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/subjects/${editingSubject.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          code: editSubCode.trim().toUpperCase(),
+          name: editSubName.trim(),
+          credits: parseInt(editSubCredits, 10) || 3,
+        }),
+      });
+      if (res.ok) {
+        setEditingSubject(null);
+        await loadAcademicsData();
+      } else {
+        const errorMsg = await extractErrorMessage(res, 'Failed to update subject');
+        setErrorMessage(errorMsg);
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Delete Subject
+  const handleDeleteSubject = (subj: SubjectItem) => {
+    Alert.alert(
+      'Delete Subject',
+      `Are you sure you want to delete ${subj.code} (${subj.name})?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setSubmitting(true);
+            try {
+              const token = SessionStore.getToken();
+              const res = await fetch(`${API_BASE_URL}/api/v1/admin/subjects/${subj.id}`, {
+                method: 'DELETE',
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+              });
+              if (res.ok) {
+                setEditingSubject(null);
+                await loadAcademicsData();
+              } else {
+                const msg = await extractErrorMessage(res, 'Failed to delete subject');
+                Alert.alert('Cannot Delete', msg);
+              }
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'Network error');
+            } finally {
+              setSubmitting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Update Section
+  const handleUpdateSection = async () => {
+    if (!editingSection || !editSecCode.trim()) {
+      setErrorMessage('Please enter Section Code.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/sections/${editingSection.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          section_code: editSecCode.trim().toUpperCase(),
+          cohort_year: parseInt(editSecCohort, 10) || 2026,
+        }),
+      });
+      if (res.ok) {
+        setEditingSection(null);
+        await loadAcademicsData();
+      } else {
+        const errorMsg = await extractErrorMessage(res, 'Failed to update section');
+        setErrorMessage(errorMsg);
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Delete Section
+  const handleDeleteSection = (sec: SectionItem) => {
+    Alert.alert(
+      'Delete Section',
+      `Are you sure you want to delete section ${sec.section_code}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setSubmitting(true);
+            try {
+              const token = SessionStore.getToken();
+              const res = await fetch(`${API_BASE_URL}/api/v1/admin/sections/${sec.id}`, {
+                method: 'DELETE',
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+              });
+              if (res.ok) {
+                setEditingSection(null);
+                await loadAcademicsData();
+              } else {
+                const msg = await extractErrorMessage(res, 'Failed to delete section');
+                Alert.alert('Cannot Delete', msg);
+              }
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'Network error');
+            } finally {
+              setSubmitting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Update Campus
+  const handleUpdateCampus = async () => {
+    if (!editingCampus || !editCampusName.trim()) {
+      setErrorMessage('Please enter Campus Name.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/campuses/${editingCampus.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          name: editCampusName.trim(),
+          status: editCampusStatus,
+        }),
+      });
+      if (res.ok) {
+        setEditingCampus(null);
+        await loadAcademicsData();
+      } else {
+        const errorMsg = await extractErrorMessage(res, 'Failed to update campus');
+        setErrorMessage(errorMsg);
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Delete Campus
+  const handleDeleteCampus = (c: CampusItem) => {
+    Alert.alert(
+      'Delete Campus',
+      `Are you sure you want to delete ${c.code} (${c.name})?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setSubmitting(true);
+            try {
+              const token = SessionStore.getToken();
+              const res = await fetch(`${API_BASE_URL}/api/v1/admin/campuses/${c.id}`, {
+                method: 'DELETE',
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+              });
+              if (res.ok) {
+                setEditingCampus(null);
+                await loadAcademicsData();
+              } else {
+                const msg = await extractErrorMessage(res, 'Failed to delete campus');
+                Alert.alert('Cannot Delete', msg);
+              }
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'Network error');
+            } finally {
+              setSubmitting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (!SessionStore.canManageAcademics()) {
     return (
       <AccessRestrictedView
@@ -394,7 +706,7 @@ export default function AdminAcademicsScreen() {
   return (
     <Screen
       title="Academics"
-      subtitle="Departments, Subjects, Sections & Assignments"
+      subtitle="Manage Departments, Subjects, Sections & Campuses"
       onBack={() => {
         if (router.canGoBack()) {
           router.back();
@@ -404,54 +716,203 @@ export default function AdminAcademicsScreen() {
       }}
       scrollable
     >
-      {/* Campuses Overview */}
-      {campuses.length > 0 && (
+      {/* Segmented Catalog Navigator */}
+      <View style={styles.segmentContainer}>
+        <Pressable
+          onPress={() => setCatalogTab('DEPTS')}
+          style={[styles.segmentBtn, catalogTab === 'DEPTS' && styles.segmentBtnActive]}
+        >
+          <Text style={[styles.segmentBtnText, catalogTab === 'DEPTS' && styles.segmentBtnTextActive]}>
+            Depts ({departments.length})
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setCatalogTab('SUBJECTS')}
+          style={[styles.segmentBtn, catalogTab === 'SUBJECTS' && styles.segmentBtnActive]}
+        >
+          <Text style={[styles.segmentBtnText, catalogTab === 'SUBJECTS' && styles.segmentBtnTextActive]}>
+            Subjects ({subjects.length})
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setCatalogTab('SECTIONS')}
+          style={[styles.segmentBtn, catalogTab === 'SECTIONS' && styles.segmentBtnActive]}
+        >
+          <Text style={[styles.segmentBtnText, catalogTab === 'SECTIONS' && styles.segmentBtnTextActive]}>
+            Sections ({sections.length})
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setCatalogTab('CAMPUSES')}
+          style={[styles.segmentBtn, catalogTab === 'CAMPUSES' && styles.segmentBtnActive]}
+        >
+          <Text style={[styles.segmentBtnText, catalogTab === 'CAMPUSES' && styles.segmentBtnTextActive]}>
+            Campuses ({campuses.length})
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* --- TAB CONTENT: DEPARTMENTS --- */}
+      {catalogTab === 'DEPTS' && (
         <View style={{ marginBottom: 16 }}>
-          <SectionTitle>Campuses</SectionTitle>
+          <SectionTitle>Departments</SectionTitle>
           <View style={styles.departmentsList}>
-            {campuses.map((c) => (
-              <Card key={c.id} style={styles.deptCard}>
-                <IconBubble icon={Landmark} tone="lilac" size={42} />
-                <View style={styles.deptTextCol}>
-                  <Text style={styles.deptName}>{c.name}</Text>
-                  <Text style={styles.deptSub}>
-                    Code: {c.code} · Status: {c.status}
-                  </Text>
-                </View>
-                <Chip tone={c.status === 'ACTIVE' ? 'forest' : 'rose'}>{c.status}</Chip>
+            {loading && departments.length === 0 ? (
+              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+            ) : departments.length === 0 ? (
+              <Card style={styles.deptCard}>
+                <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
+                  No departments configured. Tap "Add department" below.
+                </Text>
               </Card>
-            ))}
+            ) : (
+              departments.map((d) => (
+                <Card
+                  key={d.id}
+                  style={styles.deptCard}
+                  onPress={() => {
+                    setEditingDept(d);
+                    setEditDeptCode(d.code);
+                    setEditDeptName(d.name);
+                    setErrorMessage(null);
+                  }}
+                >
+                  <IconBubble icon={Building2} tone="forest" size={42} />
+                  <View style={styles.deptTextCol}>
+                    <Text style={styles.deptName}>{d.name}</Text>
+                    <Text style={styles.deptSub}>
+                      {d.code} · {d.sections} sections · {d.subjects} subjects
+                    </Text>
+                  </View>
+                  <ChevronRight size={18} color={Colors.soft} />
+                </Card>
+              ))
+            )}
           </View>
         </View>
       )}
 
-      {/* Departments Overview */}
-      <SectionTitle>Departments</SectionTitle>
-      <View style={styles.departmentsList}>
-        {loading && departments.length === 0 ? (
-          <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
-        ) : departments.length === 0 ? (
-          <Card style={styles.deptCard}>
-            <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
-              No departments configured. Tap "Add department" below.
-            </Text>
-          </Card>
-        ) : (
-          departments.map((d) => (
-            <Card key={d.id} style={styles.deptCard}>
-              <IconBubble icon={Building2} tone="forest" size={42} />
-              <View style={styles.deptTextCol}>
-                <Text style={styles.deptName}>{d.name}</Text>
-                <Text style={styles.deptSub}>
-                  {d.code} · {d.sections} sections · {d.subjects} subjects
+      {/* --- TAB CONTENT: SUBJECTS --- */}
+      {catalogTab === 'SUBJECTS' && (
+        <View style={{ marginBottom: 16 }}>
+          <SectionTitle>Course Subjects</SectionTitle>
+          <View style={styles.departmentsList}>
+            {loading && subjects.length === 0 ? (
+              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+            ) : subjects.length === 0 ? (
+              <Card style={styles.deptCard}>
+                <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
+                  No course subjects found. Tap "Add subject" below.
                 </Text>
-              </View>
-              <ChevronRight size={18} color={Colors.soft} />
-            </Card>
-          ))
-        )}
-      </View>
+              </Card>
+            ) : (
+              subjects.map((s) => (
+                <Card
+                  key={s.id}
+                  style={styles.deptCard}
+                  onPress={() => {
+                    setEditingSubject(s);
+                    setEditSubCode(s.code);
+                    setEditSubName(s.name);
+                    setEditSubCredits(String(s.credits || 3));
+                    setErrorMessage(null);
+                  }}
+                >
+                  <IconBubble icon={BookOpen} tone="apricot" size={42} />
+                  <View style={styles.deptTextCol}>
+                    <Text style={styles.deptName}>{s.name}</Text>
+                    <Text style={styles.deptSub}>
+                      Code: {s.code} · {s.credits || 3} Credits
+                    </Text>
+                  </View>
+                  <ChevronRight size={18} color={Colors.soft} />
+                </Card>
+              ))
+            )}
+          </View>
+        </View>
+      )}
 
+      {/* --- TAB CONTENT: SECTIONS --- */}
+      {catalogTab === 'SECTIONS' && (
+        <View style={{ marginBottom: 16 }}>
+          <SectionTitle>Class Sections</SectionTitle>
+          <View style={styles.departmentsList}>
+            {loading && sections.length === 0 ? (
+              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+            ) : sections.length === 0 ? (
+              <Card style={styles.deptCard}>
+                <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
+                  No class sections configured. Tap "Add section" below.
+                </Text>
+              </Card>
+            ) : (
+              sections.map((sec) => (
+                <Card
+                  key={sec.id}
+                  style={styles.deptCard}
+                  onPress={() => {
+                    setEditingSection(sec);
+                    setEditSecCode(sec.section_code);
+                    setEditSecCohort(String(sec.cohort_year || 2026));
+                    setErrorMessage(null);
+                  }}
+                >
+                  <IconBubble icon={Layers} tone="forest" size={42} />
+                  <View style={styles.deptTextCol}>
+                    <Text style={styles.deptName}>Section {sec.section_code}</Text>
+                    <Text style={styles.deptSub}>Cohort Year: {sec.cohort_year || 2026}</Text>
+                  </View>
+                  <ChevronRight size={18} color={Colors.soft} />
+                </Card>
+              ))
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* --- TAB CONTENT: CAMPUSES --- */}
+      {catalogTab === 'CAMPUSES' && (
+        <View style={{ marginBottom: 16 }}>
+          <SectionTitle>Campuses</SectionTitle>
+          <View style={styles.departmentsList}>
+            {loading && campuses.length === 0 ? (
+              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+            ) : campuses.length === 0 ? (
+              <Card style={styles.deptCard}>
+                <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
+                  No campuses configured. Tap "Add campus" below.
+                </Text>
+              </Card>
+            ) : (
+              campuses.map((c) => (
+                <Card
+                  key={c.id}
+                  style={styles.deptCard}
+                  onPress={() => {
+                    setEditingCampus(c);
+                    setEditCampusName(c.name);
+                    setEditCampusStatus(c.status);
+                    setErrorMessage(null);
+                  }}
+                >
+                  <IconBubble icon={Landmark} tone="lilac" size={42} />
+                  <View style={styles.deptTextCol}>
+                    <Text style={styles.deptName}>{c.name}</Text>
+                    <Text style={styles.deptSub}>
+                      Code: {c.code} · Status: {c.status}
+                    </Text>
+                  </View>
+                  <Chip tone={c.status === 'ACTIVE' ? 'forest' : 'rose'}>{c.status}</Chip>
+                  <ChevronRight size={18} color={Colors.soft} style={{ marginLeft: 6 }} />
+                </Card>
+              ))
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* Quick Actions */}
       <SectionTitle>Quick Actions</SectionTitle>
       {SessionStore.canEditAcademics() ? (
         <View style={styles.actionsGrid}>
@@ -537,6 +998,201 @@ export default function AdminAcademicsScreen() {
           </Text>
         </Card>
       )}
+
+      {/* ========================================================================= */}
+      {/* EDIT SHEETS                                                               */}
+      {/* ========================================================================= */}
+
+      {/* --- EDIT DEPARTMENT SHEET --- */}
+      {editingDept && (
+        <Sheet visible={!!editingDept} onClose={() => setEditingDept(null)}>
+          <Text style={styles.sheetTitle}>Manage Department</Text>
+          <Text style={styles.sheetSub}>Update code or name, or delete department</Text>
+
+          {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
+
+          <Text style={styles.inputLabel}>Department Code</Text>
+          <TextInput
+            value={editDeptCode}
+            onChangeText={setEditDeptCode}
+            autoCapitalize="characters"
+            style={styles.textInput}
+          />
+
+          <Text style={styles.inputLabel}>Department Name</Text>
+          <TextInput
+            value={editDeptName}
+            onChangeText={setEditDeptName}
+            style={styles.textInput}
+          />
+
+          <View style={{ marginTop: 20, gap: 10 }}>
+            <Button
+              tone="forest"
+              disabled={submitting}
+              onPress={handleUpdateDepartment}
+            >
+              {submitting ? 'Saving…' : 'Save Changes'}
+            </Button>
+            <Button
+              tone="rose"
+              disabled={submitting}
+              onPress={() => handleDeleteDepartment(editingDept)}
+            >
+              Delete Department
+            </Button>
+          </View>
+        </Sheet>
+      )}
+
+      {/* --- EDIT SUBJECT SHEET --- */}
+      {editingSubject && (
+        <Sheet visible={!!editingSubject} onClose={() => setEditingSubject(null)}>
+          <Text style={styles.sheetTitle}>Manage Course Subject</Text>
+          <Text style={styles.sheetSub}>Update subject details or delete</Text>
+
+          {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
+
+          <Text style={styles.inputLabel}>Subject Code</Text>
+          <TextInput
+            value={editSubCode}
+            onChangeText={setEditSubCode}
+            autoCapitalize="characters"
+            style={styles.textInput}
+          />
+
+          <Text style={styles.inputLabel}>Subject Name</Text>
+          <TextInput
+            value={editSubName}
+            onChangeText={setEditSubName}
+            style={styles.textInput}
+          />
+
+          <Text style={styles.inputLabel}>Credits</Text>
+          <TextInput
+            value={editSubCredits}
+            onChangeText={setEditSubCredits}
+            keyboardType="numeric"
+            style={styles.textInput}
+          />
+
+          <View style={{ marginTop: 20, gap: 10 }}>
+            <Button
+              tone="forest"
+              disabled={submitting}
+              onPress={handleUpdateSubject}
+            >
+              {submitting ? 'Saving…' : 'Save Changes'}
+            </Button>
+            <Button
+              tone="rose"
+              disabled={submitting}
+              onPress={() => handleDeleteSubject(editingSubject)}
+            >
+              Delete Subject
+            </Button>
+          </View>
+        </Sheet>
+      )}
+
+      {/* --- EDIT SECTION SHEET --- */}
+      {editingSection && (
+        <Sheet visible={!!editingSection} onClose={() => setEditingSection(null)}>
+          <Text style={styles.sheetTitle}>Manage Class Section</Text>
+          <Text style={styles.sheetSub}>Update section code, cohort year, or delete</Text>
+
+          {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
+
+          <Text style={styles.inputLabel}>Section Code</Text>
+          <TextInput
+            value={editSecCode}
+            onChangeText={setEditSecCode}
+            autoCapitalize="characters"
+            style={styles.textInput}
+          />
+
+          <Text style={styles.inputLabel}>Cohort Year</Text>
+          <TextInput
+            value={editSecCohort}
+            onChangeText={setEditSecCohort}
+            keyboardType="numeric"
+            style={styles.textInput}
+          />
+
+          <View style={{ marginTop: 20, gap: 10 }}>
+            <Button
+              tone="forest"
+              disabled={submitting}
+              onPress={handleUpdateSection}
+            >
+              {submitting ? 'Saving…' : 'Save Changes'}
+            </Button>
+            <Button
+              tone="rose"
+              disabled={submitting}
+              onPress={() => handleDeleteSection(editingSection)}
+            >
+              Delete Class Section
+            </Button>
+          </View>
+        </Sheet>
+      )}
+
+      {/* --- EDIT CAMPUS SHEET --- */}
+      {editingCampus && (
+        <Sheet visible={!!editingCampus} onClose={() => setEditingCampus(null)}>
+          <Text style={styles.sheetTitle}>Manage Campus ({editingCampus.code})</Text>
+          <Text style={styles.sheetSub}>Update name, status, or delete campus</Text>
+
+          {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
+
+          <Text style={styles.inputLabel}>Campus Name</Text>
+          <TextInput
+            value={editCampusName}
+            onChangeText={setEditCampusName}
+            style={styles.textInput}
+          />
+
+          <Text style={styles.inputLabel}>Status</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+            {(['ACTIVE', 'INACTIVE'] as const).map((st) => (
+              <Pressable
+                key={st}
+                onPress={() => setEditCampusStatus(st)}
+                style={[
+                  styles.pickerChip,
+                  editCampusStatus === st && styles.pickerChipActive,
+                ]}
+              >
+                <Text style={[styles.pickerChipText, editCampusStatus === st && styles.pickerChipTextActive]}>
+                  {st}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={{ marginTop: 20, gap: 10 }}>
+            <Button
+              tone="forest"
+              disabled={submitting}
+              onPress={handleUpdateCampus}
+            >
+              {submitting ? 'Saving…' : 'Save Changes'}
+            </Button>
+            <Button
+              tone="rose"
+              disabled={submitting}
+              onPress={() => handleDeleteCampus(editingCampus)}
+            >
+              Delete Campus
+            </Button>
+          </View>
+        </Sheet>
+      )}
+
+      {/* ========================================================================= */}
+      {/* CREATION SHEETS                                                           */}
+      {/* ========================================================================= */}
 
       {/* --- SHEET 0: ADD CAMPUS --- */}
       <Sheet visible={activeSheet === 'CAMPUS'} onClose={() => setActiveSheet('NONE')}>
@@ -838,6 +1494,36 @@ export default function AdminAcademicsScreen() {
 }
 
 const styles = StyleSheet.create({
+  segmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: Colors.line,
+    borderRadius: Radii.button,
+    padding: 4,
+    marginBottom: 16,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: Radii.button - 4,
+  },
+  segmentBtnActive: {
+    backgroundColor: Colors.card,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  segmentBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.soft,
+  },
+  segmentBtnTextActive: {
+    color: Colors.ink,
+    fontWeight: '700',
+  },
   departmentsList: {
     gap: 10,
     marginBottom: 8,
