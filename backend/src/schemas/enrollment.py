@@ -40,7 +40,7 @@ class StudentSubjectAttendanceSummary(BaseModel):
     attended_sessions: int
     attendance_percentage: Optional[float] = None
     effective_start_date: date
-    classes_to_recover: int = 0
+    classes_to_recover: Optional[int] = 0
     classes_can_miss: int = 0
     is_shortage: bool = False
     is_recoverable: bool = True
@@ -92,7 +92,7 @@ class StudentSubjectHistoryResponse(BaseModel):
     total_eligible_sessions: int
     attended_sessions: int
     attendance_percentage: Optional[float] = None
-    classes_to_recover: int = 0
+    classes_to_recover: Optional[int] = 0
     classes_can_miss: int = 0
     is_shortage: bool = False
     is_recoverable: bool = True

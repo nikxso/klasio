@@ -24,7 +24,7 @@ class StudentAttentionItem(BaseModel):
     attended_sessions: int
     total_eligible_sessions: int
     consecutive_absences: int
-    classes_to_recover: int = 0
+    classes_to_recover: Optional[int] = 0
     classes_can_miss: int
     is_shortage: bool
     is_recoverable: bool = True

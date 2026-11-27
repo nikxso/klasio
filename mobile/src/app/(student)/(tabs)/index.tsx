@@ -196,8 +196,15 @@ export default function StudentHomeScreen() {
     data?.total_eligible_sessions ??
     (data?.subjects?.reduce((sum, s) => sum + s.total_eligible_sessions, 0) ?? 0);
   const hasClasses = totalEligibleSessions > 0;
-  const overall = hasClasses && data ? Math.round(data.overall_attendance_percentage) : null;
-  const lowSubject = hasClasses ? data?.subjects.find((s) => s.is_shortage || s.attendance_percentage < 75) : undefined;
+  const overall =
+    hasClasses && data && data.overall_attendance_percentage !== null
+      ? Math.round(data.overall_attendance_percentage)
+      : null;
+  const lowSubject = hasClasses
+    ? data?.subjects.find(
+        (s) => s.is_shortage || (s.attendance_percentage !== null && s.attendance_percentage < 75)
+      )
+    : undefined;
 
   return (
     <Screen
@@ -258,7 +265,7 @@ export default function StudentHomeScreen() {
       )}
 
       <Card style={styles.heroCard}>
-        <Ring pct={overall ?? 0} size={110} />
+        <Ring pct={overall} size={110} />
         <View style={styles.heroTextCol}>
           <Text style={styles.overallLabel}>Overall attendance</Text>
           <Text style={styles.overallHeadline}>
@@ -286,7 +293,7 @@ export default function StudentHomeScreen() {
             <IconBubble icon={Clock} tone="apricot" size={42} />
             <View style={styles.shortageCol}>
               <Text style={styles.shortageTitle}>
-                {lowSubject.subject_name} is at {Math.round(lowSubject.attendance_percentage)}%
+                {lowSubject.subject_name} is at {lowSubject.attendance_percentage !== null ? Math.round(lowSubject.attendance_percentage) : 'N/A'}%
               </Text>
               <Text style={styles.shortageDesc}>
                 Attend the next{' '}
@@ -329,7 +336,7 @@ export default function StudentHomeScreen() {
         <AttendanceBarChart
           data={data.subjects.map((s) => ({
             label: s.subject_code,
-            value: s.attendance_percentage,
+            value: s.attendance_percentage ?? 0,
             id: s.teaching_assignment_id,
           }))}
           threshold={75}
