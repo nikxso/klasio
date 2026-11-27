@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import { BookOpen, ChevronRight, Users, Sparkles, AlertCircle, RefreshCw, BarChart3 } from 'lucide-react-native';
 
@@ -50,8 +50,8 @@ export default function FacultyAssignmentsScreen() {
             sectionCode: item.section_code,
             room: item.room || 'LH-204',
             scheduleTime: item.schedule_time || '09:00',
-            heldCount: item.held_count || 12,
-            averageAttendancePct: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : 88,
+            heldCount: item.held_count != null ? item.held_count : 0,
+            averageAttendancePct: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : 0,
             studentsBelowThresholdCount: item.students_below_threshold_count || 0,
             isDelegated: Boolean(item.is_delegated),
             regularFacultyName: item.delegation_details?.regular_faculty_name || item.regular_faculty_name,
@@ -94,13 +94,42 @@ export default function FacultyAssignmentsScreen() {
       subtitle="Only the classes assigned to you"
       onBack={() => router.back()}
       right={
-        <Pressable
-          onPress={() => router.push('/(faculty)/reports' as any)}
-          hitSlop={10}
-          accessibilityLabel="View reports"
-        >
-          <IconBubble icon={BarChart3} tone="forest" size={38} iconSize={18} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Pressable
+            onPress={loadAssignments}
+            hitSlop={10}
+            accessibilityLabel="Refresh classes"
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 19,
+              backgroundColor: '#f1f5f3',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color={Colors.forest} />
+            ) : (
+              <RefreshCw size={18} color={Colors.ink} />
+            )}
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/(faculty)/reports' as any)}
+            hitSlop={10}
+            accessibilityLabel="View reports"
+          >
+            <IconBubble icon={BarChart3} tone="forest" size={38} iconSize={18} />
+          </Pressable>
+        </View>
+      }
+      refreshControl={
+        <RefreshControl
+          refreshing={loading}
+          onRefresh={loadAssignments}
+          tintColor={Colors.forest}
+          colors={[Colors.primary, Colors.forest]}
+        />
       }
     >
       <View style={styles.listContainer}>
@@ -118,14 +147,14 @@ export default function FacultyAssignmentsScreen() {
               style={styles.cardSpacing}
             >
               <View style={styles.cardRow}>
-                <Ring pct={item.averageAttendancePct} size={60} stroke={10} />
+                <Ring pct={item.heldCount > 0 ? item.averageAttendancePct : 0} size={60} stroke={10} />
 
                 <View style={styles.cardContent}>
                   <Text style={styles.subjectTitle} numberOfLines={1}>
                     {item.subjectName}
                   </Text>
                   <Text style={styles.metaText}>
-                    {item.sectionCode} · {item.heldCount} classes held
+                    {item.sectionCode} · {item.heldCount === 0 ? 'No classes held yet' : `${item.heldCount} classes held`}
                   </Text>
 
                   <View style={styles.chipRow}>
@@ -134,8 +163,10 @@ export default function FacultyAssignmentsScreen() {
                         Substitute · {item.regularFacultyName}
                       </Chip>
                     )}
-                    <Chip tone={hasWarning ? 'rose' : 'forest'}>
-                      {hasWarning
+                    <Chip tone={item.heldCount === 0 ? 'soft' : hasWarning ? 'rose' : 'forest'}>
+                      {item.heldCount === 0
+                        ? 'Awaiting first session'
+                        : hasWarning
                         ? `${item.studentsBelowThresholdCount} below 75%`
                         : 'All students ≥ 75%'}
                     </Chip>

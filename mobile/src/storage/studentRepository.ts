@@ -17,11 +17,23 @@ export interface StudentSubjectSummary {
   threshold: number;
 }
 
+export interface StudentWeeklyTrendPoint {
+  period_label: string;
+  attendance_percentage?: number | null;
+  total_present: number;
+  total_eligible: number;
+  start_date?: string;
+  end_date?: string;
+}
+
 export interface StudentPersonalAttendanceResponse {
   student_id: string;
   academic_term_id?: string | null;
   subjects: StudentSubjectSummary[];
   overall_attendance_percentage: number;
+  total_eligible_sessions?: number;
+  total_attended_sessions?: number;
+  weekly_trend?: StudentWeeklyTrendPoint[];
 }
 
 export interface StudentSessionHistoryItem {

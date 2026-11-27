@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import uuid
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from unittest.mock import patch
 
@@ -134,7 +135,10 @@ async def test_shadow_evaluation_enabled_preserves_legacy_success_and_denial(
     monkeypatch.setattr(ShadowAuthorizationEvaluator, "shadow_evaluate", capture_shadow_eval)
 
     # 1. Admin accessing admin-only: Legacy allowed (200 OK)
-    res_admin = await async_client.get("/test-shadow-auth/admin-only", headers={"Authorization": f"Bearer {token_admin}"})
+    res_admin = await async_client.get(
+        "/test-shadow-auth/admin-only",
+        headers={"Authorization": f"Bearer {token_admin}", "X-Institution-ID": str(inst.id)},
+    )
     assert res_admin.status_code == 200
     assert res_admin.json()["message"] == "hello admin"
 
@@ -151,7 +155,10 @@ async def test_shadow_evaluation_enabled_preserves_legacy_success_and_denial(
     assert len(obs_admin.actor_pseudonym) == 32
 
     # 2. Student accessing admin-only: Legacy denied (403 Forbidden)
-    res_student = await async_client.get("/test-shadow-auth/admin-only", headers={"Authorization": f"Bearer {token_student}"})
+    res_student = await async_client.get(
+        "/test-shadow-auth/admin-only",
+        headers={"Authorization": f"Bearer {token_student}", "X-Institution-ID": str(inst.id)},
+    )
     assert res_student.status_code == 403
     assert res_student.json()["error"] == "INSUFFICIENT_ROLE"
 

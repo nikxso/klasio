@@ -24,6 +24,7 @@ from src.schemas.enrollment import (
     StudentSubjectAttendanceSummary,
     StudentSubjectHistoryResponse,
     StudentTransferRequest,
+    StudentWeeklyTrendPoint,
 )
 from src.services.analytics_service import calculate_recovery_classes, calculate_can_miss_classes
 
@@ -178,6 +179,8 @@ class EnrollmentService:
         summaries: List[StudentSubjectAttendanceSummary] = []
         total_eligible_all = 0
         total_attended_all = 0
+        all_eligible_sessions: List[AttendanceSession] = []
+        attended_session_ids = set()
 
         for enr in enrollments:
             # Query teaching assignments for this section
@@ -213,6 +216,7 @@ class EnrollmentService:
                 total_eligible = len(eligible_sessions)
 
                 if total_eligible > 0:
+                    all_eligible_sessions.extend(eligible_sessions)
                     sess_ids = [s.id for s in eligible_sessions]
                     rec_stmt = select(AttendanceRecord).where(
                         and_(
@@ -222,11 +226,14 @@ class EnrollmentService:
                         )
                     )
                     rec_res = await self.db.execute(rec_stmt)
-                    attended = len(rec_res.scalars().all())
+                    present_records = rec_res.scalars().all()
+                    attended = len(present_records)
+                    for r in present_records:
+                        attended_session_ids.add(r.attendance_session_id)
                 else:
                     attended = 0
 
-                pct = 100.0 if total_eligible == 0 else round((attended / total_eligible) * 100, 1)
+                pct = 0.0 if total_eligible == 0 else round((attended / total_eligible) * 100, 1)
                 threshold = 75.0
                 recover, is_rec = calculate_recovery_classes(attended, total_eligible, threshold=threshold)
                 miss = calculate_can_miss_classes(attended, total_eligible, threshold=threshold)
@@ -253,8 +260,34 @@ class EnrollmentService:
                 total_eligible_all += total_eligible
                 total_attended_all += attended
 
+        # Calculate weekly trend dynamically across all attended classes
+        weekly_trend: List[StudentWeeklyTrendPoint] = []
+        if all_eligible_sessions:
+            weeks_dict = {}
+            for s in all_eligible_sessions:
+                iso_year, iso_week, _ = s.session_date.isocalendar()
+                key = (iso_year, iso_week)
+                weeks_dict.setdefault(key, []).append(s)
+
+            for idx, ((yr, wk), w_sessions) in enumerate(sorted(weeks_dict.items()), 1):
+                w_monday = date.fromisocalendar(yr, wk, 1)
+                w_sunday = date.fromisocalendar(yr, wk, 7)
+                w_eligible = len(w_sessions)
+                w_present = sum(1 for s in w_sessions if s.id in attended_session_ids)
+                w_pct = round((w_present / w_eligible) * 100.0, 1) if w_eligible > 0 else 0.0
+                weekly_trend.append(
+                    StudentWeeklyTrendPoint(
+                        period_label=f"W{idx}",
+                        attendance_percentage=w_pct,
+                        total_present=w_present,
+                        total_eligible=w_eligible,
+                        start_date=w_monday,
+                        end_date=w_sunday,
+                    )
+                )
+
         overall_pct = (
-            100.0
+            0.0
             if total_eligible_all == 0
             else round((total_attended_all / total_eligible_all) * 100, 1)
         )
@@ -264,6 +297,9 @@ class EnrollmentService:
             academic_term_id=academic_term_id,
             subjects=summaries,
             overall_attendance_percentage=overall_pct,
+            total_eligible_sessions=total_eligible_all,
+            total_attended_sessions=total_attended_all,
+            weekly_trend=weekly_trend,
         )
 
     async def get_student_subject_history(
@@ -367,7 +403,7 @@ class EnrollmentService:
                 )
             )
 
-        pct = 100.0 if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
+        pct = 0.0 if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
         recover, is_rec = calculate_recovery_classes(attended, total_eligible, threshold=threshold)
         miss = calculate_can_miss_classes(attended, total_eligible, threshold=threshold)
         is_shortage = total_eligible > 0 and pct < threshold

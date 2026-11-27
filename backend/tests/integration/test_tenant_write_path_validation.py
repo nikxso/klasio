@@ -13,11 +13,13 @@ from datetime import date
 import uuid
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import create_access_token, get_password_hash
 from src.models.academic import AcademicTerm, ClassSection, Department, Subject, TermStatus
 from src.models.access_control import (
+    DEFAULT_INSTITUTION_ID,
     Campus,
     Institution,
     InstitutionMembership,
@@ -29,9 +31,14 @@ from src.models.user import AccountStatus, User, UserRole
 
 @pytest.fixture
 async def multi_inst_env(db_session: AsyncSession):
-    inst_a = Institution(code=f"IA_{uuid.uuid4().hex[:6]}", name="Inst A")
+    # Bind inst_a to the deployed singleton institution to satisfy single-institution DB foreign key constraints
+    res_inst = await db_session.execute(select(Institution).where(Institution.id == DEFAULT_INSTITUTION_ID))
+    inst_a = res_inst.scalar_one_or_none()
+    if not inst_a:
+        inst_a = Institution(id=uuid.UUID(DEFAULT_INSTITUTION_ID), code="KLASIO_MAIN", name="Inst A")
+        db_session.add(inst_a)
     inst_b = Institution(code=f"IB_{uuid.uuid4().hex[:6]}", name="Inst B")
-    db_session.add_all([inst_a, inst_b])
+    db_session.add(inst_b)
     await db_session.flush()
 
     campus_a = Campus(institution_id=inst_a.id, code="CA", name="CA")
@@ -90,14 +97,31 @@ async def multi_inst_env(db_session: AsyncSession):
     await db_session.flush()
 
     # Memberships: fac_b and stu_b ONLY in Inst B
+    # Remove trigger-created memberships in inst_a for fac_b and stu_b so they reside exclusively in inst_b
+    await db_session.execute(
+        delete(InstitutionMembership).where(
+            InstitutionMembership.institution_id == inst_a.id,
+            InstitutionMembership.user_id.in_([fac_b.id, stu_b.id]),
+        )
+    )
     m_fac_b = InstitutionMembership(institution_id=inst_b.id, user_id=fac_b.id, status=MembershipStatus.ACTIVE)
     m_stu_b = InstitutionMembership(institution_id=inst_b.id, user_id=stu_b.id, status=MembershipStatus.ACTIVE)
 
     # user_dual holds membership in both Inst A and Inst B
-    m_dual_a = InstitutionMembership(institution_id=inst_a.id, user_id=user_dual.id, status=MembershipStatus.ACTIVE)
+    res_dual_a = await db_session.execute(
+        select(InstitutionMembership).where(
+            InstitutionMembership.institution_id == inst_a.id,
+            InstitutionMembership.user_id == user_dual.id,
+        )
+    )
+    m_dual_a = res_dual_a.scalar_one_or_none()
+    if not m_dual_a:
+        m_dual_a = InstitutionMembership(institution_id=inst_a.id, user_id=user_dual.id, status=MembershipStatus.ACTIVE)
+        db_session.add(m_dual_a)
+
     m_dual_b = InstitutionMembership(institution_id=inst_b.id, user_id=user_dual.id, status=MembershipStatus.ACTIVE)
 
-    db_session.add_all([m_fac_b, m_stu_b, m_dual_a, m_dual_b])
+    db_session.add_all([m_fac_b, m_stu_b, m_dual_b])
     await db_session.commit()
 
     return {
@@ -117,7 +141,7 @@ async def multi_inst_env(db_session: AsyncSession):
 
 def _admin_header(admin: User) -> dict:
     token = create_access_token(subject=str(admin.id), role=admin.role.value, institutional_id=admin.institutional_id)
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {token}", "X-Institution-ID": DEFAULT_INSTITUTION_ID}
 
 
 @pytest.mark.asyncio

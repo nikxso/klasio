@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Pressable,
   RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import {
@@ -14,6 +15,7 @@ import {
   Sparkles,
   ChevronRight,
   GraduationCap,
+  RefreshCw,
 } from 'lucide-react-native';
 
 import {
@@ -42,7 +44,40 @@ export default function StudentHomeScreen() {
   const [user, setUser] = useState(SessionStore.getUser());
   const [data, setData] = useState<StudentPersonalAttendanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [unreadCount, setUnreadCount] = useState<number>(0);
+
+  const fetchAttendance = useCallback(async () => {
+    const token = SessionStore.getToken();
+    const stored = SessionStore.getUser();
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/student/attendance`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const liveData: StudentPersonalAttendanceResponse = await res.json();
+        setData(liveData);
+        if (stored?.id) {
+          await StudentRepository.saveCachedAttendance(stored.id, liveData);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to sync student attendance:', e);
+    }
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchAttendance();
+    const stored = SessionStore.getUser();
+    const token = SessionStore.getToken();
+    if (stored) {
+      const count = await NotificationRepository.getUnreadCount(stored.id, token);
+      setUnreadCount(count);
+    }
+    setRefreshing(false);
+  }, [fetchAttendance]);
 
   const faceStatus: 'none' | 'pending' | 'approved' = useMemo(() => {
     const state = user?.faceRegistrationState;
@@ -126,8 +161,12 @@ export default function StudentHomeScreen() {
     };
   }, []);
 
-  const overall = data ? Math.round(data.overall_attendance_percentage) : 100;
-  const lowSubject = data?.subjects.find((s) => s.is_shortage || s.attendance_percentage < 75);
+  const totalEligibleSessions =
+    data?.total_eligible_sessions ??
+    (data?.subjects?.reduce((sum, s) => sum + s.total_eligible_sessions, 0) ?? 0);
+  const hasClasses = totalEligibleSessions > 0;
+  const overall = hasClasses && data ? Math.round(data.overall_attendance_percentage) : null;
+  const lowSubject = hasClasses ? data?.subjects.find((s) => s.is_shortage || s.attendance_percentage < 75) : undefined;
 
   return (
     <Screen
@@ -135,27 +174,59 @@ export default function StudentHomeScreen() {
       subtitle="Hi there 👋"
       title={user?.fullName || 'Student'}
       right={
-        <Pressable
-          style={styles.notificationWrapper}
-          onPress={() => router.push('/notifications' as any)}
-          accessibilityLabel="Notifications"
-        >
-          <Bell size={20} color={Colors.ink} />
-          {unreadCount > 0 && <View style={styles.unreadDot} />}
-        </Pressable>
+        <View style={styles.headerRightActions}>
+          <Pressable
+            style={styles.refreshIconBtn}
+            onPress={handleRefresh}
+            accessibilityLabel="Refresh attendance"
+            hitSlop={8}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color={Colors.forest} />
+            ) : (
+              <RefreshCw size={18} color={Colors.ink} />
+            )}
+          </Pressable>
+          <Pressable
+            style={styles.notificationWrapper}
+            onPress={() => router.push('/notifications' as any)}
+            accessibilityLabel="Notifications"
+          >
+            <Bell size={20} color={Colors.ink} />
+            {unreadCount > 0 && <View style={styles.unreadDot} />}
+          </Pressable>
+        </View>
+      }
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={Colors.forest}
+          colors={[Colors.primary, Colors.forest]}
+        />
       }
       scrollable
     >
       <Card style={styles.heroCard}>
-        <Ring pct={overall} size={110} />
+        <Ring pct={overall ?? 0} size={110} />
         <View style={styles.heroTextCol}>
           <Text style={styles.overallLabel}>Overall attendance</Text>
           <Text style={styles.overallHeadline}>
-            {overall >= 75 ? "You're doing great" : 'Needs a little care'}
+            {!hasClasses
+              ? 'No classes conducted'
+              : overall !== null && overall >= 75
+              ? "You're doing great"
+              : 'Needs a little care'}
           </Text>
-          <Chip tone="forest" style={styles.sparkleChip}>
-            <Sparkles size={12} color={Colors.forest} /> Up 2% this month
-          </Chip>
+          {hasClasses ? (
+            <Chip tone={overall !== null && overall >= 75 ? 'forest' : 'amber'} style={styles.sparkleChip}>
+              {overall !== null && overall >= 75 ? 'Above 75% requirement' : 'Below 75% requirement'}
+            </Chip>
+          ) : (
+            <Text style={{ fontSize: 12, color: Colors.soft, marginTop: 4 }}>
+              Tracking activates after first class
+            </Text>
+          )}
         </View>
       </Card>
 
@@ -292,6 +363,19 @@ export default function StudentHomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  refreshIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   notificationWrapper: {
     width: 40,
     height: 40,

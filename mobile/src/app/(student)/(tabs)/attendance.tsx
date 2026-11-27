@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -211,10 +211,73 @@ export default function StudentAttendanceScreen() {
     return selectedDate;
   })();
 
+  // Dynamic Weekly Trend Calculation from backend or calendar sessions
+  const dynamicTrend = useMemo(() => {
+    if (data?.weekly_trend && data.weekly_trend.length > 0) {
+      return data.weekly_trend.map((t) => ({
+        label: t.period_label,
+        value: t.attendance_percentage != null ? Math.round(t.attendance_percentage) : 0,
+      }));
+    }
+    if (calendarSessions.length > 0) {
+      const counted = calendarSessions.filter(
+        (s) => (s as any).applicability_status !== 'CANCELLED' && (s as any).applicability_status !== 'EXEMPT'
+      );
+      if (counted.length > 0) {
+        const weeksMap: Record<string, typeof counted> = {};
+        for (const s of counted) {
+          const d = new Date(s.session_date);
+          const yr = d.getFullYear();
+          const oneJan = new Date(yr, 0, 1);
+          const numberOfDays = Math.floor((d.getTime() - oneJan.getTime()) / (24 * 60 * 60 * 1000));
+          const wk = Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
+          const key = `${yr}-W${String(wk).padStart(2, '0')}`;
+          if (!weeksMap[key]) weeksMap[key] = [];
+          weeksMap[key].push(s);
+        }
+        const sortedWeeks = Object.keys(weeksMap).sort();
+        return sortedWeeks.map((wKey, idx) => {
+          const sessList = weeksMap[wKey];
+          const pres = sessList.filter(
+            (s) => s.attendance_status === 'PRESENT' || s.attendance_status === 'EXCUSED'
+          ).length;
+          const pct = Math.round((pres / sessList.length) * 100);
+          return {
+            label: `W${idx + 1}`,
+            value: pct,
+          };
+        });
+      }
+    }
+    return [];
+  }, [data?.weekly_trend, calendarSessions]);
+
   return (
     <Screen
       title="Attendance"
       subtitle="Monthly calendar and session breakdown"
+      right={
+        <Pressable
+          onPress={() => loadAttendance(true)}
+          style={styles.headerRefreshBtn}
+          accessibilityLabel="Refresh attendance"
+          hitSlop={8}
+        >
+          {refreshing ? (
+            <ActivityIndicator size="small" color={Colors.forest} />
+          ) : (
+            <RefreshCw size={18} color={Colors.ink} />
+          )}
+        </Pressable>
+      }
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => loadAttendance(true)}
+          tintColor={Colors.forest}
+          colors={[Colors.primary, Colors.forest]}
+        />
+      }
       scrollable
     >
       {isOffline && (
@@ -457,13 +520,7 @@ export default function StudentAttendanceScreen() {
       {/* 4. OVERALL ATTENDANCE PROGRESSION TREND */}
       <View style={{ marginTop: 14 }}>
         <AttendanceTrendLineChart
-          data={[
-            { label: 'Oct W1', value: 85 },
-            { label: 'Oct W2', value: 88 },
-            { label: 'Oct W3', value: 84 },
-            { label: 'Oct W4', value: 92 },
-            { label: 'Now', value: data ? Math.round(data.overall_attendance_percentage) : 92 },
-          ]}
+          data={dynamicTrend}
           threshold={75}
           title="Attendance Progression Trend"
         />
@@ -473,6 +530,14 @@ export default function StudentAttendanceScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerRefreshBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f1f5f3',
+  },
   offlineBanner: {
     flexDirection: 'row',
     alignItems: 'center',

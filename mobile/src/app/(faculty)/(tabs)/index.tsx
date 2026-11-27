@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -20,6 +22,7 @@ import {
   Users,
   GraduationCap,
   ShieldCheck,
+  RefreshCw,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
@@ -34,59 +37,63 @@ export default function FacultyHomeScreen() {
   const [user, setUser] = useState<AuthUser | null>(SessionStore.getUser());
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [online] = useState(true);
   const [waitingRecords] = useState(0);
   const [unreadCount, setUnreadCount] = useState<number>(0);
 
-  useEffect(() => {
-    let isCancelled = false;
-    async function loadFacultyData() {
-      const stored = SessionStore.getUser() || (await SessionStore.initFromStorage())?.user;
-      if (stored && !isCancelled) setUser(stored);
+  const loadFacultyData = useCallback(async () => {
+    const stored = SessionStore.getUser() || (await SessionStore.initFromStorage())?.user;
+    if (stored) setUser(stored);
 
-      const token = SessionStore.getToken();
-      if (stored) {
-        const count = await NotificationRepository.getUnreadCount(stored.id, token);
-        if (!isCancelled) setUnreadCount(count);
-      }
+    const token = SessionStore.getToken();
+    if (stored) {
+      const count = await NotificationRepository.getUnreadCount(stored.id, token);
+      setUnreadCount(count);
+    }
 
-      if (token) {
-        try {
-          setLoading(true);
-          const res = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, {
-            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && !isCancelled) {
-              const mapped = data.map((item: any, idx: number) => ({
-                id: item.teaching_assignment_id || item.id,
-                subject: item.subject_name,
-                section: item.section_code,
-                room: 'LH-204',
-                time: idx === 0 ? '09:00' : idx === 1 ? '11:15' : '14:00',
-                slotLabel: idx === 0 ? 'Next' : idx === 1 ? 'Later' : 'Afternoon',
-                startsIn: idx === 0 ? 'In progress' : 'Upcoming',
-                held: item.held_count || 12,
-                avg: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : 88,
-                isDelegated: Boolean(item.is_delegated),
-                regularFaculty: item.delegation_details?.regular_faculty_name || '',
-              }));
-              setClasses(mapped);
-            }
+    if (token) {
+      try {
+        setLoading(true);
+        const res = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            const mapped = data.map((item: any, idx: number) => ({
+              id: item.teaching_assignment_id || item.id,
+              subject: item.subject_name,
+              section: item.section_code,
+              room: 'LH-204',
+              time: idx === 0 ? '09:00' : idx === 1 ? '11:15' : '14:00',
+              slotLabel: idx === 0 ? 'Next' : idx === 1 ? 'Later' : 'Afternoon',
+              startsIn: idx === 0 ? 'In progress' : 'Upcoming',
+              held: item.held_count != null ? item.held_count : 0,
+              avg: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : null,
+              isDelegated: Boolean(item.is_delegated),
+              regularFaculty: item.delegation_details?.regular_faculty_name || '',
+            }));
+            setClasses(mapped);
           }
-        } catch (e) {
-          console.warn('Failed to load faculty assignments:', e);
-        } finally {
-          if (!isCancelled) setLoading(false);
         }
+      } catch (e) {
+        console.warn('Failed to load faculty assignments:', e);
+      } finally {
+        setLoading(false);
       }
     }
-    loadFacultyData();
-    return () => {
-      isCancelled = true;
-    };
   }, []);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadFacultyData();
+    setRefreshing(false);
+  }, [loadFacultyData]);
+
+  useEffect(() => {
+    loadFacultyData();
+  }, [loadFacultyData]);
 
   const nextClass = classes[0];
 
@@ -124,6 +131,18 @@ export default function FacultyHomeScreen() {
       right={
         <View style={styles.headerRightActions}>
           <Pressable
+            onPress={handleRefresh}
+            style={styles.iconButton}
+            accessibilityLabel="Refresh assignments"
+            hitSlop={8}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color={Colors.forest} />
+            ) : (
+              <RefreshCw size={18} color={Colors.ink} />
+            )}
+          </Pressable>
+          <Pressable
             onPress={() => router.push('/(faculty)/reports' as any)}
             style={styles.iconButton}
             accessibilityLabel="Attendance Reports"
@@ -156,6 +175,15 @@ export default function FacultyHomeScreen() {
           </View>
         </View>
       }
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={Colors.forest}
+          colors={[Colors.primary, Colors.forest]}
+        />
+      }
+      scrollable
     >
       {/* Next Class Hero Card */}
       {nextClass ? (

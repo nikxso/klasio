@@ -68,6 +68,12 @@ EXCLUDED_RUNTIME_PATHS = {
     "/api/v1/admin/campuses/{campus_id}",
     "/api/v1/admin/users/{user_id}/roles",
     "/api/v1/admin/users/{user_id}/roles/{role_code}",
+    "/api/v1/admin/assignments/{assignment_id}",
+    "/api/v1/admin/departments/{department_id}",
+    "/api/v1/admin/sections/{section_id}",
+    "/api/v1/admin/subjects/{subject_id}",
+    "/api/v1/admin/users/{user_id}",
+    "/api/v1/faculty/assignments/{teaching_assignment_id}/sessions",
 }
 
 EXCLUDED_RUNTIME_OPERATIONS = {
@@ -117,6 +123,14 @@ EXCLUDED_RUNTIME_SCHEMAS = {
     "RoleTemplateResponse",
     "UnmappedAccountItem",
     "UserAddRoleRequest",
+    "AccountStatus",
+    "AdminUserUpdate",
+    "ClassSectionUpdate",
+    "DepartmentUpdate",
+    "FacultyHeldSessionItem",
+    "StudentWeeklyTrendPoint",
+    "SubjectUpdate",
+    "TeachingAssignmentUpdate",
 }
 
 DOMAIN_ENUMS = [
@@ -510,6 +524,16 @@ RUNTIME_EXTENDED_SCHEMA_PROPERTIES = {
         "authorization_version",
         "delegation_id",
         "authorizing_role_assignment_id",
+    },
+    "FacultyTeachingAssignment": {
+        "held_count",
+        "average_attendance_pct",
+        "students_below_threshold_count",
+    },
+    "StudentPersonalAttendanceResponse": {
+        "total_eligible_sessions",
+        "total_attended_sessions",
+        "weekly_trend",
     },
 }
 

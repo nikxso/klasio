@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.security import create_access_token, get_password_hash
 from src.models.user import User, UserRole, AccountStatus
 from src.models.access_control import (
+    DEFAULT_INSTITUTION_ID,
     Institution,
     InstitutionMembership,
     MembershipStatus,
@@ -78,7 +79,13 @@ async def test_admin_access_control_role_templates_and_assignments(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ):
-    inst = Institution(code=f"INST_RBAC_{uuid.uuid4().hex[:6]}", name="RBAC Test Inst")
+    res_inst = await db_session.execute(select(Institution).where(Institution.id == DEFAULT_INSTITUTION_ID))
+    inst = res_inst.scalar_one_or_none()
+    if not inst:
+        inst = Institution(id=uuid.UUID(DEFAULT_INSTITUTION_ID), code="KLASIO_MAIN", name="RBAC Test Inst")
+        db_session.add(inst)
+        await db_session.flush()
+
     admin = User(
         institutional_id=f"ADM_RB_{uuid.uuid4().hex[:6]}",
         email=f"adm_rb_{uuid.uuid4().hex[:6]}@inst.edu",
@@ -95,12 +102,41 @@ async def test_admin_access_control_role_templates_and_assignments(
         role=UserRole.FACULTY,
         account_status=AccountStatus.ACTIVE,
     )
-    db_session.add_all([inst, admin, faculty_user])
+    db_session.add_all([admin, faculty_user])
     await db_session.flush()
 
-    admin_mem = InstitutionMembership(institution_id=inst.id, user_id=admin.id, status=MembershipStatus.ACTIVE)
-    fac_mem = InstitutionMembership(institution_id=inst.id, user_id=faculty_user.id, status=MembershipStatus.ACTIVE)
-    db_session.add_all([admin_mem, fac_mem])
+    # Ensure memberships in inst.id (trg_user_auto_membership creates active memberships in DEFAULT_INSTITUTION_ID)
+    for u in [admin, faculty_user]:
+        m_exists = (
+            await db_session.execute(
+                select(InstitutionMembership).where(
+                    InstitutionMembership.institution_id == inst.id,
+                    InstitutionMembership.user_id == u.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not m_exists:
+            db_session.add(InstitutionMembership(institution_id=inst.id, user_id=u.id, status=MembershipStatus.ACTIVE))
+    await db_session.flush()
+
+    admin_mem = (
+        await db_session.execute(
+            select(InstitutionMembership).where(
+                InstitutionMembership.institution_id == inst.id,
+                InstitutionMembership.user_id == admin.id,
+            )
+        )
+    ).scalar_one()
+
+    fac_mem = (
+        await db_session.execute(
+            select(InstitutionMembership).where(
+                InstitutionMembership.institution_id == inst.id,
+                InstitutionMembership.user_id == faculty_user.id,
+            )
+        )
+    ).scalar_one()
+
     await db_session.commit()
 
     token = create_access_token(subject=str(admin.id), role=admin.role.value, institutional_id=admin.institutional_id)

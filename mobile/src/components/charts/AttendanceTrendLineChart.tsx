@@ -43,6 +43,17 @@ export function AttendanceTrendLineChart({
     }
   };
 
+  if (!data || data.length === 0) {
+    return (
+      <View style={styles.container}>
+        {title && <Text style={styles.title}>{title}</Text>}
+        <View style={{ paddingVertical: 28, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 13, color: Colors.inkTertiary }}>No attendance trend recorded yet</Text>
+        </View>
+      </View>
+    );
+  }
+
   const paddingLeft = 32;
   const paddingRight = 20;
   const paddingTop = 24;

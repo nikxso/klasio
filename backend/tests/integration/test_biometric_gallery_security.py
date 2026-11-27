@@ -131,14 +131,18 @@ async def gallery_sec_env(db_session: AsyncSession):
     db_session.add_all([admin_a, fac_assigned, fac_sub, fac_other, stu_active, stu_suspended])
     await db_session.flush()
 
-    # Memberships in Inst A
-    m_admin = InstitutionMembership(institution_id=inst_a.id, user_id=admin_a.id, status=MembershipStatus.ACTIVE)
-    m_fac_dir = InstitutionMembership(institution_id=inst_a.id, user_id=fac_assigned.id, status=MembershipStatus.ACTIVE)
-    m_fac_sub = InstitutionMembership(institution_id=inst_a.id, user_id=fac_sub.id, status=MembershipStatus.ACTIVE)
-    m_fac_oth = InstitutionMembership(institution_id=inst_a.id, user_id=fac_other.id, status=MembershipStatus.ACTIVE)
-    m_stu_act = InstitutionMembership(institution_id=inst_a.id, user_id=stu_active.id, status=MembershipStatus.ACTIVE)
-    m_stu_sus = InstitutionMembership(institution_id=inst_a.id, user_id=stu_suspended.id, status=MembershipStatus.ACTIVE)
-    db_session.add_all([m_admin, m_fac_dir, m_fac_sub, m_fac_oth, m_stu_act, m_stu_sus])
+    # Ensure active memberships in Inst A (created automatically by trg_user_auto_membership trigger for DEFAULT_INSTITUTION_ID)
+    for u in [admin_a, fac_assigned, fac_sub, fac_other, stu_active, stu_suspended]:
+        m_exists = (
+            await db_session.execute(
+                select(InstitutionMembership).where(
+                    InstitutionMembership.institution_id == inst_a.id,
+                    InstitutionMembership.user_id == u.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not m_exists:
+            db_session.add(InstitutionMembership(institution_id=inst_a.id, user_id=u.id, status=MembershipStatus.ACTIVE))
     await db_session.flush()
 
     # Teaching Assignment in Section A

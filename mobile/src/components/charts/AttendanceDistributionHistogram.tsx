@@ -24,11 +24,11 @@ interface AttendanceDistributionHistogramProps {
 }
 
 const DEFAULT_BINS: HistogramBin[] = [
-  { range: '<50%', count: 2, label: 'Critical', tone: 'rose' },
-  { range: '50-64%', count: 4, label: 'Severe', tone: 'amber' },
-  { range: '65-74%', count: 6, label: 'At-Risk', tone: 'neutral' },
-  { range: '75-89%', count: 28, label: 'Good', tone: 'sage' },
-  { range: '90-100%', count: 18, label: 'Top', tone: 'forest' },
+  { range: '<50%', count: 0, label: 'Critical', tone: 'rose' },
+  { range: '50-64%', count: 0, label: 'Severe', tone: 'amber' },
+  { range: '65-74%', count: 0, label: 'At-Risk', tone: 'neutral' },
+  { range: '75-89%', count: 0, label: 'Good', tone: 'sage' },
+  { range: '90-100%', count: 0, label: 'Top', tone: 'forest' },
 ];
 
 const TONE_COLORS: Record<string, { fill: string; stroke: string }> = {

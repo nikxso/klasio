@@ -29,6 +29,9 @@ class FacultyTeachingAssignment(BaseModel):
     term_name: str
     is_delegated: bool = False
     delegation_details: Optional[DelegationDetails] = None
+    held_count: int = 0
+    average_attendance_pct: Optional[float] = None
+    students_below_threshold_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 

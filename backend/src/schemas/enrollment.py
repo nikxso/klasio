@@ -49,11 +49,23 @@ class StudentSubjectAttendanceSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StudentWeeklyTrendPoint(BaseModel):
+    period_label: str
+    attendance_percentage: Optional[float] = None
+    total_present: int = 0
+    total_eligible: int = 0
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+
+
 class StudentPersonalAttendanceResponse(BaseModel):
     student_id: uuid.UUID
     academic_term_id: Optional[uuid.UUID] = None
     subjects: List[StudentSubjectAttendanceSummary]
     overall_attendance_percentage: float
+    total_eligible_sessions: int = 0
+    total_attended_sessions: int = 0
+    weekly_trend: List[StudentWeeklyTrendPoint] = []
 
     model_config = ConfigDict(from_attributes=True)
 

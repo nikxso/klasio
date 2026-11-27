@@ -8,6 +8,13 @@ from sqlalchemy.orm import selectinload
 from src.core.exceptions import OutOfScopeError, EntityNotFoundError, ConflictError
 from src.models.academic import AcademicTerm, ClassSection, Subject
 from src.models.assignment import TeachingAssignment, SubstituteDelegation, DelegationStatus
+from src.models.attendance import (
+    AttendanceSession,
+    AttendanceRecord,
+    SessionApplicability,
+    AttendanceSessionStatus,
+    AttendanceStatus,
+)
 from src.models.user import User, UserRole
 from src.schemas.assignment import (
     CreateDelegationRequest,
@@ -51,23 +58,6 @@ class ScopingService:
         direct_res = await self.db.execute(direct_stmt)
         direct_assignments = direct_res.scalars().all()
 
-        results: List[FacultyTeachingAssignment] = []
-        for ta in direct_assignments:
-            results.append(
-                FacultyTeachingAssignment(
-                    teaching_assignment_id=ta.id,
-                    class_section_id=ta.class_section_id,
-                    section_code=ta.class_section.section_code,
-                    subject_id=ta.subject_id,
-                    subject_code=ta.subject.code,
-                    subject_name=ta.subject.name,
-                    academic_term_id=ta.academic_term_id,
-                    term_name=ta.academic_term.name,
-                    is_delegated=False,
-                    delegation_details=None,
-                )
-            )
-
         # 2. Fetch active substitute delegations
         deleg_stmt = (
             select(SubstituteDelegation)
@@ -89,11 +79,77 @@ class ScopingService:
         deleg_res = await self.db.execute(deleg_stmt)
         delegations = deleg_res.scalars().all()
 
+        # Filter applicable delegations by term
+        valid_delegations = []
         for delg in delegations:
-            ta = delg.teaching_assignment
-            if academic_term_id and ta.academic_term_id != academic_term_id:
+            if academic_term_id and delg.teaching_assignment.academic_term_id != academic_term_id:
                 continue
+            valid_delegations.append(delg)
 
+        # 3. Compute real dynamic attendance stats per teaching assignment
+        all_ta_ids = [ta.id for ta in direct_assignments] + [d.teaching_assignment.id for d in valid_delegations]
+        ta_stats = {}
+        if all_ta_ids:
+            sess_stmt = (
+                select(AttendanceSession)
+                .where(
+                    and_(
+                        AttendanceSession.teaching_assignment_id.in_(all_ta_ids),
+                        AttendanceSession.applicability_status == SessionApplicability.COUNTED,
+                        AttendanceSession.session_status == AttendanceSessionStatus.FINALIZED,
+                    )
+                )
+            )
+            sess_res = await self.db.execute(sess_stmt)
+            sessions = sess_res.scalars().all()
+
+            ta_session_map = {}
+            for s in sessions:
+                ta_session_map.setdefault(s.teaching_assignment_id, []).append(s)
+
+            for ta_id in all_ta_ids:
+                s_list = ta_session_map.get(ta_id, [])
+                held = len(s_list)
+                if held > 0:
+                    s_ids = [s.id for s in s_list]
+                    rec_stmt = select(AttendanceRecord).where(
+                        AttendanceRecord.attendance_session_id.in_(s_ids)
+                    )
+                    rec_res = await self.db.execute(rec_stmt)
+                    records = rec_res.scalars().all()
+                    tot_rec = len(records)
+                    att_rec = sum(
+                        1 for r in records
+                        if r.attendance_status in (AttendanceStatus.PRESENT, AttendanceStatus.EXCUSED)
+                    )
+                    avg = round((att_rec / tot_rec) * 100.0, 1) if tot_rec > 0 else None
+                    ta_stats[ta_id] = (held, avg)
+                else:
+                    ta_stats[ta_id] = (0, None)
+
+        results: List[FacultyTeachingAssignment] = []
+        for ta in direct_assignments:
+            held, avg = ta_stats.get(ta.id, (0, None))
+            results.append(
+                FacultyTeachingAssignment(
+                    teaching_assignment_id=ta.id,
+                    class_section_id=ta.class_section_id,
+                    section_code=ta.class_section.section_code,
+                    subject_id=ta.subject_id,
+                    subject_code=ta.subject.code,
+                    subject_name=ta.subject.name,
+                    academic_term_id=ta.academic_term_id,
+                    term_name=ta.academic_term.name,
+                    is_delegated=False,
+                    delegation_details=None,
+                    held_count=held,
+                    average_attendance_pct=avg,
+                )
+            )
+
+        for delg in valid_delegations:
+            ta = delg.teaching_assignment
+            held, avg = ta_stats.get(ta.id, (0, None))
             results.append(
                 FacultyTeachingAssignment(
                     teaching_assignment_id=ta.id,
@@ -111,6 +167,8 @@ class ScopingService:
                         valid_from=delg.start_date,
                         valid_to=delg.end_date,
                     ),
+                    held_count=held,
+                    average_attendance_pct=avg,
                 )
             )
 

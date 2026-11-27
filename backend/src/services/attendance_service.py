@@ -212,7 +212,7 @@ class AttendanceService:
                 )
                 cond_mem_id = m_res.scalar_one_or_none()
 
-            effective_delegation_id = getattr(session_req, "delegation_id", None) or delegation_id
+            effective_delegation_id = getattr(session_req, "delegation_id", None)
 
             new_session = AttendanceSession(
                 id=uuid.uuid4(),

@@ -167,6 +167,7 @@ docs/
 **/docs/
 specs/
 **/specs/
+!specs/001-academic-roles-enrollment/contracts/attendance-session-api.yaml
 research/
 **/research/
 desings

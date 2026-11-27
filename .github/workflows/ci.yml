@@ -74,16 +74,16 @@ jobs:
   # 2. Mobile TypeScript Compilation & Edge Suite Gate
   # ============================================================================
   mobile-gate:
-    name: Mobile Typecheck & Invariant Suites (Node 20)
+    name: Mobile Typecheck & Invariant Suites (Node 22)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: mobile/package-lock.json
 

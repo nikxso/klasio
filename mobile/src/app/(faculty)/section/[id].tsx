@@ -87,17 +87,53 @@ export default function ClassDetailScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [rosterVersion, setRosterVersion] = useState<number>(Date.now());
 
+  const [avgPct, setAvgPct] = useState<number>(() => {
+    const v = Number(params.avg);
+    return !isNaN(v) ? v : 0;
+  });
+  const [heldCount, setHeldCount] = useState<number>(() => {
+    const v = Number(params.held);
+    return !isNaN(v) ? v : 0;
+  });
+
   const syncRosterData = useCallback(async () => {
     if (!params.id) return;
     const token = SessionStore.getToken();
+    const analyticsMap: Record<string, number | null> = {};
+
     if (token) {
+      try {
+        const analyticsRes = await fetch(`${API_BASE_URL}/api/v1/analytics/assignments/${params.id}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        });
+        if (analyticsRes.ok) {
+          const analyticsData = await analyticsRes.json();
+          if (analyticsData.average_attendance_percentage != null) {
+            setAvgPct(Math.round(analyticsData.average_attendance_percentage));
+          } else {
+            setAvgPct(0);
+          }
+          if (analyticsData.total_held_sessions != null) {
+            setHeldCount(analyticsData.total_held_sessions);
+          }
+          if (Array.isArray(analyticsData.roster_summaries)) {
+            for (const item of analyticsData.roster_summaries) {
+              analyticsMap[item.student_user_id] =
+                item.attendance_percentage != null ? Math.round(item.attendance_percentage) : null;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch assignment analytics in section screen:', err);
+      }
+
       try {
         const fresh = await RosterRepository.syncAssignmentRoster(params.id, token);
         if (fresh && fresh.length > 0) {
           setStudents(
             fresh.map((c) => ({
               ...c,
-              pct: 88,
+              pct: analyticsMap[c.studentUserId] != null ? analyticsMap[c.studentUserId]! : 0,
             }))
           );
           setRosterVersion(Date.now());
@@ -114,7 +150,7 @@ export default function ClassDetailScreen() {
       setStudents(
         cached.map((c) => ({
           ...c,
-          pct: 88,
+          pct: analyticsMap[c.studentUserId] != null ? analyticsMap[c.studentUserId]! : 0,
         }))
       );
       setRosterVersion(Date.now());
@@ -282,8 +318,6 @@ export default function ClassDetailScreen() {
     setSelectedSlot(nextSlot);
   };
 
-  const avgPct = Number(params.avg || '88');
-  const heldCount = Number(params.held || '38');
   const isDelegated = params.isDelegated === 'true';
 
   const handleDirectCancelClass = async () => {
@@ -677,6 +711,31 @@ export default function ClassDetailScreen() {
       onBack={() => router.back()}
       subtitle={`${params.section || 'CSE 3A'} · ${params.room || 'LH-204'}`}
       title={params.subject || 'Data Structures'}
+      right={
+        <Pressable
+          onPress={async () => {
+            setIsRefreshing(true);
+            await syncRosterData();
+            setIsRefreshing(false);
+          }}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: '#f1f5f3',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          accessibilityLabel="Refresh section roster and attendance"
+          hitSlop={8}
+        >
+          {isRefreshing ? (
+            <ActivityIndicator size="small" color={Colors.forest} />
+          ) : (
+            <RefreshCw size={18} color={Colors.ink} />
+          )}
+        </Pressable>
+      }
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}

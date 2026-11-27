@@ -118,7 +118,7 @@ export default function SubjectAttendanceHistoryScreen() {
             faculty_name: params.facultyName || 'Faculty',
             total_eligible_sessions: 0,
             attended_sessions: 0,
-            attendance_percentage: 100,
+            attendance_percentage: 0,
             classes_to_recover: 0,
             classes_can_miss: 0,
             is_shortage: false,
@@ -190,9 +190,22 @@ export default function SubjectAttendanceHistoryScreen() {
           onPress={() => fetchHistory(true)}
           style={styles.headerRefreshBtn}
           accessibilityLabel="Refresh session history"
+          hitSlop={8}
         >
-          <RefreshCw size={18} color={Colors.soft} />
+          {refreshing ? (
+            <ActivityIndicator size="small" color={Colors.forest} />
+          ) : (
+            <RefreshCw size={18} color={Colors.soft} />
+          )}
         </Pressable>
+      }
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => fetchHistory(true)}
+          tintColor={Colors.forest}
+          colors={[Colors.primary, Colors.forest]}
+        />
       }
     >
       {/* Offline Cached Indicator */}
@@ -230,7 +243,7 @@ export default function SubjectAttendanceHistoryScreen() {
                     ? `Attend ${history.classes_to_recover} consecutive classes to reach ${history.threshold}%.`
                     : 'Target unreachable this term. Speak with faculty advisor.'
                   : (history?.classes_can_miss || 0) > 0
-                  ? `You can safely miss ${history?.classes_can_miss} classes while staying $\\ge$ ${history?.threshold}%.`
+                  ? `You can safely miss ${history?.classes_can_miss} classes while staying ≥ ${history?.threshold}%.`
                   : `Currently right at the ${history?.threshold}% threshold.`}
               </Text>
             </View>
