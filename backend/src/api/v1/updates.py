@@ -23,7 +23,11 @@ from fastapi.responses import JSONResponse, FileResponse
 from src.core.permissions import get_current_user
 from src.models.user import User, UserRole
 
-router = APIRouter(prefix="/api/v1/updates", tags=["Over-The-Air (OTA) Updates"])
+router = APIRouter(
+    prefix="/api/v1/updates",
+    tags=["Over-The-Air (OTA) Updates"],
+    include_in_schema=False,
+)
 
 # Determine updates root directory
 UPDATES_DIR = Path(

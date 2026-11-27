@@ -91,6 +91,7 @@ android/
 !mobile/native/android/**
 ios/
 **/ios/
+!backend/src/static/updates/**
 
 # Generated Gradle & C++ build caches
 .gradle/

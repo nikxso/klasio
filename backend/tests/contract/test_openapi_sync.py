@@ -74,6 +74,10 @@ EXCLUDED_RUNTIME_PATHS = {
     "/api/v1/admin/subjects/{subject_id}",
     "/api/v1/admin/users/{user_id}",
     "/api/v1/faculty/assignments/{teaching_assignment_id}/sessions",
+    "/api/v1/updates/manifest",
+    "/api/v1/updates/assets/{asset_path}",
+    "/api/v1/updates/status",
+    "/api/v1/updates/publish",
 }
 
 EXCLUDED_RUNTIME_OPERATIONS = {
@@ -84,6 +88,7 @@ EXCLUDED_RUNTIME_OPERATIONS = {
 }
 
 EXCLUDED_RUNTIME_SCHEMAS = {
+    "Body_publish_ota_update_api_v1_updates_publish_post",
     "AdminUserListItem",
     "AdminUserCreate",
     "AttendanceRequestStatus",
