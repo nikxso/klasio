@@ -22,6 +22,7 @@ import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore, AuthUser } from '@/storage/sessionStore';
+import { AppUpdateCard } from '@/components/ui/AppUpdateCard';
 
 export default function StudentProfileScreen() {
   const router = useRouter();
@@ -166,6 +167,9 @@ export default function StudentProfileScreen() {
           <ChevronRight size={18} color={Colors.soft} />
         </View>
       </Card>
+
+      <Text style={styles.sectionHeader}>Software & System Updates</Text>
+      <AppUpdateCard />
 
       <Text style={styles.sectionHeader}>About {Brand.name}</Text>
       <Card style={styles.cardGroup}>

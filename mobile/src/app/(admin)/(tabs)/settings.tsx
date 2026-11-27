@@ -27,6 +27,7 @@ import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { Brand } from '@/constants/brand';
 import { SessionStore, AuthUser } from '@/storage/sessionStore';
 import { API_BASE_URL } from '@/config/api';
+import { AppUpdateCard } from '@/components/ui/AppUpdateCard';
 
 export default function AdminSettingsScreen() {
   const router = useRouter();
@@ -267,6 +268,9 @@ export default function AdminSettingsScreen() {
           <Chip tone="forest">Active</Chip>
         </View>
       </Card>
+
+      <Text style={styles.sectionHeader}>Software & System Updates</Text>
+      <AppUpdateCard />
 
       <Text style={styles.sectionHeader}>About {Brand.name}</Text>
       <Card style={styles.cardGroup}>
