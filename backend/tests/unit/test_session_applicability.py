@@ -127,7 +127,7 @@ def make_records(students, statuses):
     ]
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_multi_session_same_day_different_slots(multi_session_fixture, db_session: AsyncSession):
     """
     Verifies that multiple attendance sessions for the same teaching assignment on the same date
@@ -201,7 +201,7 @@ async def test_multi_session_same_day_different_slots(multi_session_fixture, db_
     assert sessions[1].client_session_uuid == uuid_slot_3
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_same_slot_duplicate_rejected(multi_session_fixture, db_session: AsyncSession):
     """
     Verifies that attempting to create a second session with the same
@@ -245,7 +245,7 @@ async def test_same_slot_duplicate_rejected(multi_session_fixture, db_session: A
     assert "already finalized" in res_conflict.error_message
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_session_applicability_counted_increments_denominator(multi_session_fixture, db_session: AsyncSession):
     """
     Verifies that COUNTED sessions correctly increment the attendance calculation denominator.
@@ -310,7 +310,7 @@ async def test_session_applicability_counted_increments_denominator(multi_sessio
     assert summary.attendance_percentage == 50.0
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_session_applicability_cancelled_excludes_from_denominator(multi_session_fixture, db_session: AsyncSession):
     """
     Verifies that CANCELLED sessions do NOT increment the attendance denominator.
@@ -367,7 +367,7 @@ async def test_session_applicability_cancelled_excludes_from_denominator(multi_s
     assert summary.attendance_percentage == 100.0
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_session_applicability_exempt_excludes_from_denominator(multi_session_fixture, db_session: AsyncSession):
     """
     Verifies that EXEMPT sessions do NOT increment the attendance denominator.

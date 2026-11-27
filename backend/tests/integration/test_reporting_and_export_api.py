@@ -278,7 +278,7 @@ async def export_api_env(db_session: AsyncSession) -> dict:
     }
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_admin_export_assignment_roster_csv(async_client: AsyncClient, export_api_env: dict, db_session: AsyncSession):
     """
     Test Admin exporting section attendance roster to CSV:
@@ -339,7 +339,7 @@ async def test_admin_export_assignment_roster_csv(async_client: AsyncClient, exp
     assert audits[0].row_count == 2
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_faculty_export_scoping_and_unauthorized_rejection(async_client: AsyncClient, export_api_env: dict):
     """
     Test Faculty authorization scoping:
@@ -365,7 +365,7 @@ async def test_faculty_export_scoping_and_unauthorized_rejection(async_client: A
     assert res_unauth.status_code == 403
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_student_forbidden_from_reports_and_export(async_client: AsyncClient, export_api_env: dict):
     """
     Verify student role enforcement: Students must be rejected with HTTP 403 from all export endpoints.
@@ -382,7 +382,7 @@ async def test_student_forbidden_from_reports_and_export(async_client: AsyncClie
     assert res_over.status_code == 403
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_export_sessions_log_csv(async_client: AsyncClient, export_api_env: dict):
     """
     Test report_type=sessions:
@@ -416,7 +416,7 @@ async def test_export_sessions_log_csv(async_client: AsyncClient, export_api_env
     assert sept_15_rows[0][4] == "University convocation ceremony"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_export_shortage_only_filter(async_client: AsyncClient, export_api_env: dict):
     """
     Test shortage_only=true:
@@ -438,7 +438,7 @@ async def test_export_shortage_only_filter(async_client: AsyncClient, export_api
     assert rows[1][9] == "YES"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_export_overview_csv(async_client: AsyncClient, export_api_env: dict):
     """
     Test institutional overview export:

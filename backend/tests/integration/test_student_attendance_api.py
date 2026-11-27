@@ -313,7 +313,7 @@ async def student_api_env(db_session: AsyncSession) -> dict:
     }
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_student_personal_attendance_overview(async_client: AsyncClient, student_api_env: dict):
     """
     Test GET /api/v1/student/attendance:
@@ -348,7 +348,7 @@ async def test_student_personal_attendance_overview(async_client: AsyncClient, s
     assert subj["threshold"] == 75.0
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_student_subject_history_chronological_records(async_client: AsyncClient, student_api_env: dict):
     """
     Test GET /api/v1/student/subjects/{teaching_assignment_id}/history:
@@ -391,7 +391,7 @@ async def test_student_subject_history_chronological_records(async_client: Async
     assert present_sess["mark_source"] == "AI_VERIFIED"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cross_student_isolation(async_client: AsyncClient, student_api_env: dict):
     """
     Verify security and privacy invariant SC-008:
@@ -411,7 +411,7 @@ async def test_cross_student_isolation(async_client: AsyncClient, student_api_en
     assert res_b.status_code == 404
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_student_endpoints_role_boundary(async_client: AsyncClient, student_api_env: dict):
     """
     Verify role enforcement:
@@ -434,7 +434,7 @@ async def test_student_endpoints_role_boundary(async_client: AsyncClient, studen
     assert res_unauth.status_code == 401
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_student_history_unreachable_threshold(student_api_env: dict, db_session: AsyncSession):
     """
     Verify shortage edge case: When threshold is 100.0% and student was absent in at least one held session,
@@ -459,7 +459,7 @@ async def test_student_history_unreachable_threshold(student_api_env: dict, db_s
     assert history.is_shortage is True
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_student_zero_eligible_sessions(async_client: AsyncClient, student_api_env: dict):
     """
     Verify edge case: Student B enrolled in Section B with zero attendance sessions held.

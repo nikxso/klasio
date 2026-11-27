@@ -226,12 +226,17 @@ export default function StudentAttendanceScreen() {
       if (counted.length > 0) {
         const weeksMap: Record<string, typeof counted> = {};
         for (const s of counted) {
-          const d = new Date(s.session_date);
-          const yr = d.getFullYear();
-          const oneJan = new Date(yr, 0, 1);
-          const numberOfDays = Math.floor((d.getTime() - oneJan.getTime()) / (24 * 60 * 60 * 1000));
-          const wk = Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
-          const key = `${yr}-W${String(wk).padStart(2, '0')}`;
+          const parts = s.session_date.split('-').map(Number);
+          const target = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+          const dayNr = (target.getUTCDay() + 6) % 7;
+          target.setUTCDate(target.getUTCDate() - dayNr + 3);
+          const firstThursday = target.getTime();
+          target.setUTCMonth(0, 1);
+          if (target.getUTCDay() !== 4) {
+            target.setUTCMonth(0, 1 + ((4 - target.getUTCDay() + 7) % 7));
+          }
+          const weekNum = 1 + Math.ceil((firstThursday - target.getTime()) / 604800000);
+          const key = `${parts[0]}-W${String(weekNum).padStart(2, '0')}`;
           if (!weeksMap[key]) weeksMap[key] = [];
           weeksMap[key].push(s);
         }
