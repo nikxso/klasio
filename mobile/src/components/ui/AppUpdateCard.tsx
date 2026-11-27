@@ -15,11 +15,13 @@ export function AppUpdateCard() {
   const [diagnostics, setDiagnostics] = useState<AppUpdateDiagnostics>(getAppUpdateState());
   const [checking, setChecking] = useState(false);
   const [updatePending, setUpdatePending] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     setDiagnostics(getAppUpdateState());
     const unsub = subscribeUpdateEvents((state) => {
       setUpdatePending(state.isPending);
+      setDownloading(state.status === 'DOWNLOADING');
       setDiagnostics(getAppUpdateState());
     });
     return unsub;
@@ -72,6 +74,8 @@ export function AppUpdateCard() {
           <Text style={styles.statusValue}>
             {updatePending
               ? 'New update ready! Tap below to restart.'
+              : downloading
+              ? 'Downloading latest update in background...'
               : diagnostics.isEnabled
               ? 'Connected to Klasio Azure Cloud OTA'
               : 'Standalone base binary (OTA inactive)'}

@@ -1,13 +1,30 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Stack, useRouter, useNavigationContainerRef } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { LogBox, NativeModules, Platform, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ActivityIndicator,
+  LogBox,
+  NativeModules,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useFonts } from 'expo-font';
+import { Sparkles, X } from 'lucide-react-native';
 import { Colors } from '@/theme/tokens';
 import { SessionStore } from '@/storage/sessionStore';
 import { useAutoSync } from '@/services/autoSyncService';
-import { checkForAppUpdates } from '@/services/updateService';
+import {
+  checkForAppUpdates,
+  verifyAndRecordUpdateLifecycle,
+  subscribeUpdateEvents,
+  applyUpdateAndReload,
+  isPendingUpdateAvailable,
+  UpdateEventState,
+} from '@/services/updateService';
 
 LogBox.ignoreAllLogs(true);
 
@@ -36,6 +53,110 @@ function UnsupportedDeviceScreen() {
   );
 }
 
+function GlobalUpdateBanner() {
+  const insets = useSafeAreaInsets();
+  const [updateState, setUpdateState] = useState<UpdateEventState>({
+    status: isPendingUpdateAvailable() ? 'READY' : 'IDLE',
+    isPending: isPendingUpdateAvailable(),
+  });
+  const [dismissed, setDismissed] = useState(false);
+  const [reloading, setReloading] = useState(false);
+
+  useEffect(() => {
+    const unsub = subscribeUpdateEvents((state) => {
+      setUpdateState(state);
+      if (state.status === 'READY' || state.status === 'DOWNLOADING') {
+        setDismissed(false);
+      }
+    });
+    return unsub;
+  }, []);
+
+  if (dismissed) return null;
+  if (updateState.status !== 'DOWNLOADING' && updateState.status !== 'READY') return null;
+
+  const handleRestart = async () => {
+    if (reloading) return;
+    setReloading(true);
+    try {
+      await applyUpdateAndReload();
+    } catch (_) {
+      setReloading(false);
+    }
+  };
+
+  const isDownloading = updateState.status === 'DOWNLOADING';
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={[
+        styles.globalBannerWrapper,
+        { top: Math.max(insets.top + 8, 16) },
+      ]}
+    >
+      <View
+        style={[
+          styles.globalBannerCard,
+          isDownloading ? styles.bannerDownloading : styles.bannerReady,
+        ]}
+      >
+        <View style={styles.bannerIconCol}>
+          {isDownloading ? (
+            <ActivityIndicator size="small" color="#1B4D3E" />
+          ) : (
+            <View style={styles.sparkleCircle}>
+              <Sparkles size={16} color="#FFFFFF" />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.bannerTextCol}>
+          <Text style={[styles.bannerTitle, !isDownloading && styles.bannerTitleLight]}>
+            {isDownloading ? 'Downloading Klasio Update...' : 'Klasio Update Ready!'}
+          </Text>
+          <Text
+            style={[styles.bannerSubtitle, !isDownloading && styles.bannerSubtitleLight]}
+            numberOfLines={1}
+          >
+            {isDownloading
+              ? 'New version downloading in background'
+              : 'Restart app now to apply new features'}
+          </Text>
+        </View>
+
+        {!isDownloading && (
+          <Pressable
+            onPress={handleRestart}
+            disabled={reloading}
+            style={({ pressed }) => [
+              styles.bannerRestartBtn,
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            {reloading ? (
+              <ActivityIndicator size="small" color="#1B4D3E" />
+            ) : (
+              <Text style={styles.bannerRestartText}>Restart</Text>
+            )}
+          </Pressable>
+        )}
+
+        <Pressable
+          onPress={() => setDismissed(true)}
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.bannerCloseBtn,
+            pressed && { opacity: 0.6 },
+          ]}
+        >
+          <X size={15} color={isDownloading ? '#4A6559' : '#FFFFFF'} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   const router = useRouter();
   const rootNavRef = useNavigationContainerRef();
@@ -51,6 +172,7 @@ export default function RootLayout() {
       hasLoadedInitial = true;
     });
     checkForAppUpdates(true).catch(() => {});
+    verifyAndRecordUpdateLifecycle().catch(() => {});
 
     // Top-level navigation guarantee: when session clears, reliably reset root stack to login
     const unsub = SessionStore.subscribe((session) => {
@@ -98,6 +220,7 @@ export default function RootLayout() {
         <Stack.Screen name="(admin)" options={{ headerShown: false }} />
         <Stack.Screen name="notifications/index" options={{ headerShown: false }} />
       </Stack>
+      <GlobalUpdateBanner />
     </SafeAreaProvider>
   );
 }
@@ -169,5 +292,86 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#78716C',
     lineHeight: 18,
+  },
+  globalBannerWrapper: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 99999,
+    alignItems: 'center',
+  },
+  globalBannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    width: '100%',
+    maxWidth: 500,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  bannerDownloading: {
+    backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#C8E6C9',
+  },
+  bannerReady: {
+    backgroundColor: '#1B4D3E',
+    borderWidth: 1,
+    borderColor: '#2D6A53',
+  },
+  bannerIconCol: {
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sparkleCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bannerTextCol: {
+    flex: 1,
+    marginRight: 8,
+  },
+  bannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0D281E',
+  },
+  bannerTitleLight: {
+    color: '#FFFFFF',
+  },
+  bannerSubtitle: {
+    fontSize: 11,
+    color: '#37474F',
+    marginTop: 1,
+  },
+  bannerSubtitleLight: {
+    color: '#D1E7DD',
+  },
+  bannerRestartBtn: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  bannerRestartText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1B4D3E',
+  },
+  bannerCloseBtn: {
+    padding: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

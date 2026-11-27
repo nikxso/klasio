@@ -268,10 +268,11 @@ class EnrollmentService:
                     for r in present_records:
                         attended_session_ids.add(r.attendance_session_id)
 
-                pct = 100.0 if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
+                pct = None if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
                 recover, is_rec = calculate_recovery_classes(attended, total_eligible, threshold=threshold)
                 miss = calculate_can_miss_classes(attended, total_eligible, threshold=threshold)
-                is_shortage = total_eligible > 0 and pct < threshold
+                is_shortage = total_eligible > 0 and pct is not None and pct < threshold
+                to_recover = recover if is_shortage else 0
 
                 summaries.append(
                     StudentSubjectAttendanceSummary(
@@ -284,7 +285,7 @@ class EnrollmentService:
                         attended_sessions=attended,
                         attendance_percentage=pct,
                         effective_start_date=enr.effective_start_date,
-                        classes_to_recover=recover,
+                        classes_to_recover=to_recover,
                         classes_can_miss=miss,
                         is_shortage=is_shortage,
                         is_recoverable=is_rec,
@@ -325,7 +326,7 @@ class EnrollmentService:
                 )
 
         overall_pct = (
-            100.0
+            None
             if total_eligible_all == 0
             else round((total_attended_all / total_eligible_all) * 100.0, 1)
         )
@@ -454,10 +455,11 @@ class EnrollmentService:
                 )
             )
 
-        pct = 100.0 if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
+        pct = None if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
         recover, is_rec = calculate_recovery_classes(attended, total_eligible, threshold=threshold)
         miss = calculate_can_miss_classes(attended, total_eligible, threshold=threshold)
-        is_shortage = total_eligible > 0 and pct < threshold
+        is_shortage = total_eligible > 0 and pct is not None and pct < threshold
+        to_recover = recover if is_shortage else 0
 
         return StudentSubjectHistoryResponse(
             teaching_assignment_id=ta.id,
@@ -468,7 +470,7 @@ class EnrollmentService:
             total_eligible_sessions=total_eligible,
             attended_sessions=attended,
             attendance_percentage=pct,
-            classes_to_recover=recover,
+            classes_to_recover=to_recover,
             classes_can_miss=miss,
             is_shortage=is_shortage,
             is_recoverable=is_rec,

@@ -287,6 +287,7 @@ class AnalyticsService:
             recover, is_rec = calculate_recovery_classes(attended_for_student, held_for_student, threshold)
             miss = calculate_can_miss_classes(attended_for_student, held_for_student, threshold)
             is_shortage = (held_for_student > 0) and (pct is not None) and (pct < threshold)
+            to_recover = recover if is_shortage else 0
 
             item = StudentAttentionItem(
                 student_user_id=student.id,
@@ -296,7 +297,7 @@ class AnalyticsService:
                 attended_sessions=attended_for_student,
                 total_eligible_sessions=held_for_student,
                 consecutive_absences=consecutive_absent,
-                classes_to_recover=recover,
+                classes_to_recover=to_recover,
                 classes_can_miss=miss,
                 is_shortage=is_shortage,
                 is_recoverable=is_rec,

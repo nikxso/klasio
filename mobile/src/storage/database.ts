@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS local_amendment_audits (
 
 CREATE TABLE IF NOT EXISTS cached_student_attendance (
     student_user_id TEXT PRIMARY KEY,
-    overall_attendance_percentage REAL NOT NULL CHECK(overall_attendance_percentage >= 0.0 AND overall_attendance_percentage <= 100.0),
+    overall_attendance_percentage REAL CHECK(overall_attendance_percentage IS NULL OR (overall_attendance_percentage >= 0.0 AND overall_attendance_percentage <= 100.0)),
     payload_json TEXT NOT NULL,
     cached_at TEXT NOT NULL
 );
@@ -166,6 +166,12 @@ CREATE TABLE IF NOT EXISTS cached_notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cached_notifications_recipient ON cached_notifications(recipient_user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS local_key_value (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 `;
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
@@ -292,3 +298,32 @@ export async function initDatabase(dbName: string = DB_NAME): Promise<SQLite.SQL
   }
   return db;
 }
+
+export async function getLocalKeyValue(key: string): Promise<string | null> {
+  try {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<{ value: string }>(
+      'SELECT value FROM local_key_value WHERE key = ?;',
+      [key]
+    );
+    return row?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setLocalKeyValue(key: string, value: string): Promise<void> {
+  try {
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+    await db.runAsync(
+      `INSERT INTO local_key_value (key, value, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;`,
+      [key, value, now]
+    );
+  } catch (err) {
+    console.warn('[DB] Failed to setLocalKeyValue:', err);
+  }
+}
+

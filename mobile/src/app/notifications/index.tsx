@@ -7,6 +7,7 @@ import {
   ScrollView,
   RefreshControl,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -18,6 +19,7 @@ import {
   CheckCheck,
   ChevronRight,
   Info,
+  Sparkles,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
@@ -27,9 +29,14 @@ import {
   NotificationRepository,
   NotificationItem,
 } from '@/storage/notificationRepository';
+import {
+  isPendingUpdateAvailable,
+  applyUpdateAndReload,
+} from '@/services/updateService';
 
 const CATEGORIES = [
   { key: 'ALL', label: 'All' },
+  { key: 'SYSTEM', label: 'Updates' },
   { key: 'ATTENDANCE', label: 'Attendance' },
   { key: 'ALERT', label: 'Alerts' },
   { key: 'REQUEST', label: 'Requests' },
@@ -83,6 +90,24 @@ export default function NotificationCenterScreen() {
       );
     }
 
+    if (item.category === 'SYSTEM' && isPendingUpdateAvailable()) {
+      Alert.alert(
+        'Apply Update Now?',
+        'A downloaded Klasio update is ready to be applied. Would you like to restart now?',
+        [
+          { text: 'Later', style: 'cancel' },
+          {
+            text: 'Restart Now',
+            style: 'default',
+            onPress: async () => {
+              await applyUpdateAndReload();
+            },
+          },
+        ]
+      );
+      return;
+    }
+
     if (item.action_route) {
       try {
         router.push(item.action_route as any);
@@ -121,6 +146,8 @@ export default function NotificationCenterScreen() {
         );
       case 'REQUEST':
         return <MessageSquare size={18} color="#3b82f6" />;
+      case 'SYSTEM':
+        return <Sparkles size={18} color={Colors.forest} />;
       default:
         return <ShieldCheck size={18} color={Colors.inkSecondary} />;
     }

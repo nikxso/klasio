@@ -328,7 +328,7 @@ export function IconBubble({
 // Circular Attendance Ring
 // ---------------------------------------------------------------------------
 interface RingProps {
-  pct: number;
+  pct: number | null | undefined;
   size?: number;
   stroke?: number;
   threshold?: number;
@@ -340,10 +340,11 @@ export function Ring({
   stroke = 8,
   threshold = 75,
 }: RingProps) {
-  const clampedPct = Math.min(100, Math.max(0, Math.round(pct)));
+  const isNoData = pct === null || pct === undefined;
+  const clampedPct = isNoData ? 0 : Math.min(100, Math.max(0, Math.round(pct)));
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference * (1 - clampedPct / 100);
+  const strokeDashoffset = isNoData ? circumference : circumference * (1 - clampedPct / 100);
   const strokeColor = clampedPct < threshold ? Colors.rose : Colors.forest;
 
   return (
@@ -359,26 +360,34 @@ export function Ring({
           fill="none"
         />
         {/* Progress */}
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={strokeColor}
-          strokeWidth={stroke}
-          strokeDasharray={`${circumference} ${circumference}`}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-          fill="none"
-          originX={size / 2}
-          originY={size / 2}
-          rotation="-90"
-        />
+        {!isNoData && (
+          <Circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={strokeColor}
+            strokeWidth={stroke}
+            strokeDasharray={`${circumference} ${circumference}`}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            fill="none"
+            originX={size / 2}
+            originY={size / 2}
+            rotation="-90"
+          />
+        )}
       </Svg>
       <View style={styles.ringTextContainer}>
-        <Text style={[styles.ringText, { fontSize: size / 3.4 }]}>
-          {clampedPct}
-          <Text style={styles.ringPercentSign}>%</Text>
-        </Text>
+        {isNoData ? (
+          <Text style={[styles.ringText, { fontSize: size / 3.6, color: Colors.soft }]}>
+            N/A
+          </Text>
+        ) : (
+          <Text style={[styles.ringText, { fontSize: size / 3.4 }]}>
+            {clampedPct}
+            <Text style={styles.ringPercentSign}>%</Text>
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -388,24 +397,27 @@ export function Ring({
 // Bar Progress
 // ---------------------------------------------------------------------------
 interface BarProps {
-  pct: number;
+  pct: number | null | undefined;
   threshold?: number;
 }
 
 export function Bar({ pct, threshold = 75 }: BarProps) {
-  const clamped = Math.min(100, Math.max(0, pct));
+  const isNoData = pct === null || pct === undefined;
+  const clamped = isNoData ? 0 : Math.min(100, Math.max(0, pct));
   const isBelow = clamped < threshold;
   return (
     <View style={styles.barTrack}>
-      <View
-        style={[
-          styles.barFill,
-          {
-            width: `${clamped}%`,
-            backgroundColor: isBelow ? Colors.rose : Colors.forest,
-          },
-        ]}
-      />
+      {!isNoData && (
+        <View
+          style={[
+            styles.barFill,
+            {
+              width: `${clamped}%`,
+              backgroundColor: isBelow ? Colors.rose : Colors.forest,
+            },
+          ]}
+        />
+      )}
       {threshold && (
         <View style={[styles.barThresholdNotch, { left: `${threshold}%` }]} />
       )}

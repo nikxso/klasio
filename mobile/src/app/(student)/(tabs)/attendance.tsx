@@ -489,10 +489,12 @@ export default function StudentAttendanceScreen() {
                   <Text
                     style={[
                       styles.subjectPct,
-                      s.attendance_percentage < 75 && styles.subjectPctShortage,
+                      s.attendance_percentage !== null && s.attendance_percentage < 75 && styles.subjectPctShortage,
                     ]}
                   >
-                    {Math.round(s.attendance_percentage)}%
+                    {s.attendance_percentage !== null && s.total_eligible_sessions > 0
+                      ? `${Math.round(s.attendance_percentage)}%`
+                      : 'N/A'}
                   </Text>
                 </View>
 
@@ -502,7 +504,9 @@ export default function StudentAttendanceScreen() {
 
                 <View style={styles.subjectFooter}>
                   <Text style={styles.guidanceText}>
-                    {s.attendance_percentage < 75
+                    {s.attendance_percentage === null || s.total_eligible_sessions === 0
+                      ? 'No classes conducted yet'
+                      : s.attendance_percentage < 75
                       ? `Attend ${s.classes_to_recover ?? 2} more in a row to reach 75%`
                       : s.classes_can_miss > 0
                       ? `You can miss ${s.classes_can_miss} and stay above 75%`

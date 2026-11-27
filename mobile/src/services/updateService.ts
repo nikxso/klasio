@@ -43,25 +43,58 @@ export interface UpdateCheckResponse {
   message?: string;
 }
 
-type UpdateEventListener = (state: { isPending: boolean; updateId?: string | null }) => void;
+export type UpdateDownloadStatus = 'IDLE' | 'CHECKING' | 'DOWNLOADING' | 'READY' | 'APPLIED' | 'FAILED';
+
+export interface UpdateEventState {
+  status: UpdateDownloadStatus;
+  isPending: boolean;
+  updateId?: string | null;
+  message?: string;
+}
+
+type UpdateEventListener = (state: UpdateEventState) => void;
 const updateListeners = new Set<UpdateEventListener>();
+let currentStatus: UpdateDownloadStatus = 'IDLE';
 let pendingUpdateId: string | null = null;
 let hasPendingUpdate = false;
 
+export function getCurrentUpdateState(): UpdateEventState {
+  return {
+    status: currentStatus,
+    isPending: hasPendingUpdate,
+    updateId: pendingUpdateId,
+  };
+}
+
 export function subscribeUpdateEvents(listener: UpdateEventListener): () => void {
   updateListeners.add(listener);
-  listener({ isPending: hasPendingUpdate, updateId: pendingUpdateId });
+  listener({
+    status: currentStatus,
+    isPending: hasPendingUpdate,
+    updateId: pendingUpdateId,
+  });
   return () => {
     updateListeners.delete(listener);
   };
 }
 
-function notifyUpdateListeners(state: { isPending: boolean; updateId?: string | null }) {
+function notifyUpdateListeners(state: Partial<UpdateEventState> & { isPending: boolean }) {
   hasPendingUpdate = state.isPending;
-  pendingUpdateId = state.updateId || null;
+  if (state.updateId !== undefined) {
+    pendingUpdateId = state.updateId || null;
+  }
+  if (state.status) {
+    currentStatus = state.status;
+  }
+  const payload: UpdateEventState = {
+    status: currentStatus,
+    isPending: hasPendingUpdate,
+    updateId: pendingUpdateId,
+    message: state.message,
+  };
   for (const listener of updateListeners) {
     try {
-      listener(state);
+      listener(payload);
     } catch (e) {
       console.warn('Error in update listener:', e);
     }
@@ -135,9 +168,21 @@ export async function checkForAppUpdates(silent = true): Promise<UpdateCheckResp
 
   try {
     isChecking = true;
+    notifyUpdateListeners({
+      status: 'CHECKING',
+      isPending: hasPendingUpdate,
+      updateId: pendingUpdateId,
+      message: 'Checking for updates...',
+    });
+
     const update = await Updates.checkForUpdateAsync();
 
     if (!update.isAvailable) {
+      notifyUpdateListeners({
+        status: hasPendingUpdate ? 'READY' : 'IDLE',
+        isPending: hasPendingUpdate,
+        updateId: pendingUpdateId,
+      });
       if (!silent) {
         const idDisplay = Updates.updateId ? ` (Update ID: ${Updates.updateId.slice(0, 8)})` : '';
         Alert.alert('Klasio is Up to Date', `You are running the latest version of Klasio${idDisplay}.`);
@@ -149,15 +194,60 @@ export async function checkForAppUpdates(silent = true): Promise<UpdateCheckResp
 
     // Invariant: If client is already running this update ID, do nothing!
     if (newManifestId && Updates.updateId && newManifestId.toLowerCase() === Updates.updateId.toLowerCase()) {
+      notifyUpdateListeners({
+        status: hasPendingUpdate ? 'READY' : 'IDLE',
+        isPending: hasPendingUpdate,
+        updateId: pendingUpdateId,
+      });
       if (!silent) {
         Alert.alert('Klasio is Up to Date', `You are already running update ${newManifestId.slice(0, 8)}.`);
       }
       return { success: true, updateAvailable: false };
     }
 
+    // Update drop detected! Notify listeners that download has started
+    notifyUpdateListeners({
+      status: 'DOWNLOADING',
+      isPending: false,
+      updateId: newManifestId,
+      message: 'Downloading Klasio update in background...',
+    });
+
+    // Record drop event in Klasio Notification Manager
+    try {
+      const { NotificationRepository } = await import('../storage/notificationRepository');
+      await NotificationRepository.addLocalNotification({
+        id: newManifestId ? `ota-drop-${newManifestId}` : `ota-drop-${Date.now()}`,
+        title: 'New Update Available',
+        message: `A new Klasio update (${newManifestId ? newManifestId.slice(0, 8) : 'latest'}) is downloading in the background.`,
+        category: 'SYSTEM',
+        priority: 'NORMAL',
+        actionRoute: '/(admin)/(tabs)/settings',
+      });
+    } catch (_) {}
+
     // Download the update bundle & assets
     await Updates.fetchUpdateAsync();
-    notifyUpdateListeners({ isPending: true, updateId: newManifestId });
+
+    notifyUpdateListeners({
+      status: 'READY',
+      isPending: true,
+      updateId: newManifestId,
+      message: 'Klasio update is ready to install',
+    });
+
+    // Record ready event in Klasio Notification Manager
+    try {
+      const { NotificationRepository } = await import('../storage/notificationRepository');
+      await NotificationRepository.addLocalNotification({
+        id: newManifestId ? `ota-ready-${newManifestId}` : `ota-ready-${Date.now()}`,
+        title: 'Update Ready to Install',
+        message: `Klasio update (${newManifestId ? newManifestId.slice(0, 8) : 'latest'}) has finished downloading. Tap to restart and apply.`,
+        category: 'SYSTEM',
+        priority: 'HIGH',
+        actionRoute: '/(admin)/(tabs)/settings',
+      });
+    } catch (_) {}
 
     if (newManifestId && promptedUpdateIds.has(newManifestId.toLowerCase())) {
       return { success: true, updateAvailable: true };
@@ -183,11 +273,55 @@ export async function checkForAppUpdates(silent = true): Promise<UpdateCheckResp
     );
     return { success: true, updateAvailable: true };
   } catch (error: any) {
+    notifyUpdateListeners({
+      status: hasPendingUpdate ? 'READY' : 'FAILED',
+      isPending: hasPendingUpdate,
+      updateId: pendingUpdateId,
+      message: error?.message || 'Update check failed',
+    });
     if (!silent) {
       Alert.alert('Update Check Failed', error?.message || 'Could not connect to update server.');
     }
     return { success: false, message: error?.message || 'Failed' };
   } finally {
     isChecking = false;
+  }
+}
+
+/**
+ * Validates whether the currently running app booted on a newly applied OTA update ID.
+ * If newly updated, logs a completion notification in Klasio Notification Manager.
+ */
+export async function verifyAndRecordUpdateLifecycle(): Promise<void> {
+  try {
+    const updateState = getAppUpdateState();
+    const currentUpdateId = updateState.updateId;
+    if (!currentUpdateId) return;
+
+    const { getLocalKeyValue, setLocalKeyValue } = await import('../storage/database');
+    const lastSeenId = await getLocalKeyValue('last_recorded_applied_ota_id');
+    if (lastSeenId && lastSeenId.toLowerCase() === currentUpdateId.toLowerCase()) {
+      return;
+    }
+
+    await setLocalKeyValue('last_recorded_applied_ota_id', currentUpdateId);
+    notifyUpdateListeners({
+      status: 'APPLIED',
+      isPending: false,
+      updateId: currentUpdateId,
+      message: `Running Klasio version ${currentUpdateId.slice(0, 8)}`,
+    });
+
+    const { NotificationRepository } = await import('../storage/notificationRepository');
+    await NotificationRepository.addLocalNotification({
+      id: `ota-applied-${currentUpdateId}`,
+      title: 'Klasio Updated Successfully',
+      message: `You are now running version ${currentUpdateId.slice(0, 8)}.`,
+      category: 'SYSTEM',
+      priority: 'NORMAL',
+      actionRoute: '/(admin)/(tabs)/settings',
+    });
+  } catch (err) {
+    console.warn('[updateService] verifyAndRecordUpdateLifecycle error:', err);
   }
 }

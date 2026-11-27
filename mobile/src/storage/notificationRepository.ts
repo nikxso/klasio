@@ -76,6 +76,69 @@ export class NotificationRepository {
   }
 
   /**
+   * Inserts or updates a local notification directly in SQLite cached_notifications.
+   * Ensures system notifications (OTA update drops, readiness, completed installations)
+   * are immediately recorded and displayed in the Klasio Notification Manager.
+   */
+  static async addLocalNotification(params: {
+    id?: string;
+    userId?: string;
+    category?: 'ATTENDANCE' | 'ALERT' | 'REQUEST' | 'SYSTEM';
+    priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+    title: string;
+    message: string;
+    actionRoute?: string;
+    payloadJson?: any;
+  }): Promise<NotificationItem> {
+    const db = await getDatabase();
+    const notificationId = params.id || `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const recipientUserId = params.userId || 'system';
+    const category = params.category || 'SYSTEM';
+    const priority = params.priority || 'NORMAL';
+    const createdAt = new Date().toISOString();
+    const payloadStr = params.payloadJson ? JSON.stringify(params.payloadJson) : null;
+
+    await db.runAsync(
+      `INSERT INTO cached_notifications (
+        id, recipient_user_id, category, priority, title, message,
+        payload_json, action_route, is_read, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        message = excluded.message,
+        category = excluded.category,
+        priority = excluded.priority,
+        action_route = excluded.action_route,
+        is_read = 0,
+        created_at = excluded.created_at;`,
+      [
+        notificationId,
+        recipientUserId,
+        category,
+        priority,
+        params.title,
+        params.message,
+        payloadStr,
+        params.actionRoute ?? null,
+        createdAt,
+      ]
+    );
+
+    return {
+      id: notificationId,
+      recipient_user_id: recipientUserId,
+      category,
+      priority,
+      title: params.title,
+      message: params.message,
+      payload_json: payloadStr,
+      action_route: params.actionRoute ?? null,
+      is_read: false,
+      created_at: createdAt,
+    };
+  }
+
+  /**
    * Reads cached notifications from SQLite.
    */
   static async listCachedNotifications(
@@ -84,7 +147,7 @@ export class NotificationRepository {
   ): Promise<NotificationItem[]> {
     const db = await getDatabase();
     let query =
-      'SELECT * FROM cached_notifications WHERE recipient_user_id = ?';
+      'SELECT * FROM cached_notifications WHERE (recipient_user_id = ? OR recipient_user_id = "system" OR recipient_user_id = "default")';
     const params: any[] = [userId];
 
     if (category && category !== 'ALL') {
@@ -120,7 +183,12 @@ export class NotificationRepository {
         });
         if (res.ok) {
           const data = await res.json();
-          return data.unread_count ?? 0;
+          // Also factor in local unread notifications
+          const localDb = await getDatabase();
+          const localRow = await localDb.getFirstAsync<{ count: number }>(
+            'SELECT COUNT(*) as count FROM cached_notifications WHERE (recipient_user_id = "system" OR recipient_user_id = "default") AND is_read = 0;'
+          );
+          return (data.unread_count ?? 0) + (localRow?.count ?? 0);
         }
       } catch (e) {
         // Fall back to SQLite count
@@ -129,7 +197,7 @@ export class NotificationRepository {
 
     const db = await getDatabase();
     const row = await db.getFirstAsync<{ count: number }>(
-      'SELECT COUNT(*) as count FROM cached_notifications WHERE recipient_user_id = ? AND is_read = 0;',
+      'SELECT COUNT(*) as count FROM cached_notifications WHERE (recipient_user_id = ? OR recipient_user_id = "system" OR recipient_user_id = "default") AND is_read = 0;',
       [userId]
     );
     return row?.count ?? 0;
@@ -161,7 +229,7 @@ export class NotificationRepository {
   static async markAllAsRead(userId: string, token?: string): Promise<void> {
     const db = await getDatabase();
     await db.runAsync(
-      'UPDATE cached_notifications SET is_read = 1 WHERE recipient_user_id = ?;',
+      'UPDATE cached_notifications SET is_read = 1 WHERE recipient_user_id = ? OR recipient_user_id = "system" OR recipient_user_id = "default";',
       [userId]
     );
 

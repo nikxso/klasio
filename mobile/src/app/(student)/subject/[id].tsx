@@ -175,9 +175,9 @@ export default function SubjectAttendanceHistoryScreen() {
     );
   }
 
-  const pct = history ? Math.round(history.attendance_percentage) : 0;
-  const isBelow = history ? history.attendance_percentage < history.threshold : false;
-  const isZero = history ? history.total_eligible_sessions === 0 : true;
+  const isZero = history ? history.total_eligible_sessions === 0 || history.attendance_percentage === null : true;
+  const pct = history && history.attendance_percentage !== null ? Math.round(history.attendance_percentage) : null;
+  const isBelow = !isZero && history && history.attendance_percentage !== null ? history.attendance_percentage < history.threshold : false;
   const records = history?.records || [];
 
   return (
@@ -221,7 +221,7 @@ export default function SubjectAttendanceHistoryScreen() {
       {/* Summary KPI Card */}
       <Card style={styles.summaryCard}>
         <View style={styles.summaryRow}>
-          <Ring pct={isZero ? 0 : pct} size={92} threshold={history?.threshold || 75} />
+          <Ring pct={isZero ? null : pct} size={92} threshold={history?.threshold || 75} />
           <View style={styles.summaryDetails}>
             <Text style={styles.summaryHeading}>
               {isZero

@@ -38,9 +38,9 @@ class StudentSubjectAttendanceSummary(BaseModel):
     faculty_name: str
     total_eligible_sessions: int
     attended_sessions: int
-    attendance_percentage: float
+    attendance_percentage: Optional[float] = None
     effective_start_date: date
-    classes_to_recover: Optional[int] = None
+    classes_to_recover: int = 0
     classes_can_miss: int = 0
     is_shortage: bool = False
     is_recoverable: bool = True
@@ -62,7 +62,7 @@ class StudentPersonalAttendanceResponse(BaseModel):
     student_id: uuid.UUID
     academic_term_id: Optional[uuid.UUID] = None
     subjects: List[StudentSubjectAttendanceSummary]
-    overall_attendance_percentage: float
+    overall_attendance_percentage: Optional[float] = None
     total_eligible_sessions: int = 0
     total_attended_sessions: int = 0
     weekly_trend: List[StudentWeeklyTrendPoint] = []
@@ -91,8 +91,8 @@ class StudentSubjectHistoryResponse(BaseModel):
     faculty_name: str
     total_eligible_sessions: int
     attended_sessions: int
-    attendance_percentage: float
-    classes_to_recover: Optional[int] = None
+    attendance_percentage: Optional[float] = None
+    classes_to_recover: int = 0
     classes_can_miss: int = 0
     is_shortage: bool = False
     is_recoverable: bool = True

@@ -479,7 +479,7 @@ async def test_student_zero_eligible_sessions(async_client: AsyncClient, student
 
     assert data["total_eligible_sessions"] == 0
     assert data["attended_sessions"] == 0
-    assert data["attendance_percentage"] == 100.0
+    assert data["attendance_percentage"] is None
     assert data["is_shortage"] is False
     assert data["classes_to_recover"] == 0
     assert data["classes_can_miss"] == 0

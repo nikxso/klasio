@@ -63,6 +63,8 @@ from src.models.attendance import (
     AttendanceStatus,
     MarkSource,
     SessionApplicability,
+    AttendanceRequestStatus,
+    StudentAttendanceRequest,
 )
 from src.models.enrollment import (
     EnrollmentStatus,
@@ -1063,3 +1065,319 @@ async def test_reporting_and_iac_scoping(async_client: AsyncClient, db_session: 
     assert stu_att.subjects[0].subject_code == "CS_REP"
     assert stu_att.subjects[0].attended_sessions == 1
     assert stu_att.overall_attendance_percentage == 100.0
+
+
+# =========================================================================
+# 7. EXCUSED ATTENDANCE POLICY & PENDING LEAVE INDEPENDENCE
+# =========================================================================
+
+@pytest.mark.asyncio
+async def test_excused_attendance_policy_and_pending_leave_independence(db_session: AsyncSession):
+    """
+    Verify:
+    1. EXCUSED attendance status counts in attended numerator alongside PRESENT.
+    2. ABSENT attendance status does NOT count in attended numerator.
+    3. Pending student leave/grievance requests (StudentAttendanceRequest) do NOT
+       automatically mutate finalized attendance records or alter percentage.
+    """
+    await ensure_default_institution(db_session)
+
+    dept = Department(institution_id=DEFAULT_INSTITUTION_ID, code=f"DEPT_{uuid.uuid4().hex[:4]}", name="Civil Eng")
+    term = AcademicTerm(
+        institution_id=DEFAULT_INSTITUTION_ID,
+        code=f"TERM_EXC_{uuid.uuid4().hex[:6]}",
+        name="Term Excused Policy",
+        academic_year="2026-27",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 12, 15),
+        status=TermStatus.ACTIVE,
+    )
+    db_session.add_all([dept, term])
+    await db_session.flush()
+
+    sec = ClassSection(institution_id=DEFAULT_INSTITUTION_ID, section_code="CIV-A", department_id=dept.id, academic_term_id=term.id, cohort_year=2026)
+    subj = Subject(institution_id=DEFAULT_INSTITUTION_ID, department_id=dept.id, code="CE201", name="Fluid Mechanics")
+    db_session.add_all([sec, subj])
+    await db_session.flush()
+
+    faculty = make_user("prof_civ@test.edu", "Prof Civil", UserRole.FACULTY)
+    student = make_user("stu_civ@test.edu", "Student Civil", UserRole.STUDENT, institutional_id="STU-CIV-01")
+    admin = make_user("adm_civ@test.edu", "Admin Civil", UserRole.ADMIN)
+    db_session.add_all([faculty, student, admin])
+    await db_session.flush()
+
+    ta = TeachingAssignment(
+        institution_id=DEFAULT_INSTITUTION_ID,
+        faculty_user_id=faculty.id,
+        class_section_id=sec.id,
+        subject_id=subj.id,
+        academic_term_id=term.id,
+        created_by_user_id=admin.id,
+    )
+    db_session.add(ta)
+    await db_session.flush()
+
+    enr_service = EnrollmentService(db_session)
+    await enr_service.enroll_student(
+        StudentEnrollmentCreate(
+            student_user_id=student.id,
+            class_section_id=sec.id,
+            academic_term_id=term.id,
+            effective_start_date=date(2026, 8, 1),
+        )
+    )
+
+    now_utc = datetime.now(timezone.utc)
+    # Session 1: PRESENT
+    s1 = AttendanceSession(
+        client_session_uuid=uuid.uuid4(),
+        teaching_assignment_id=ta.id,
+        session_date=date(2026, 8, 3),
+        period_slot_or_sequence=1,
+        applicability_status=SessionApplicability.COUNTED,
+        session_status=AttendanceSessionStatus.FINALIZED,
+        regular_faculty_user_id=faculty.id,
+        conducting_faculty_user_id=faculty.id,
+    )
+    db_session.add(s1)
+    await db_session.flush()
+    db_session.add(AttendanceRecord(attendance_session_id=s1.id, student_user_id=student.id, attendance_status=AttendanceStatus.PRESENT))
+
+    # Session 2: EXCUSED (e.g. approved medical or official duty)
+    s2 = AttendanceSession(
+        client_session_uuid=uuid.uuid4(),
+        teaching_assignment_id=ta.id,
+        session_date=date(2026, 8, 4),
+        period_slot_or_sequence=1,
+        applicability_status=SessionApplicability.COUNTED,
+        session_status=AttendanceSessionStatus.FINALIZED,
+        regular_faculty_user_id=faculty.id,
+        conducting_faculty_user_id=faculty.id,
+    )
+    db_session.add(s2)
+    await db_session.flush()
+    db_session.add(AttendanceRecord(attendance_session_id=s2.id, student_user_id=student.id, attendance_status=AttendanceStatus.EXCUSED))
+
+    # Session 3: ABSENT
+    s3 = AttendanceSession(
+        client_session_uuid=uuid.uuid4(),
+        teaching_assignment_id=ta.id,
+        session_date=date(2026, 8, 5),
+        period_slot_or_sequence=1,
+        applicability_status=SessionApplicability.COUNTED,
+        session_status=AttendanceSessionStatus.FINALIZED,
+        regular_faculty_user_id=faculty.id,
+        conducting_faculty_user_id=faculty.id,
+    )
+    db_session.add(s3)
+    await db_session.flush()
+    db_session.add(AttendanceRecord(attendance_session_id=s3.id, student_user_id=student.id, attendance_status=AttendanceStatus.ABSENT))
+    await db_session.flush()
+
+    # 1. Verify calculation with 1 PRESENT, 1 EXCUSED, 1 ABSENT:
+    # Held = 3, Attended = 2 (PRESENT + EXCUSED) -> 2 / 3 = 66.7%
+    att_res = await enr_service.calculate_student_personal_attendance(student_user_id=student.id, academic_term_id=term.id)
+    assert att_res.subjects[0].total_eligible_sessions == 3
+    assert att_res.subjects[0].attended_sessions == 2
+    assert att_res.subjects[0].attendance_percentage == 66.7
+    assert att_res.overall_attendance_percentage == 66.7
+
+    # 2. Student submits a pending attendance request for Session 3 (medical leave)
+    leave_req = StudentAttendanceRequest(
+        student_user_id=student.id,
+        teaching_assignment_id=ta.id,
+        session_date=date(2026, 8, 5),
+        student_note="Hospital visit, requesting medical leave",
+        status=AttendanceRequestStatus.PENDING,
+    )
+    db_session.add(leave_req)
+    await db_session.flush()
+
+    # Invariant: Pending request MUST NOT automatically change finalized attendance records!
+    att_res_pending = await enr_service.calculate_student_personal_attendance(student_user_id=student.id, academic_term_id=term.id)
+    assert att_res_pending.subjects[0].attended_sessions == 2
+    assert att_res_pending.subjects[0].attendance_percentage == 66.7
+    assert att_res_pending.overall_attendance_percentage == 66.7
+
+
+# =========================================================================
+# 8. ZERO-SESSION EXPLICIT NO-DATA STATE (N/A)
+# =========================================================================
+
+@pytest.mark.asyncio
+async def test_zero_session_explicit_no_data_state(db_session: AsyncSession):
+    """
+    Verify:
+    1. When 0 eligible sessions have been conducted, the system returns an explicit
+       no-data state (None / null), NOT a misleading 100.0%.
+    2. is_shortage is False, classes_to_recover is None, classes_can_miss is 0.
+    3. Section analytics returns None for overall_attendance_percentage.
+    """
+    await ensure_default_institution(db_session)
+
+    dept = Department(institution_id=DEFAULT_INSTITUTION_ID, code=f"DEPT_{uuid.uuid4().hex[:4]}", name="Bio Tech")
+    term = AcademicTerm(
+        institution_id=DEFAULT_INSTITUTION_ID,
+        code=f"TERM_ZERO_{uuid.uuid4().hex[:6]}",
+        name="Term Zero Session",
+        academic_year="2026-27",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 12, 15),
+        status=TermStatus.ACTIVE,
+    )
+    db_session.add_all([dept, term])
+    await db_session.flush()
+
+    sec = ClassSection(institution_id=DEFAULT_INSTITUTION_ID, section_code="BIO-A", department_id=dept.id, academic_term_id=term.id, cohort_year=2026)
+    subj = Subject(institution_id=DEFAULT_INSTITUTION_ID, department_id=dept.id, code="BT101", name="Cell Biology")
+    db_session.add_all([sec, subj])
+    await db_session.flush()
+
+    faculty = make_user("prof_bio@test.edu", "Prof Bio", UserRole.FACULTY)
+    student = make_user("stu_bio@test.edu", "Student Bio", UserRole.STUDENT, institutional_id="STU-BIO-01")
+    admin = make_user("adm_bio@test.edu", "Admin Bio", UserRole.ADMIN)
+    db_session.add_all([faculty, student, admin])
+    await db_session.flush()
+
+    ta = TeachingAssignment(
+        institution_id=DEFAULT_INSTITUTION_ID,
+        faculty_user_id=faculty.id,
+        class_section_id=sec.id,
+        subject_id=subj.id,
+        academic_term_id=term.id,
+        created_by_user_id=admin.id,
+    )
+    db_session.add(ta)
+    await db_session.flush()
+
+    enr_service = EnrollmentService(db_session)
+    await enr_service.enroll_student(
+        StudentEnrollmentCreate(
+            student_user_id=student.id,
+            class_section_id=sec.id,
+            academic_term_id=term.id,
+            effective_start_date=date(2026, 8, 1),
+        )
+    )
+
+    # 1. Student personal attendance: 0 sessions held
+    stu_att = await enr_service.calculate_student_personal_attendance(student_user_id=student.id, academic_term_id=term.id)
+    assert len(stu_att.subjects) == 1
+    sub_summary = stu_att.subjects[0]
+    assert sub_summary.total_eligible_sessions == 0
+    assert sub_summary.attended_sessions == 0
+    assert sub_summary.attendance_percentage is None  # MUST NOT be 100.0!
+    assert sub_summary.is_shortage is False
+    assert sub_summary.classes_to_recover == 0
+    assert sub_summary.classes_can_miss == 0
+    assert stu_att.overall_attendance_percentage is None  # MUST NOT be 100.0!
+    assert stu_att.total_eligible_sessions == 0
+
+    # 2. Student subject history: 0 sessions held
+    hist = await enr_service.get_student_subject_history(student_user_id=student.id, teaching_assignment_id=ta.id)
+    assert hist.total_eligible_sessions == 0
+    assert hist.attended_sessions == 0
+    assert hist.attendance_percentage is None  # Explicit no-data
+    assert hist.is_shortage is False
+    assert hist.classes_to_recover == 0
+    assert hist.classes_can_miss == 0
+    assert len(hist.records) == 0
+
+    # 3. Section Analytics overview for faculty: 0 sessions held
+    analytics_service = AnalyticsService(db_session)
+    sec_analytics = await analytics_service.get_assignment_analytics(current_user=faculty, teaching_assignment_id=ta.id)
+    assert sec_analytics.total_held_sessions == 0
+    assert sec_analytics.average_attendance_percentage is None  # Explicit no-data
+    assert len(sec_analytics.roster_summaries) == 1
+    assert sec_analytics.roster_summaries[0].attendance_percentage is None
+    assert sec_analytics.roster_summaries[0].classes_to_recover == 0
+    assert sec_analytics.roster_summaries[0].is_shortage is False
+
+
+# =========================================================================
+# 9. COMPREHENSIVE RECOVERY & CAN-MISS FORMULA VALIDATION
+# =========================================================================
+
+def test_recovery_and_can_miss_comprehensive_validation():
+    """
+    Stress-test shortage recovery and safe-miss allowances across:
+    - Multiple thresholds: 65%, 75%, 80%, 85%.
+    - Zero attended sessions (A = 0, H > 0).
+    - Zero held sessions (A = 0, H = 0).
+    - Attendance exactly at the threshold (P = T).
+    - Attendance just below the threshold (P = T - epsilon).
+    - Integer rounding boundaries (ceil vs exact integer).
+    - Mathematical verification that R is the exact minimum consecutive classes.
+    """
+    # 1. Zero sessions held: R = 0, is_recoverable = True, can_miss = 0
+    r_zero, ok_zero = calculate_recovery_classes(attended=0, held=0, threshold=75.0)
+    assert r_zero == 0
+    assert ok_zero is True
+    assert calculate_can_miss_classes(attended=0, held=0, threshold=75.0) == 0
+
+    # 2. Testing across thresholds: [65%, 75%, 80%, 85%]
+    test_cases = [
+        # (Threshold, Held, Attended, Expected R, Expected Miss)
+        # Exactly at threshold: R = 0, Miss = 0
+        (65.0, 20, 13, 0, 0),   # 13/20 = 65.0%
+        (75.0, 20, 15, 0, 0),   # 15/20 = 75.0%
+        (80.0, 20, 16, 0, 0),   # 16/20 = 80.0%
+        (85.0, 20, 17, 0, 0),   # 17/20 = 85.0%
+
+        # Just below threshold:
+        # At 65%: H=20, A=12 (60.0%). R = ceil((65*20 - 100*12)/35) = ceil(100/35) = ceil(2.857) = 3.
+        (65.0, 20, 12, 3, 0),
+        # At 75%: H=20, A=14 (70.0%). R = ceil((75*20 - 100*14)/25) = ceil(100/25) = 4.
+        (75.0, 20, 14, 4, 0),
+        # At 80%: H=20, A=15 (75.0%). R = ceil((80*20 - 100*15)/20) = ceil(100/20) = 5.
+        (80.0, 20, 15, 5, 0),
+        # At 85%: H=20, A=16 (80.0%). R = ceil((85*20 - 100*16)/15) = ceil(100/15) = ceil(6.667) = 7.
+        (85.0, 20, 16, 7, 0),
+
+        # Zero attended (A = 0, H = 10):
+        # At 65%: R = ceil(65*10 / 35) = ceil(650/35) = ceil(18.57) = 19.
+        (65.0, 10, 0, 19, 0),
+        # At 75%: R = ceil(75*10 / 25) = ceil(750/25) = 30.
+        (75.0, 10, 0, 30, 0),
+        # At 80%: R = ceil(80*10 / 20) = ceil(800/20) = 40.
+        (80.0, 10, 0, 40, 0),
+        # At 85%: R = ceil(85*10 / 15) = ceil(850/15) = ceil(56.67) = 57.
+        (85.0, 10, 0, 57, 0),
+
+        # Safe miss allowance (A = 19, H = 20 -> 95%):
+        # At 65%: M = floor(1900/65 - 20) = floor(29.23 - 20) = 9.
+        (65.0, 20, 19, 0, 9),
+        # At 75%: M = floor(1900/75 - 20) = floor(25.33 - 20) = 5.
+        (75.0, 20, 19, 0, 5),
+        # At 80%: M = floor(1900/80 - 20) = floor(23.75 - 20) = 3.
+        (80.0, 20, 19, 0, 3),
+        # At 85%: M = floor(1900/85 - 20) = floor(22.35 - 20) = 2.
+        (85.0, 20, 19, 0, 2),
+    ]
+
+    for thresh, h, a, expected_r, expected_m in test_cases:
+        r, is_rec = calculate_recovery_classes(attended=a, held=h, threshold=thresh)
+        assert is_rec is True
+        assert r == expected_r, f"Failed recovery for T={thresh}, H={h}, A={a}: got {r}, expected {expected_r}"
+
+        m = calculate_can_miss_classes(attended=a, held=h, threshold=thresh)
+        assert m == expected_m, f"Failed can_miss for T={thresh}, H={h}, A={a}: got {m}, expected {expected_m}"
+
+        # Mathematical Proof Verification:
+        if expected_r > 0:
+            # 1. Attending expected_r classes reaches or exceeds threshold
+            pct_after = ((a + expected_r) / (h + expected_r)) * 100.0
+            assert pct_after >= thresh, f"Attending {expected_r} did not reach {thresh}%: got {pct_after}%"
+            # 2. Attending expected_r - 1 classes is strictly below threshold
+            if expected_r > 1:
+                pct_prior = ((a + expected_r - 1) / (h + expected_r - 1)) * 100.0
+                assert pct_prior < thresh, f"Attending {expected_r - 1} prematurely reached {thresh}%: got {pct_prior}%"
+
+        if expected_m > 0:
+            # 1. Missing expected_m classes stays at or above threshold
+            pct_miss = (a / (h + expected_m)) * 100.0
+            assert pct_miss >= thresh, f"Missing {expected_m} classes dropped below {thresh}%: got {pct_miss}%"
+            # 2. Missing expected_m + 1 classes drops strictly below threshold
+            pct_miss_more = (a / (h + expected_m + 1)) * 100.0
+            assert pct_miss_more < thresh, f"Missing {expected_m + 1} classes did not drop below {thresh}%: got {pct_miss_more}%"
+

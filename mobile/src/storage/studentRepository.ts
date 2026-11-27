@@ -8,7 +8,7 @@ export interface StudentSubjectSummary {
   faculty_name: string;
   total_eligible_sessions: number;
   attended_sessions: number;
-  attendance_percentage: number;
+  attendance_percentage: number | null;
   effective_start_date: string;
   classes_to_recover: number | null;
   classes_can_miss: number;
@@ -30,7 +30,7 @@ export interface StudentPersonalAttendanceResponse {
   student_id: string;
   academic_term_id?: string | null;
   subjects: StudentSubjectSummary[];
-  overall_attendance_percentage: number;
+  overall_attendance_percentage: number | null;
   total_eligible_sessions?: number;
   total_attended_sessions?: number;
   weekly_trend?: StudentWeeklyTrendPoint[];
@@ -55,7 +55,7 @@ export interface StudentSubjectHistoryResponse {
   faculty_name: string;
   total_eligible_sessions: number;
   attended_sessions: number;
-  attendance_percentage: number;
+  attendance_percentage: number | null;
   classes_to_recover: number | null;
   classes_can_miss: number;
   is_shortage: boolean;

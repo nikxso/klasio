@@ -4,6 +4,7 @@ import {
   getAppUpdateState,
   subscribeUpdateEvents,
   isPendingUpdateAvailable,
+  getCurrentUpdateState,
 } from '../../services/updateService.ts';
 
 describe('Update Service Architecture & Invariants', () => {
@@ -29,6 +30,7 @@ describe('Update Service Architecture & Invariants', () => {
     assert.strictEqual(callCount, 1);
     assert.ok(receivedState);
     assert.strictEqual(typeof receivedState.isPending, 'boolean');
+    assert.ok('status' in receivedState);
 
     unsub();
   });
@@ -36,5 +38,14 @@ describe('Update Service Architecture & Invariants', () => {
   test('3. isPendingUpdateAvailable matches subscription state', () => {
     const isPending = isPendingUpdateAvailable();
     assert.strictEqual(typeof isPending, 'boolean');
+  });
+
+  test('4. getCurrentUpdateState exposes status and update lifecycle properties', () => {
+    const state = getCurrentUpdateState();
+    assert.ok('status' in state);
+    assert.ok('isPending' in state);
+    assert.ok('updateId' in state);
+    assert.strictEqual(typeof state.status, 'string');
+    assert.strictEqual(typeof state.isPending, 'boolean');
   });
 });
