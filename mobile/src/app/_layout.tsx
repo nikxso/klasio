@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LogBox, NativeModules, Platform, StyleSheet, Text, View } from 'react-native';
@@ -37,6 +37,7 @@ function UnsupportedDeviceScreen() {
 }
 
 export default function RootLayout() {
+  const router = useRouter();
   const [fontsLoaded] = useFonts({
     'ChangaOne-Regular': require('../../assets/fonts/ChangaOne-Regular.ttf'),
   });
@@ -44,9 +45,22 @@ export default function RootLayout() {
   useAutoSync();
 
   useEffect(() => {
-    SessionStore.initFromStorage().catch(() => {});
+    let hasLoadedInitial = false;
+    SessionStore.initFromStorage().finally(() => {
+      hasLoadedInitial = true;
+    });
     checkForAppUpdates(true).catch(() => {});
-  }, []);
+
+    // Top-level navigation guarantee: when session clears, reliably transition root stack to login
+    const unsub = SessionStore.subscribe((session) => {
+      if (!session && hasLoadedInitial) {
+        try {
+          router.replace('/');
+        } catch (_) {}
+      }
+    });
+    return unsub;
+  }, [router]);
 
   // Startup check: require DirectPerception native perception module on Android
   const isDirectPerceptionMissing = Platform.OS === 'android' && !NativeModules.DirectPerception;

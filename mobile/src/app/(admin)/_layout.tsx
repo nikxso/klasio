@@ -13,10 +13,6 @@ export default function AdminStackLayout() {
     }
   }, [isLoaded, isAuthenticated, user]);
 
-  if (!isLoaded || !isAuthenticated || !user) {
-    return null;
-  }
-
   if (user?.role?.toUpperCase() === 'STUDENT') {
     return (
       <AccessRestrictedView

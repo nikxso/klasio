@@ -12,9 +12,6 @@ export default function StudentStackLayout() {
     }
   }, [isLoaded, isAuthenticated]);
 
-  if (!isLoaded || !isAuthenticated) {
-    return null;
-  }
   return (
     <Stack
       screenOptions={{

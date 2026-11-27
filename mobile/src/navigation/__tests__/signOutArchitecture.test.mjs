@@ -87,20 +87,17 @@ describe('Sign-Out Architecture & Redirection Integrity Contract', () => {
     assert.equal(restored, null, 'initFromStorage must not resurrect cleared session');
   });
 
-  test('2. Layout guard redirect policy: single-shot redirection, no render-phase cycle', () => {
+  test('2. Layout guard redirect policy: single-shot redirection, no render-phase cycle, prevents blank screen', () => {
     // Simulates protected layout behavior
     let redirectCount = 0;
     const targetRoutes = [];
 
     function evaluateLayoutGuard(isLoaded, isAuthenticated, user, mockRouter) {
-      // In our fixed architecture:
-      // When not authenticated or loaded, return null (never mount <Redirect /> component)
+      // In our robust architecture:
+      // Layouts keep the navigator mounted to prevent blank screen and ensure navigation dispatcher is active.
       // useEffect performs single replace
-      if (!isLoaded || !isAuthenticated || !user) {
-        if (isLoaded && (!isAuthenticated || !user)) {
-          mockRouter.replace('/');
-        }
-        return null;
+      if (isLoaded && (!isAuthenticated || !user)) {
+        mockRouter.replace('/');
       }
       return 'RENDER_STACK';
     }
@@ -114,7 +111,7 @@ describe('Sign-Out Architecture & Redirection Integrity Contract', () => {
 
     // Case A: Unauthenticated user accesses protected layout
     const resultUnauth = evaluateLayoutGuard(true, false, null, mockRouter);
-    assert.equal(resultUnauth, null, 'Must return null rather than recursive <Redirect />');
+    assert.equal(resultUnauth, 'RENDER_STACK', 'Navigator must remain mounted to prevent blank screen');
     assert.equal(redirectCount, 1, 'Triggers exactly 1 controlled replacement');
     assert.deepEqual(targetRoutes, ['/']);
 
