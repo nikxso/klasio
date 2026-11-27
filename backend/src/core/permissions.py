@@ -19,6 +19,8 @@ from src.models.access_control import (
     InstitutionStatus,
     InstitutionMembership,
     MembershipStatus,
+    Campus,
+    Delegation,
     RoleTemplate,
     RoleAssignment,
     AssignmentStatus,
@@ -291,12 +293,6 @@ def require_roles(*allowed_roles: UserRole) -> Callable:
         settings = get_settings()
         if getattr(settings, "ENABLE_SHADOW_AUTHORIZATION", False):
             try:
-                from src.models.access_control import (
-                    InstitutionMembership,
-                    MembershipStatus,
-                    Campus,
-                    Delegation,
-                )
                 from src.models.academic import Department, AcademicTerm, ClassSection
                 from src.models.assignment import TeachingAssignment
                 from src.models.attendance import AttendanceSession, StudentAttendanceRequest

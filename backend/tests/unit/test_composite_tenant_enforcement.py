@@ -306,24 +306,25 @@ async def test_pg_restricts_deletion_of_academic_term_with_sections(db_session: 
 @pytest.mark.asyncio
 async def test_pg_restricts_deletion_of_class_section_with_teaching_assignment(db_session: AsyncSession):
     """PostgreSQL ON DELETE RESTRICT prevents deleting a ClassSection that has teaching assignments."""
-    inst = Institution(code=f"I_DEL_SEC_{uuid.uuid4().hex[:6]}", name="Inst Del Sec")
+    inst_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
     faculty = User(institutional_id=f"FAC_{uuid.uuid4().hex[:6]}", email=f"fac_{uuid.uuid4().hex[:6]}@inst.edu", password_hash="h", full_name="Fac", role=UserRole.FACULTY)
-    db_session.add_all([inst, faculty])
+    db_session.add(faculty)
     await db_session.flush()
 
-    campus = Campus(institution_id=inst.id, code="C1", name="C1")
-    dept = Department(institution_id=inst.id, code="D1", name="D1")
-    term = AcademicTerm(institution_id=inst.id, code=f"T_{uuid.uuid4().hex[:6]}", name="Term", academic_year="2026", start_date=date(2026, 1, 1), end_date=date(2026, 6, 1))
+    campus = Campus(institution_id=inst_id, code=f"C1_{uuid.uuid4().hex[:4]}", name="C1")
+    dept = Department(institution_id=inst_id, code=f"D1_{uuid.uuid4().hex[:4]}", name="D1")
+    term = AcademicTerm(institution_id=inst_id, code=f"T_{uuid.uuid4().hex[:6]}", name="Term", academic_year="2026", start_date=date(2026, 1, 1), end_date=date(2026, 6, 1))
     db_session.add_all([campus, dept, term])
     await db_session.flush()
 
-    sec = ClassSection(institution_id=inst.id, campus_id=campus.id, department_id=dept.id, academic_term_id=term.id, section_code="SEC_TA", cohort_year=2024)
-    subj = Subject(institution_id=inst.id, department_id=dept.id, code=f"SBJ_{uuid.uuid4().hex[:6]}", name="Subj")
+    sec = ClassSection(institution_id=inst_id, campus_id=campus.id, department_id=dept.id, academic_term_id=term.id, section_code=f"SEC_{uuid.uuid4().hex[:4]}", cohort_year=2024)
+    subj = Subject(institution_id=inst_id, department_id=dept.id, code=f"SBJ_{uuid.uuid4().hex[:6]}", name="Subj")
     db_session.add_all([sec, subj])
     await db_session.flush()
 
     from src.models.assignment import TeachingAssignment
     ta = TeachingAssignment(
+        institution_id=inst_id,
         faculty_user_id=faculty.id,
         class_section_id=sec.id,
         subject_id=subj.id,

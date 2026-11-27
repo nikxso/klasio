@@ -222,6 +222,10 @@ async def test_shadow_evaluation_skipped_without_tenant_context(
     db_session.add(admin_no_mem)
     await db_session.commit()
 
+    from sqlalchemy import delete
+    await db_session.execute(delete(InstitutionMembership).where(InstitutionMembership.user_id == admin_no_mem.id))
+    await db_session.commit()
+
     token = create_access_token(subject=str(admin_no_mem.id), role=admin_no_mem.role.value, institutional_id=admin_no_mem.institutional_id)
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -258,14 +262,19 @@ async def test_shadow_evaluation_resource_tenant_mismatch(
     settings = get_settings()
     monkeypatch.setattr(settings, "ENABLE_SHADOW_AUTHORIZATION", True)
 
-    from src.models.access_control import Campus
+    from src.models.access_control import Campus, DEFAULT_INSTITUTION_ID
     from src.models.academic import Department, AcademicTerm, ClassSection, Subject
     from src.models.assignment import TeachingAssignment
 
     # Institution A (Faculty's institution)
     inst_a = Institution(code=f"INST_A_{uuid.uuid4().hex[:6]}", name="Institution A")
-    # Institution B (Target resource's institution)
-    inst_b = Institution(code=f"INST_B_{uuid.uuid4().hex[:6]}", name="Institution B")
+    # Institution B (Target resource's institution - deployed singleton institution)
+    inst_b_id = uuid.UUID(DEFAULT_INSTITUTION_ID)
+    inst_b = (await db_session.execute(select(Institution).where(Institution.id == inst_b_id))).scalar_one_or_none()
+    if not inst_b:
+        inst_b = Institution(id=inst_b_id, code="KLASIO_MAIN", name="Institution B")
+        db_session.add(inst_b)
+
     faculty = User(
         institutional_id=f"FAC_MIS_{uuid.uuid4().hex[:6]}",
         email=f"fac_mis_{uuid.uuid4().hex[:6]}@inst.edu",
@@ -274,12 +283,23 @@ async def test_shadow_evaluation_resource_tenant_mismatch(
         role=UserRole.FACULTY,
         account_status=AccountStatus.ACTIVE,
     )
-    db_session.add_all([inst_a, inst_b, faculty])
+    faculty_b = User(
+        institutional_id=f"FAC_B_{uuid.uuid4().hex[:6]}",
+        email=f"fac_b_{uuid.uuid4().hex[:6]}@inst.edu",
+        password_hash=get_password_hash("password123"),
+        full_name="Faculty Inst B",
+        role=UserRole.FACULTY,
+        account_status=AccountStatus.ACTIVE,
+    )
+    db_session.add_all([inst_a, faculty, faculty_b])
     await db_session.flush()
 
-    # Faculty belongs to Institution A
+    # Faculty belongs to Institution A (remove auto-created membership in B)
     mem_a = InstitutionMembership(institution_id=inst_a.id, user_id=faculty.id, status=MembershipStatus.ACTIVE)
     db_session.add(mem_a)
+    await db_session.flush()
+    from sqlalchemy import delete
+    await db_session.execute(delete(InstitutionMembership).where(InstitutionMembership.user_id == faculty.id, InstitutionMembership.institution_id == inst_b_id))
 
     # Academic structure in Institution B
     campus_b = Campus(name="Campus B", code=f"CB_{uuid.uuid4().hex[:4]}", institution_id=inst_b.id)
@@ -302,7 +322,7 @@ async def test_shadow_evaluation_resource_tenant_mismatch(
         institution_id=inst_b.id,
     )
     sec_b = ClassSection(
-        section_code="SEC_B",
+        section_code=f"SEC_B_{uuid.uuid4().hex[:4]}",
         campus_id=campus_b.id,
         department_id=dept_b.id,
         academic_term_id=term_b.id,
@@ -313,18 +333,19 @@ async def test_shadow_evaluation_resource_tenant_mismatch(
     await db_session.flush()
 
     ta_b = TeachingAssignment(
+        institution_id=inst_b.id,
         class_section_id=sec_b.id,
         subject_id=sub_b.id,
         academic_term_id=term_b.id,
-        faculty_user_id=faculty.id,
-        created_by_user_id=faculty.id,
+        faculty_user_id=faculty_b.id,
+        created_by_user_id=faculty_b.id,
         is_active=True,
     )
     db_session.add(ta_b)
     await db_session.commit()
 
     token = create_access_token(subject=str(faculty.id), role=faculty.role.value, institutional_id=faculty.institutional_id)
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {token}", "X-Institution-ID": str(inst_a.id)}
 
     from src.services.shadow_evaluator import ShadowAuthorizationEvaluator
     recorded_observations = []
@@ -382,7 +403,7 @@ async def test_shadow_evaluation_no_resource_context(
     await db_session.commit()
 
     token = create_access_token(subject=str(faculty.id), role=faculty.role.value, institutional_id=faculty.institutional_id)
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {token}", "X-Institution-ID": str(inst.id)}
 
     from src.services.shadow_evaluator import ShadowAuthorizationEvaluator
     recorded_observations = []

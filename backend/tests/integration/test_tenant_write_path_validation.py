@@ -166,6 +166,7 @@ async def test_cross_institution_transfer_rejected(async_client: AsyncClient, mu
 
     # First enroll user_dual in Section A1
     enr_dual = StudentEnrollment(
+        institution_id=env["inst_a"].id,
         student_user_id=env["user_dual"].id,
         class_section_id=env["sec_a1"].id,
         academic_term_id=env["term_a"].id,

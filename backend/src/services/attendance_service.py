@@ -229,7 +229,6 @@ class AttendanceService:
                 delegation_id=effective_delegation_id,
                 authorizing_role_assignment_id=getattr(session_req, "authorizing_role_assignment_id", None),
                 finalizing_actor_membership_id=actor_mem_id,
-                conducting_faculty_membership_id=cond_mem_id,
                 permission_code="attendance.session.record",
                 matched_scope_type="TEACHING_ASSIGNMENT",
                 matched_scope_id=session_req.teaching_assignment_id,

@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Optional, Dict
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -1391,10 +1391,11 @@ async def list_role_templates(
     summary="List institution memberships and role assignments",
 )
 async def list_institution_memberships(
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
     admin_user: User = Depends(require_admin),
 ):
-    inst_id, _ = await resolve_tenant_and_membership(None, admin_user, db)
+    inst_id, _ = await resolve_tenant_and_membership(request, admin_user, db)
     stmt = (
         select(InstitutionMembership)
         .options(
@@ -1469,10 +1470,11 @@ async def list_institution_memberships(
 )
 async def create_role_assignment(
     payload: RoleAssignmentCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
     admin_user: User = Depends(require_admin),
 ):
-    inst_id, admin_membership = await resolve_tenant_and_membership(None, admin_user, db)
+    inst_id, admin_membership = await resolve_tenant_and_membership(request, admin_user, db)
 
     # 1. Verify target membership
     mem_stmt = select(InstitutionMembership).where(
@@ -1577,10 +1579,11 @@ async def create_role_assignment(
 async def update_role_assignment_status(
     assignment_id: uuid.UUID,
     payload: RoleAssignmentStatusUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
     admin_user: User = Depends(require_admin),
 ):
-    inst_id, admin_membership = await resolve_tenant_and_membership(None, admin_user, db)
+    inst_id, admin_membership = await resolve_tenant_and_membership(request, admin_user, db)
 
     stmt = (
         select(RoleAssignment)
@@ -1701,11 +1704,12 @@ async def list_delegations(
 )
 async def approve_delegation(
     delegation_id: uuid.UUID,
+    request: Request,
     payload: DelegationAction = DelegationAction(),
     db: AsyncSession = Depends(get_db_session),
     admin_user: User = Depends(require_admin),
 ):
-    inst_id, admin_membership = await resolve_tenant_and_membership(None, admin_user, db)
+    inst_id, admin_membership = await resolve_tenant_and_membership(request, admin_user, db)
     stmt = (
         select(Delegation)
         .options(
@@ -1765,11 +1769,12 @@ async def approve_delegation(
 )
 async def revoke_delegation(
     delegation_id: uuid.UUID,
+    request: Request,
     payload: DelegationAction = DelegationAction(),
     db: AsyncSession = Depends(get_db_session),
     admin_user: User = Depends(require_admin),
 ):
-    inst_id, admin_membership = await resolve_tenant_and_membership(None, admin_user, db)
+    inst_id, admin_membership = await resolve_tenant_and_membership(request, admin_user, db)
     stmt = (
         select(Delegation)
         .options(

@@ -23,6 +23,7 @@ jobs:
   build-apk:
     name: Build Universal Release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
 
@@ -58,7 +59,10 @@ jobs:
         working-directory: mobile/android
         env:
           EXPO_PUBLIC_API_URL: ${{ inputs.apiUrl || vars.EXPO_PUBLIC_API_URL || secrets.EXPO_PUBLIC_API_URL || 'https://payment-adaptor-pottery-answered.trycloudflare.com' }}
+          GRADLE_OPTS: "-Xmx4096m -XX:MaxMetaspaceSize=1536m -Dorg.gradle.jvmargs=\"-Xmx4096m -XX:MaxMetaspaceSize=1536m -XX:+HeapDumpOnOutOfMemoryError\""
         run: |
+          sed -i 's/-XX:MaxMetaspaceSize=[0-9]*m/-XX:MaxMetaspaceSize=1536m/g' gradle.properties || true
+          sed -i 's/-Xmx[0-9]*m/-Xmx4096m/g' gradle.properties || true
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
