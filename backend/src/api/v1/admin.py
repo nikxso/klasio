@@ -857,22 +857,26 @@ async def enroll_single_student_to_section(
     exec_req = BulkEnrollmentExecuteRequest(
         academic_term_id=sec.academic_term_id,
         class_section_id=section_id,
-        rows=[
+        students=[
             BulkStudentEnrollmentRow(
                 institutional_id=clean_inst_id,
                 full_name=clean_name,
                 email=clean_email,
-                effective_start_date=payload.effective_start_date,
+                effective_start_date=payload.effective_start_date or date.today(),
             )
         ],
         create_missing_accounts=True,
     )
     res = await service.bulk_enroll_execute(exec_req)
+    if res.enrolled_count == 0 and res.errors:
+        err_msg = res.errors[0].error_message or "Failed to enroll student."
+        raise HTTPException(status_code=400, detail=err_msg)
+
     return {
         "status": "success",
         "message": f"Successfully enrolled {clean_name} ({clean_inst_id}) into section {sec.section_code}.",
-        "created_enrollments_count": res.created_enrollments_count,
-        "created_users_count": res.created_users_count,
+        "enrolled_count": res.enrolled_count,
+        "created_enrollments_count": res.enrolled_count,
     }
 
 

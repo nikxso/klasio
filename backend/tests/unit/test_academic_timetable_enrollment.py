@@ -255,16 +255,20 @@ async def test_bulk_enrollment_preview_and_execute(db_session: AsyncSession):
 
     preview = await enrollment_service.bulk_enroll_preview(preview_req)
     assert preview.total_rows == 4
+    assert preview.total_submitted == 4
     assert preview.valid_count == 2
     assert preview.error_count == 2
     assert preview.existing_user_count == 1
+    assert preview.duplicate_count == 1
     assert preview.new_user_count == 1
+    assert preview.new_accounts_count == 1
+    assert preview.preview_rows[0].student_name == "Alice Student"
 
-    # Execute bulk enrollment
+    # Execute bulk enrollment using `rows` parameter for backwards compatibility
     exec_req = BulkEnrollmentExecuteRequest(
         academic_term_id=term.id,
         class_section_id=sec.id,
-        students=[
+        rows=[
             BulkStudentEnrollmentRow(institutional_id="STU-001", full_name="Alice Student", email="stu001@example.com"),
             BulkStudentEnrollmentRow(institutional_id="STU-002", full_name="Bob Student", email="stu002@example.com"),
         ],
@@ -272,15 +276,33 @@ async def test_bulk_enrollment_preview_and_execute(db_session: AsyncSession):
     exec_res = await enrollment_service.bulk_enroll_execute(exec_req)
     assert exec_res.success is True
     assert exec_res.enrolled_count == 2
+    assert exec_res.created_enrollments_count == 2
     assert exec_res.failed_count == 0
+
+    # Also test single student enrollment via admin API handler logic
+    single_req = BulkEnrollmentExecuteRequest(
+        academic_term_id=term.id,
+        class_section_id=sec.id,
+        students=[
+            BulkStudentEnrollmentRow(
+                institutional_id="STU-005",
+                full_name="Single Enrolled Student",
+                email="stu005@example.com",
+            )
+        ],
+    )
+    single_res = await enrollment_service.bulk_enroll_execute(single_req)
+    assert single_res.success is True
+    assert single_res.enrolled_count == 1
 
     # Verify section roster
     roster = await enrollment_service.get_section_roster(sec.id)
-    assert roster.total_enrolled == 2
-    assert roster.active_count == 2
+    assert roster.total_enrolled == 3
+    assert roster.active_count == 3
     inst_ids = {s.institutional_id for s in roster.students}
     assert "STU-001" in inst_ids
     assert "STU-002" in inst_ids
+    assert "STU-005" in inst_ids
 
 
 @pytest.mark.asyncio

@@ -134,12 +134,29 @@ class BulkEnrollmentPreviewItem(BaseModel):
     is_valid: bool
     status: str
     error_message: Optional[str] = None
+    student_name: Optional[str] = None
+    validation_error: Optional[str] = None
+
+    @model_validator(mode="after")
+    def populate_aliases(self) -> "BulkEnrollmentPreviewItem":
+        if not self.student_name:
+            self.student_name = self.full_name
+        if not self.validation_error and self.error_message:
+            self.validation_error = self.error_message
+        return self
 
 
 class BulkEnrollmentPreviewRequest(BaseModel):
     academic_term_id: uuid.UUID
     class_section_id: uuid.UUID
-    students: List[BulkStudentEnrollmentRow]
+    students: Optional[List[BulkStudentEnrollmentRow]] = None
+    rows: Optional[List[BulkStudentEnrollmentRow]] = None
+
+    @model_validator(mode="after")
+    def resolve_students(self) -> "BulkEnrollmentPreviewRequest":
+        if self.students is None:
+            self.students = self.rows or []
+        return self
 
 
 class BulkEnrollmentPreviewResponse(BaseModel):
@@ -149,12 +166,36 @@ class BulkEnrollmentPreviewResponse(BaseModel):
     existing_user_count: int
     new_user_count: int
     preview_rows: List[BulkEnrollmentPreviewItem]
+    total_submitted: Optional[int] = None
+    duplicate_count: Optional[int] = None
+    new_accounts_count: Optional[int] = None
+    rejected_count: Optional[int] = None
+
+    @model_validator(mode="after")
+    def populate_response_aliases(self) -> "BulkEnrollmentPreviewResponse":
+        if self.total_submitted is None:
+            self.total_submitted = self.total_rows
+        if self.duplicate_count is None:
+            self.duplicate_count = self.existing_user_count
+        if self.new_accounts_count is None:
+            self.new_accounts_count = self.new_user_count
+        if self.rejected_count is None:
+            self.rejected_count = self.error_count
+        return self
 
 
 class BulkEnrollmentExecuteRequest(BaseModel):
     academic_term_id: uuid.UUID
     class_section_id: uuid.UUID
-    students: List[BulkStudentEnrollmentRow]
+    students: Optional[List[BulkStudentEnrollmentRow]] = None
+    rows: Optional[List[BulkStudentEnrollmentRow]] = None
+    create_missing_accounts: Optional[bool] = True
+
+    @model_validator(mode="after")
+    def resolve_students(self) -> "BulkEnrollmentExecuteRequest":
+        if self.students is None:
+            self.students = self.rows or []
+        return self
 
 
 class BulkEnrollmentExecuteResponse(BaseModel):
@@ -162,6 +203,14 @@ class BulkEnrollmentExecuteResponse(BaseModel):
     enrolled_count: int
     failed_count: int
     errors: List[BulkEnrollmentPreviewItem] = []
+    created_enrollments_count: Optional[int] = None
+    created_users_count: Optional[int] = None
+
+    @model_validator(mode="after")
+    def populate_counts(self) -> "BulkEnrollmentExecuteResponse":
+        if self.created_enrollments_count is None:
+            self.created_enrollments_count = self.enrolled_count
+        return self
 
 
 class SectionRosterStudentItem(BaseModel):

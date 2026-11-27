@@ -833,8 +833,13 @@ class EnrollmentService:
         valid_items = [p for p in preview.preview_rows if p.is_valid]
         failed_items = [p for p in preview.preview_rows if not p.is_valid]
 
+        sec_stmt = select(ClassSection).where(ClassSection.id == payload.class_section_id)
+        sec = (await self.db.execute(sec_stmt)).scalar_one_or_none()
+        target_inst_id = sec.institution_id if (sec and sec.institution_id) else uuid.UUID(str(DEFAULT_INSTITUTION_ID))
+
         # In transactional context, enroll all valid items
         enrolled_count = 0
+        new_user_count = 0
         for item in valid_items:
             # 1. Resolve or create student User
             user_stmt = select(User).where(
@@ -855,16 +860,17 @@ class EnrollmentService:
                 )
                 self.db.add(student_user)
                 await self.db.flush()
+                new_user_count += 1
 
-                # Ensure active membership (if trigger did not already create it)
+                # Ensure active membership in the section's institution
                 mem_stmt = select(InstitutionMembership).where(
                     InstitutionMembership.user_id == student_user.id,
-                    InstitutionMembership.institution_id == uuid.UUID(str(DEFAULT_INSTITUTION_ID)),
+                    InstitutionMembership.institution_id == target_inst_id,
                 )
                 mem = (await self.db.execute(mem_stmt)).scalar_one_or_none()
                 if not mem:
                     mem = InstitutionMembership(
-                        institution_id=uuid.UUID(str(DEFAULT_INSTITUTION_ID)),
+                        institution_id=target_inst_id,
                         user_id=student_user.id,
                         status=MembershipStatus.ACTIVE,
                     )
@@ -889,6 +895,8 @@ class EnrollmentService:
             enrolled_count=enrolled_count,
             failed_count=len(failed_items),
             errors=failed_items,
+            created_enrollments_count=enrolled_count,
+            created_users_count=new_user_count,
         )
 
     async def get_section_roster(

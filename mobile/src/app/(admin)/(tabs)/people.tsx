@@ -329,6 +329,7 @@ export default function AdminPeopleScreen() {
         body: JSON.stringify({
           academic_term_id: sec.academic_term_id,
           class_section_id: bulkSectionId,
+          students: rows,
           rows,
         }),
       });
@@ -366,15 +367,17 @@ export default function AdminPeopleScreen() {
         body: JSON.stringify({
           academic_term_id: sec.academic_term_id,
           class_section_id: bulkSectionId,
+          students: rows,
           rows,
           create_missing_accounts: true,
         }),
       });
       if (res.ok) {
         const result = await res.json();
+        const count = result.enrolled_count ?? result.created_enrollments_count ?? 0;
         Alert.alert(
           'Bulk Enrollment Completed',
-          `Successfully enrolled ${result.created_enrollments_count} students.\n(${result.created_users_count} new accounts created).`
+          `Successfully enrolled ${count} student(s).`
         );
         setShowBulkEnrollSheet(false);
         setBulkCsvText('');
@@ -2084,7 +2087,15 @@ export default function AdminPeopleScreen() {
           </View>
         ) : (
           <View>
-            <Text style={styles.inputLabel}>Student Roster Records</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <Text style={styles.inputLabel}>Student Roster Records (CSV)</Text>
+              <Pressable
+                onPress={() => setBulkCsvText("CSE201, Priya Sharma, priya@attendly.edu\nCSE202, Rahul Verma, rahul@attendly.edu")}
+                style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: Colors.forest50 }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.forest }}>+ Fill Sample Data</Text>
+              </Pressable>
+            </View>
             <Text style={{ fontSize: 11, color: Colors.soft, marginBottom: 6 }}>
               Format: RollNumber, Full Name, Email (one student per line)
             </Text>
@@ -2093,7 +2104,7 @@ export default function AdminPeopleScreen() {
               onChangeText={setBulkCsvText}
               multiline
               numberOfLines={6}
-              placeholder={"CSE201, Priya Sharma, priya@attendly.edu\nCSE202, Rahul Verma, rahul@attendly.edu"}
+              placeholder="Paste student rows here: RollNo, Full Name, Email"
               placeholderTextColor={Colors.soft}
               style={[styles.textInput, { height: 110, textAlignVertical: 'top' }]}
             />
@@ -2122,10 +2133,10 @@ export default function AdminPeopleScreen() {
               <View style={{ marginBottom: 16 }}>
                 <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
                   <Chip tone="forest">{bulkPreviewResult.valid_count} Valid</Chip>
-                  <Chip tone="secondary">{bulkPreviewResult.new_accounts_count} New Users</Chip>
-                  <Chip tone="apricot">{bulkPreviewResult.duplicate_count} Existing</Chip>
-                  {bulkPreviewResult.rejected_count > 0 && (
-                    <Chip tone="rose">{bulkPreviewResult.rejected_count} Rejected</Chip>
+                  <Chip tone="secondary">{(bulkPreviewResult as any).new_user_count ?? bulkPreviewResult.new_accounts_count ?? 0} New Users</Chip>
+                  <Chip tone="apricot">{(bulkPreviewResult as any).existing_user_count ?? bulkPreviewResult.duplicate_count ?? 0} Existing</Chip>
+                  {(((bulkPreviewResult as any).error_count ?? bulkPreviewResult.rejected_count ?? 0) > 0) && (
+                    <Chip tone="rose">{(bulkPreviewResult as any).error_count ?? bulkPreviewResult.rejected_count} Rejected</Chip>
                   )}
                 </View>
 
@@ -2147,14 +2158,14 @@ export default function AdminPeopleScreen() {
                       >
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.ink }}>
-                            {row.student_name}
+                            {(row as any).full_name || row.student_name}
                           </Text>
                           <Text style={{ fontSize: 11, color: Colors.soft }}>
                             {row.institutional_id} · {row.email}
                           </Text>
-                          {row.validation_error && (
+                          {((row as any).error_message || row.validation_error) && (
                             <Text style={{ fontSize: 10, color: Colors.rose, marginTop: 2 }}>
-                              {row.validation_error}
+                              {(row as any).error_message || row.validation_error}
                             </Text>
                           )}
                         </View>
