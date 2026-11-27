@@ -13,6 +13,7 @@ from src.api.v1.analytics import router as analytics_router
 from src.api.v1.biometrics import router as biometrics_router
 from src.api.v1.notifications import router as notifications_router
 from src.api.v1.users import router as users_router
+from src.api.v1.updates import router as updates_router
 
 settings = get_settings()
 
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(biometrics_router)
     app.include_router(notifications_router)
     app.include_router(users_router)
+    app.include_router(updates_router)
 
     @app.get("/health", tags=["Health"])
     async def health_check():

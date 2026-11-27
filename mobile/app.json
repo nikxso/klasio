@@ -10,7 +10,8 @@
     "updates": {
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0
+      "fallbackToCacheTimeout": 0,
+      "url": "https://payment-adaptor-pottery-answered.trycloudflare.com/api/v1/updates/manifest"
     },
     "runtimeVersion": {
       "policy": "appVersion"
