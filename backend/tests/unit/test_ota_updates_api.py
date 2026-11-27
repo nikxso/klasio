@@ -64,3 +64,35 @@ async def test_ota_asset_serving_and_traversal_guard():
         # 3. Path traversal attack rejection (either blocked with 403 or URL normalization rejects with 404)
         res_traversal = await client.get("/api/v1/updates/assets/..%2F..%2Fetc%2Fpasswd")
         assert res_traversal.status_code in (403, 404)
+
+
+@pytest.mark.asyncio
+async def test_ota_manifest_suppression_when_already_up_to_date():
+    """Verify that clients already running or embedding the latest update receive 204 No Content or 304."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Get active update ID first
+        res = await client.get("/api/v1/updates/manifest", headers={"expo-platform": "android"})
+        assert res.status_code == 200
+        update_id = res.json()["id"]
+
+        # Case A: Client already has this update running
+        res_current = await client.get(
+            "/api/v1/updates/manifest",
+            headers={"expo-platform": "android", "expo-current-update-id": update_id},
+        )
+        assert res_current.status_code == 204
+
+        # Case B: Client has this update embedded in APK
+        res_embedded = await client.get(
+            "/api/v1/updates/manifest",
+            headers={"expo-platform": "android", "expo-embedded-update-id": update_id},
+        )
+        assert res_embedded.status_code == 204
+
+        # Case C: Conditional GET with If-None-Match ETag
+        res_cached = await client.get(
+            "/api/v1/updates/manifest",
+            headers={"expo-platform": "android", "if-none-match": f'"{update_id}"'},
+        )
+        assert res_cached.status_code == 304

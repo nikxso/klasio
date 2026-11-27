@@ -90,10 +90,12 @@ async def get_update_manifest(
     expo_runtime_version: Optional[str] = Header(None, alias="expo-runtime-version"),
     expo_protocol_version: Optional[str] = Header("0", alias="expo-protocol-version"),
     expo_current_update_id: Optional[str] = Header(None, alias="expo-current-update-id"),
+    expo_embedded_update_id: Optional[str] = Header(None, alias="expo-embedded-update-id"),
 ):
     """
     Expo Updates Protocol v0 compliant manifest endpoint.
     Mobile app queries this endpoint on launch to detect and download Over-The-Air updates.
+    Returns HTTP 204 No Content when the client is already running or contains the latest update.
     """
     platform_data, platform = resolve_platform_and_metadata(expo_platform)
     bundle_rel_path = platform_data.get("bundle")
@@ -113,6 +115,31 @@ async def get_update_manifest(
     # Derive deterministic update ID from bundle relative path
     update_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"klasio-ota-{bundle_rel_path}"))
     runtime_version = expo_runtime_version or "1.0.0"
+
+    # Invariant: If client already runs or embeds this update, send 204 No Content
+    def _normalize_id(val: Optional[str]) -> Optional[str]:
+        return val.strip().strip('"').strip("'").lower() if val else None
+
+    norm_target = _normalize_id(update_id)
+    if (_normalize_id(expo_current_update_id) == norm_target or 
+        _normalize_id(expo_embedded_update_id) == norm_target):
+        return Response(
+            status_code=status.HTTP_204_NO_CONTENT,
+            headers={
+                "expo-protocol-version": "0",
+                "cache-control": "no-cache",
+            },
+        )
+
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and _normalize_id(if_none_match) == norm_target:
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers={
+                "expo-protocol-version": "0",
+                "cache-control": "no-cache",
+            },
+        )
 
     base_url = get_updates_base_url(request)
     bundle_filename = bundle_file.name
@@ -163,6 +190,7 @@ async def get_update_manifest(
         "expo-protocol-version": "0",
         "content-type": "application/json",
         "cache-control": "no-cache",
+        "etag": f'"{update_id}"',
     }
     return JSONResponse(content=manifest, headers=headers)
 
