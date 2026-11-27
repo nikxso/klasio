@@ -1,7 +1,7 @@
 import enum
-from typing import Optional
+from typing import Optional, List
 import uuid
-from datetime import date
+from datetime import date, time
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     SmallInteger,
     String,
+    Time,
     UniqueConstraint,
     Uuid,
     text,
@@ -123,7 +124,8 @@ class Program(Base, TimestampMixin):
         server_default=text("true"),
     )
 
-    department = relationship("Department", foreign_keys=[institution_id, department_id])
+    department = relationship("Department", foreign_keys=[institution_id, department_id], back_populates="programs")
+    sections = relationship("ClassSection", back_populates="program")
 
     def __repr__(self) -> str:
         return f"<Program {self.code}: {self.name} (Dept: {self.department_id})>"
@@ -176,6 +178,7 @@ class Department(Base, TimestampMixin):
     )
     subjects = relationship("Subject", back_populates="department", passive_deletes="all")
     sections = relationship("ClassSection", back_populates="department", passive_deletes="all")
+    programs = relationship("Program", back_populates="department", passive_deletes="all")
 
     def __repr__(self) -> str:
         return f"<Department {self.code}: {self.name} (Inst: {self.institution_id})>"
@@ -232,6 +235,7 @@ class AcademicTerm(Base, TimestampMixin):
     institution = relationship("Institution", back_populates="academic_terms")
     sections = relationship("ClassSection", back_populates="academic_term", passive_deletes="all")
     teaching_assignments = relationship("TeachingAssignment", back_populates="academic_term", passive_deletes="all")
+    timetable_entries = relationship("TimetableEntry", back_populates="academic_term", passive_deletes="all")
 
     def __repr__(self) -> str:
         return f"<AcademicTerm {self.code} ({self.status})>"
@@ -362,6 +366,7 @@ class ClassSection(Base, TimestampMixin):
     )
     program_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
+        ForeignKey("programs.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -370,8 +375,170 @@ class ClassSection(Base, TimestampMixin):
     campus = relationship("Campus", back_populates="sections", foreign_keys=[institution_id, campus_id])
     department = relationship("Department", back_populates="sections", foreign_keys=[institution_id, department_id])
     academic_term = relationship("AcademicTerm", back_populates="sections", foreign_keys=[institution_id, academic_term_id])
-    program = relationship("Program", foreign_keys=[institution_id, department_id, program_id], primaryjoin="and_(ClassSection.institution_id == foreign(Program.institution_id), ClassSection.department_id == foreign(Program.department_id), ClassSection.program_id == foreign(Program.id))")
+    program = relationship("Program", back_populates="sections")
     teaching_assignments = relationship("TeachingAssignment", back_populates="class_section", passive_deletes="all")
+    timetable_entries = relationship("TimetableEntry", back_populates="class_section", passive_deletes="all")
 
     def __repr__(self) -> str:
         return f"<ClassSection {self.section_code} (Term {self.academic_term_id})>"
+
+
+class AcademicPeriod(Base, TimestampMixin):
+    __tablename__ = "academic_periods"
+    __table_args__ = (
+        CheckConstraint("end_time > start_time", name="chk_period_time_range"),
+        CheckConstraint("period_number >= 1 AND period_number <= 20", name="chk_period_number_range"),
+        UniqueConstraint("institution_id", "period_number", name="uq_period_institution_number"),
+        UniqueConstraint("institution_id", "id", name="uq_academic_periods_inst_id"),
+        ForeignKeyConstraint(
+            ["institution_id"],
+            ["deployment_config.institution_id"],
+            name="fk_periods_deployment_institution",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        index=True,
+        default=DEFAULT_INSTITUTION_ID,
+        server_default=text("'00000000-0000-0000-0000-000000000001'"),
+    )
+    period_number: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    start_time: Mapped[time] = mapped_column(
+        Time,
+        nullable=False,
+    )
+    end_time: Mapped[time] = mapped_column(
+        Time,
+        nullable=False,
+    )
+    is_break: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+
+    timetable_entries = relationship("TimetableEntry", back_populates="academic_period", passive_deletes="all")
+
+    def __repr__(self) -> str:
+        return f"<AcademicPeriod {self.period_number}: {self.name} ({self.start_time}-{self.end_time})>"
+
+
+class TimetableEntry(Base, TimestampMixin):
+    __tablename__ = "timetable_entries"
+    __table_args__ = (
+        CheckConstraint("day_of_week >= 1 AND day_of_week <= 7", name="chk_timetable_day_range"),
+        UniqueConstraint("class_section_id", "day_of_week", "academic_period_id", name="uq_timetable_section_slot"),
+        UniqueConstraint("institution_id", "room_number", "day_of_week", "academic_period_id", name="uq_timetable_room_slot"),
+        ForeignKeyConstraint(
+            ["institution_id"],
+            ["deployment_config.institution_id"],
+            name="fk_timetable_deployment_institution",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "academic_term_id"],
+            ["academic_terms.institution_id", "academic_terms.id"],
+            name="fk_timetable_academic_term",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "class_section_id"],
+            ["class_sections.institution_id", "class_sections.id"],
+            name="fk_timetable_class_section",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["institution_id", "academic_period_id"],
+            ["academic_periods.institution_id", "academic_periods.id"],
+            name="fk_timetable_academic_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["teaching_assignment_id"],
+            ["teaching_assignments.id"],
+            name="fk_timetable_teaching_assignment",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        index=True,
+        default=DEFAULT_INSTITUTION_ID,
+        server_default=text("'00000000-0000-0000-0000-000000000001'"),
+    )
+    academic_term_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    class_section_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    teaching_assignment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    academic_period_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    day_of_week: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        index=True,
+    )
+    room_number: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="TBD",
+        server_default=text("'TBD'"),
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+
+    academic_term = relationship("AcademicTerm", foreign_keys=[institution_id, academic_term_id], back_populates="timetable_entries")
+    class_section = relationship("ClassSection", foreign_keys=[institution_id, class_section_id], back_populates="timetable_entries")
+    teaching_assignment = relationship("TeachingAssignment", back_populates="timetable_entries")
+    academic_period = relationship("AcademicPeriod", foreign_keys=[institution_id, academic_period_id], back_populates="timetable_entries")
+    attendance_sessions = relationship("AttendanceSession", back_populates="timetable_entry", foreign_keys="AttendanceSession.timetable_entry_id")
+
+    def __repr__(self) -> str:
+        return f"<TimetableEntry {self.id} Sec: {self.class_section_id} Day: {self.day_of_week} Period: {self.academic_period_id} Room: {self.room_number}>"
+

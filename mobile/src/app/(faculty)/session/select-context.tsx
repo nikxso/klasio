@@ -41,15 +41,22 @@ interface AssignmentItem {
   regularFacultyName?: string;
 }
 
-const PERIOD_SLOTS = [
+interface PeriodSlotItem {
+  slot: number;
+  label: string;
+  time: string;
+  isBreak?: boolean;
+}
+
+const DEFAULT_PERIOD_SLOTS: PeriodSlotItem[] = [
   { slot: 1, label: 'P1', time: '09:00 - 10:00' },
   { slot: 2, label: 'P2', time: '10:00 - 11:00' },
   { slot: 3, label: 'P3', time: '11:00 - 12:00' },
-  { slot: 4, label: 'P4', time: '12:00 - 13:00' },
-  { slot: 5, label: 'P5', time: '13:00 - 14:00' },
-  { slot: 6, label: 'P6', time: '14:00 - 15:00' },
-  { slot: 7, label: 'P7', time: '15:00 - 16:00' },
-  { slot: 8, label: 'P8', time: '16:00 - 17:00' },
+  { slot: 4, label: 'Lunch', time: '12:00 - 13:00', isBreak: true },
+  { slot: 5, label: 'P4', time: '13:00 - 14:00' },
+  { slot: 6, label: 'P5', time: '14:00 - 15:00' },
+  { slot: 7, label: 'P6', time: '15:00 - 16:00' },
+  { slot: 8, label: 'P7', time: '16:00 - 17:00' },
 ];
 
 export default function SelectAttendanceContextScreen() {
@@ -68,9 +75,13 @@ export default function SelectAttendanceContextScreen() {
 
   const params = useLocalSearchParams<{
     preselectId?: string;
+    slot?: string;
+    timetableEntryId?: string;
+    room?: string;
   }>();
 
   const [assignments, setAssignments] = useState<AssignmentItem[]>([]);
+  const [periodSlots, setPeriodSlots] = useState<PeriodSlotItem[]>(DEFAULT_PERIOD_SLOTS);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>(
     params.preselectId || ''
@@ -78,32 +89,54 @@ export default function SelectAttendanceContextScreen() {
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
   const [sessionDate, setSessionDate] = useState<string>(todayStr);
-  const [selectedSlot, setSelectedSlot] = useState<number>(1);
+  const [selectedSlot, setSelectedSlot] = useState<number>(
+    params.slot ? parseInt(params.slot, 10) || 1 : 1
+  );
   const [applicability, setApplicability] = useState<'COUNTED' | 'CANCELLED' | 'EXEMPT'>('COUNTED');
   const [statusReason, setStatusReason] = useState<string>('');
 
   const [existingSession, setExistingSession] = useState<LocalSessionRow | null>(null);
   const [checkingExisting, setCheckingExisting] = useState(false);
 
-  // Fetch authorized assignments from API
+  // Fetch configured periods & authorized assignments from API
   useEffect(() => {
     let isCancelled = false;
-    async function loadAssignments() {
+    async function loadData() {
       try {
         setLoadingAssignments(true);
         const token = SessionStore.getToken();
-        const res = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (res.ok && !isCancelled) {
-          const data = await res.json();
+        const headers: Record<string, string> = {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        };
+
+        const [periodsRes, assignRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/v1/admin/periods`, { headers }),
+          fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, { headers }),
+        ]);
+
+        if (periodsRes.ok && !isCancelled) {
+          const pList = await periodsRes.json();
+          if (Array.isArray(pList) && pList.length > 0) {
+            const mappedSlots: PeriodSlotItem[] = pList.map((p: any) => ({
+              slot: p.period_number,
+              label: p.name || `P${p.period_number}`,
+              time: `${p.start_time?.slice(0, 5) || ''} - ${p.end_time?.slice(0, 5) || ''}`,
+              isBreak: Boolean(p.is_break),
+            }));
+            setPeriodSlots(mappedSlots);
+          }
+        }
+
+        if (assignRes.ok && !isCancelled) {
+          const data = await assignRes.json();
           if (Array.isArray(data) && data.length > 0) {
             const mapped: AssignmentItem[] = data.map((item: any) => ({
               id: item.teaching_assignment_id || item.id,
               subjectCode: item.subject_code || item.subjectCode || 'CS101',
               subjectName: item.subject_name || item.subjectName || 'Course',
               sectionCode: item.section_code || item.sectionCode || 'A',
-              room: item.room || 'LH-204',
+              room: params.room || item.room || 'LH-204',
               scheduleTime: item.scheduleTime || '09:00 - 10:00',
               isDelegated: Boolean(item.is_delegated),
               regularFacultyName: item.delegation_details?.regular_faculty_name,
@@ -115,16 +148,16 @@ export default function SelectAttendanceContextScreen() {
           }
         }
       } catch (err) {
-        // Fall back to pre-populated assignments
+        // Fall back gracefully
       } finally {
         if (!isCancelled) setLoadingAssignments(false);
       }
     }
-    loadAssignments();
+    loadData();
     return () => {
       isCancelled = true;
     };
-  }, [params.preselectId]);
+  }, [params.preselectId, params.room]);
 
   // Check for existing session in SQLite
   useEffect(() => {
@@ -210,6 +243,7 @@ export default function SelectAttendanceContextScreen() {
         sessionDate: sessionDate,
         applicability: applicability,
         statusReason: statusReason.trim() || undefined,
+        timetableEntryId: params.timetableEntryId,
       },
     });
   };
@@ -347,13 +381,15 @@ export default function SelectAttendanceContextScreen() {
               <Text style={styles.fieldLabel}>Period Slot (1 - 8)</Text>
             </View>
             <View style={styles.slotsGrid}>
-              {PERIOD_SLOTS.map((p) => {
+              {periodSlots.map((p) => {
                 const isActive = selectedSlot === p.slot;
                 return (
                   <Pressable
                     key={p.slot}
-                    style={[styles.slotButton, isActive && styles.slotButtonActive]}
-                    onPress={() => setSelectedSlot(p.slot)}
+                    style={[styles.slotButton, isActive && styles.slotButtonActive, p.isBreak && { opacity: 0.6 }]}
+                    onPress={() => {
+                      if (!p.isBreak) setSelectedSlot(p.slot);
+                    }}
                   >
                     <Text
                       style={[styles.slotButtonText, isActive && styles.slotButtonTextActive]}
@@ -465,7 +501,7 @@ export default function SelectAttendanceContextScreen() {
             Section: {selectedAssignment?.sectionCode} · Room: {selectedAssignment?.room}
           </Text>
           <Text style={styles.confirmMeta}>
-            Date: {sessionDate} · Period {selectedSlot} ({PERIOD_SLOTS[selectedSlot - 1]?.time})
+            Date: {sessionDate} · Period {selectedSlot} ({periodSlots.find((p) => p.slot === selectedSlot)?.time || ''})
           </Text>
           <View style={styles.confirmChipRow}>
             <Chip

@@ -55,30 +55,73 @@ export default function FacultyHomeScreen() {
     if (token) {
       try {
         setLoading(true);
-        const res = await fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data)) {
-            const mapped = data.map((item: any, idx: number) => ({
-              id: item.teaching_assignment_id || item.id,
-              subject: item.subject_name,
-              section: item.section_code,
-              room: 'LH-204',
-              time: idx === 0 ? '09:00' : idx === 1 ? '11:15' : '14:00',
-              slotLabel: idx === 0 ? 'Next' : idx === 1 ? 'Later' : 'Afternoon',
-              startsIn: idx === 0 ? 'In progress' : 'Upcoming',
-              held: item.held_count != null ? item.held_count : 0,
-              avg: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : null,
-              isDelegated: Boolean(item.is_delegated),
-              regularFaculty: item.delegation_details?.regular_faculty_name || '',
-            }));
-            setClasses(mapped);
+        const [timetableRes, assignmentsRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/v1/faculty/timetable/today`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          }),
+          fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          }),
+        ]);
+
+        const assignmentStatsMap = new Map<string, any>();
+        let assignmentsList: any[] = [];
+        if (assignmentsRes.ok) {
+          assignmentsList = await assignmentsRes.json();
+          if (Array.isArray(assignmentsList)) {
+            assignmentsList.forEach((a: any) => {
+              assignmentStatsMap.set(a.teaching_assignment_id || a.id, a);
+            });
           }
         }
+
+        let scheduledToday: any[] = [];
+        if (timetableRes.ok) {
+          const ttData = await timetableRes.json();
+          if (Array.isArray(ttData) && ttData.length > 0) {
+            scheduledToday = ttData.map((item: any, idx: number) => {
+              const stats = assignmentStatsMap.get(item.teaching_assignment_id) || {};
+              return {
+                id: item.teaching_assignment_id,
+                timetableEntryId: item.timetable_entry_id,
+                periodSlot: item.period_number,
+                subject: item.subject_name,
+                section: item.section_code,
+                room: item.room_number && item.room_number !== 'TBD' ? item.room_number : 'Classroom',
+                time: item.time_display || item.start_time || 'Scheduled',
+                slotLabel: item.period_name || `P${item.period_number}`,
+                startsIn: idx === 0 ? 'Next class' : 'Upcoming',
+                held: stats.held_count != null ? stats.held_count : 0,
+                avg: stats.average_attendance_pct != null ? Math.round(stats.average_attendance_pct) : null,
+                isDelegated: Boolean(item.is_delegated),
+                regularFaculty: item.regular_faculty_name || '',
+              };
+            });
+          }
+        }
+
+        if (scheduledToday.length > 0) {
+          setClasses(scheduledToday);
+        } else if (assignmentsList.length > 0) {
+          const fallback = assignmentsList.map((item: any) => ({
+            id: item.teaching_assignment_id || item.id,
+            subject: item.subject_name,
+            section: item.section_code,
+            room: 'Ad-hoc Room',
+            time: 'Ad-hoc Session',
+            slotLabel: 'Assigned',
+            startsIn: 'Flexible',
+            held: item.held_count != null ? item.held_count : 0,
+            avg: item.average_attendance_pct != null ? Math.round(item.average_attendance_pct) : null,
+            isDelegated: Boolean(item.is_delegated),
+            regularFaculty: item.delegation_details?.regular_faculty_name || '',
+          }));
+          setClasses(fallback);
+        } else {
+          setClasses([]);
+        }
       } catch (e) {
-        console.warn('Failed to load faculty assignments:', e);
+        console.warn('Failed to load faculty schedule:', e);
       } finally {
         setLoading(false);
       }

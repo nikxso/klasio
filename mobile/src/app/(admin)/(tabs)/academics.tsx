@@ -20,6 +20,12 @@ import {
   Landmark,
   Trash2,
   Edit3,
+  Calendar,
+  Clock,
+  UserCheck,
+  GraduationCap,
+  Search,
+  Users,
 } from 'lucide-react-native';
 
 import { Screen, Card, IconBubble, SectionTitle, Sheet, Button, Chip, AccessRestrictedView } from '@/components/ui/kit';
@@ -43,6 +49,50 @@ interface DepartmentItem {
   subjects: number;
 }
 
+interface ProgramItem {
+  id: string;
+  department_id: string;
+  department_name?: string;
+  code: string;
+  name: string;
+  is_active: boolean;
+}
+
+interface PeriodItem {
+  id: string;
+  period_number: number;
+  name: string;
+  start_time: string;
+  end_time: string;
+  is_break: boolean;
+  is_active: boolean;
+}
+
+interface TimetableItem {
+  id: string;
+  subject_code?: string;
+  subject_name?: string;
+  section_code?: string;
+  period_name?: string;
+  period_number?: number;
+  start_time?: string;
+  end_time?: string;
+  day_of_week: number;
+  room_number: string;
+  faculty_name?: string;
+}
+
+interface SectionRosterStudent {
+  enrollment_id: string;
+  student_user_id: string;
+  institutional_id: string;
+  student_name: string;
+  email: string;
+  effective_start_date: string;
+  enrollment_status: string;
+  face_registration_state: string;
+}
+
 interface TermItem {
   id: string;
   code: string;
@@ -63,6 +113,8 @@ interface SectionItem {
   department_id: string;
   academic_term_id: string;
   cohort_year?: number;
+  program_id?: string;
+  program_name?: string;
 }
 
 interface FacultyUserItem {
@@ -73,20 +125,46 @@ interface FacultyUserItem {
 
 export default function AdminAcademicsScreen() {
   const router = useRouter();
-  const [catalogTab, setCatalogTab] = useState<'DEPTS' | 'SUBJECTS' | 'SECTIONS' | 'CAMPUSES'>('DEPTS');
+  const [catalogTab, setCatalogTab] = useState<'DEPTS' | 'PROGRAMS' | 'SUBJECTS' | 'SECTIONS' | 'TIMETABLE' | 'CAMPUSES'>('DEPTS');
   const [campuses, setCampuses] = useState<CampusItem[]>([]);
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [rawDepartments, setRawDepartments] = useState<{ id: string; code: string; name: string }[]>([]);
+  const [programs, setPrograms] = useState<ProgramItem[]>([]);
+  const [periods, setPeriods] = useState<PeriodItem[]>([]);
+  const [timetable, setTimetable] = useState<TimetableItem[]>([]);
+  const [assignments, setAssignments] = useState<any[]>([]);
   const [terms, setTerms] = useState<TermItem[]>([]);
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [sections, setSections] = useState<SectionItem[]>([]);
   const [facultyUsers, setFacultyUsers] = useState<FacultyUserItem[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Section Roster Modal States
+  const [selectedRosterSection, setSelectedRosterSection] = useState<SectionItem | null>(null);
+  const [rosterStudents, setRosterStudents] = useState<SectionRosterStudent[]>([]);
+  const [loadingRoster, setLoadingRoster] = useState(false);
+  const [rosterSearch, setRosterSearch] = useState('');
+
   // Modal Sheet Visibility States (Create)
-  const [activeSheet, setActiveSheet] = useState<'NONE' | 'CAMPUS' | 'DEPT' | 'SUBJECT' | 'SECTION' | 'ASSIGN'>('NONE');
+  const [activeSheet, setActiveSheet] = useState<'NONE' | 'CAMPUS' | 'DEPT' | 'PROGRAM' | 'SUBJECT' | 'SECTION' | 'ASSIGN' | 'TIMETABLE'>('NONE');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Program Sheet States
+  const [progCode, setProgCode] = useState('');
+  const [progName, setProgName] = useState('');
+  const [progDeptId, setProgDeptId] = useState('');
+  const [editingProgram, setEditingProgram] = useState<ProgramItem | null>(null);
+  const [editProgCode, setEditProgCode] = useState('');
+  const [editProgName, setEditProgName] = useState('');
+
+  // Timetable Sheet States
+  const [ttTermId, setTtTermId] = useState('');
+  const [ttSectionId, setTtSectionId] = useState('');
+  const [ttAssignmentId, setTtAssignmentId] = useState('');
+  const [ttPeriodId, setTtPeriodId] = useState('');
+  const [ttDayOfWeek, setTtDayOfWeek] = useState('1');
+  const [ttRoom, setTtRoom] = useState('LH-101');
 
   // Edit Sheet States
   const [editingDept, setEditingDept] = useState<DepartmentItem | null>(null);
@@ -125,6 +203,7 @@ export default function AdminAcademicsScreen() {
   const [secDeptId, setSecDeptId] = useState('');
   const [secTermId, setSecTermId] = useState('');
   const [secCohort, setSecCohort] = useState('2026');
+  const [secProgramId, setSecProgramId] = useState('');
 
   // Form States: Assign Faculty
   const [assignFacultyId, setAssignFacultyId] = useState('');
@@ -206,12 +285,48 @@ export default function AdminAcademicsScreen() {
         setFacultyUsers(fList);
         if (fList.length > 0 && !assignFacultyId) setAssignFacultyId(fList[0].id);
       }
+
+      // 7. Programs
+      const resPrograms = await fetch(`${API_BASE_URL}/api/v1/admin/programs`, { headers });
+      if (resPrograms.ok) {
+        const pList = await resPrograms.json();
+        setPrograms(pList);
+        if (pList.length > 0 && !progDeptId) setProgDeptId(pList[0].department_id);
+      }
+
+      // 8. Periods
+      const resPeriods = await fetch(`${API_BASE_URL}/api/v1/admin/periods`, { headers });
+      if (resPeriods.ok) {
+        const perList = await resPeriods.json();
+        setPeriods(perList);
+        const nonBreak = perList.filter((p: PeriodItem) => !p.is_break);
+        if (nonBreak.length > 0 && !ttPeriodId) setTtPeriodId(nonBreak[0].id);
+      }
+
+      // 9. Timetable
+      const resTimetable = await fetch(`${API_BASE_URL}/api/v1/admin/timetable`, { headers });
+      if (resTimetable.ok) {
+        const ttList = await resTimetable.json();
+        setTimetable(ttList);
+      }
+
+      // 10. Assignments
+      const resAssignments = await fetch(`${API_BASE_URL}/api/v1/admin/assignments`, { headers });
+      if (resAssignments.ok) {
+        const aList = await resAssignments.json();
+        setAssignments(aList);
+        if (aList.length > 0 && !ttAssignmentId) {
+          setTtAssignmentId(aList[0].id);
+          if (!ttSectionId) setTtSectionId(aList[0].class_section_id);
+          if (!ttTermId) setTtTermId(aList[0].academic_term_id);
+        }
+      }
     } catch (e) {
       console.warn('Load academics error:', e);
     } finally {
       setLoading(false);
     }
-  }, [subDeptId, secDeptId, secTermId, assignTermId, assignSubId, assignSecId, assignFacultyId]);
+  }, [subDeptId, secDeptId, secTermId, assignTermId, assignSubId, assignSecId, assignFacultyId, progDeptId, ttPeriodId, ttAssignmentId, ttSectionId, ttTermId]);
 
   useEffect(() => {
     loadAcademicsData();
@@ -346,6 +461,7 @@ export default function AdminAcademicsScreen() {
           department_id: secDeptId,
           academic_term_id: secTermId,
           cohort_year: parseInt(secCohort, 10) || 2026,
+          program_id: secProgramId || undefined,
         }),
       });
       if (res.ok) {
@@ -693,6 +809,241 @@ export default function AdminAcademicsScreen() {
     );
   };
 
+  // --- PROGRAM HANDLERS ---
+  const handleCreateProgram = async () => {
+    if (!progCode.trim() || !progName.trim() || !progDeptId) {
+      setErrorMessage('Please enter Program Code, Program Name, and select a Department.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/programs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          code: progCode.trim().toUpperCase(),
+          name: progName.trim(),
+          department_id: progDeptId,
+          is_active: true,
+        }),
+      });
+      if (res.ok) {
+        setProgCode('');
+        setProgName('');
+        setActiveSheet('NONE');
+        await loadAcademicsData();
+      } else {
+        const errorMsg = await extractErrorMessage(res, 'Failed to create program');
+        setErrorMessage(errorMsg);
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleUpdateProgram = async () => {
+    if (!editingProgram || !editProgCode.trim() || !editProgName.trim()) {
+      setErrorMessage('Please enter both Code and Name.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/programs/${editingProgram.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          code: editProgCode.trim().toUpperCase(),
+          name: editProgName.trim(),
+        }),
+      });
+      if (res.ok) {
+        setEditingProgram(null);
+        await loadAcademicsData();
+      } else {
+        const errorMsg = await extractErrorMessage(res, 'Failed to update program');
+        setErrorMessage(errorMsg);
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteProgram = (prog: ProgramItem) => {
+    Alert.alert(
+      'Delete Program',
+      `Are you sure you want to delete ${prog.code} (${prog.name})? This will fail if sections are linked to it.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setSubmitting(true);
+            try {
+              const token = SessionStore.getToken();
+              const res = await fetch(`${API_BASE_URL}/api/v1/admin/programs/${prog.id}`, {
+                method: 'DELETE',
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+              });
+              if (res.ok) {
+                setEditingProgram(null);
+                await loadAcademicsData();
+              } else {
+                const msg = await extractErrorMessage(res, 'Failed to delete program');
+                Alert.alert('Cannot Delete', msg);
+              }
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'Network error');
+            } finally {
+              setSubmitting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // --- TIMETABLE HANDLERS ---
+  const handleCreateTimetable = async () => {
+    if (!ttTermId || !ttSectionId || !ttAssignmentId || !ttPeriodId) {
+      setErrorMessage('Please select Term, Section, Assignment, and Period.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/timetable`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          academic_term_id: ttTermId,
+          class_section_id: ttSectionId,
+          teaching_assignment_id: ttAssignmentId,
+          academic_period_id: ttPeriodId,
+          day_of_week: parseInt(ttDayOfWeek, 10) || 1,
+          room_number: ttRoom.trim() || 'LH-101',
+          is_active: true,
+        }),
+      });
+      if (res.ok) {
+        setActiveSheet('NONE');
+        await loadAcademicsData();
+      } else {
+        const errorMsg = await extractErrorMessage(res, 'Failed to create timetable slot');
+        setErrorMessage(errorMsg);
+      }
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteTimetable = (item: TimetableItem) => {
+    Alert.alert(
+      'Remove Timetable Entry',
+      `Delete slot for ${item.subject_code || 'Subject'} on day ${item.day_of_week}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setSubmitting(true);
+            try {
+              const token = SessionStore.getToken();
+              const res = await fetch(`${API_BASE_URL}/api/v1/admin/timetable/${item.id}`, {
+                method: 'DELETE',
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+              });
+              if (res.ok) {
+                await loadAcademicsData();
+              } else {
+                const msg = await extractErrorMessage(res, 'Failed to delete timetable entry');
+                Alert.alert('Cannot Delete', msg);
+              }
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'Network error');
+            } finally {
+              setSubmitting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // --- SECTION ROSTER HANDLERS ---
+  const handleOpenRoster = async (sec: SectionItem) => {
+    setSelectedRosterSection(sec);
+    setLoadingRoster(true);
+    setRosterSearch('');
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/sections/${sec.id}/roster`, {
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRosterStudents(data.students || []);
+      } else {
+        const msg = await extractErrorMessage(res, 'Failed to load roster');
+        Alert.alert('Roster Error', msg);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Network error');
+    } finally {
+      setLoadingRoster(false);
+    }
+  };
+
+  const handleUpdateStudentStatus = async (enrollmentId: string, newStatus: string) => {
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/enrollments/${enrollmentId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok && selectedRosterSection) {
+        await handleOpenRoster(selectedRosterSection);
+      } else {
+        const msg = await extractErrorMessage(res, 'Failed to update enrollment status');
+        Alert.alert('Update Failed', msg);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Network error');
+    }
+  };
+
   if (!SessionStore.canManageAcademics()) {
     return (
       <AccessRestrictedView
@@ -717,40 +1068,58 @@ export default function AdminAcademicsScreen() {
       scrollable
     >
       {/* Segmented Catalog Navigator */}
-      <View style={styles.segmentContainer}>
-        <Pressable
-          onPress={() => setCatalogTab('DEPTS')}
-          style={[styles.segmentBtn, catalogTab === 'DEPTS' && styles.segmentBtnActive]}
-        >
-          <Text style={[styles.segmentBtnText, catalogTab === 'DEPTS' && styles.segmentBtnTextActive]}>
-            Depts ({departments.length})
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setCatalogTab('SUBJECTS')}
-          style={[styles.segmentBtn, catalogTab === 'SUBJECTS' && styles.segmentBtnActive]}
-        >
-          <Text style={[styles.segmentBtnText, catalogTab === 'SUBJECTS' && styles.segmentBtnTextActive]}>
-            Subjects ({subjects.length})
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setCatalogTab('SECTIONS')}
-          style={[styles.segmentBtn, catalogTab === 'SECTIONS' && styles.segmentBtnActive]}
-        >
-          <Text style={[styles.segmentBtnText, catalogTab === 'SECTIONS' && styles.segmentBtnTextActive]}>
-            Sections ({sections.length})
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setCatalogTab('CAMPUSES')}
-          style={[styles.segmentBtn, catalogTab === 'CAMPUSES' && styles.segmentBtnActive]}
-        >
-          <Text style={[styles.segmentBtnText, catalogTab === 'CAMPUSES' && styles.segmentBtnTextActive]}>
-            Campuses ({campuses.length})
-          </Text>
-        </Pressable>
-      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+        <View style={styles.segmentContainer}>
+          <Pressable
+            onPress={() => setCatalogTab('DEPTS')}
+            style={[styles.segmentBtn, catalogTab === 'DEPTS' && styles.segmentBtnActive]}
+          >
+            <Text style={[styles.segmentBtnText, catalogTab === 'DEPTS' && styles.segmentBtnTextActive]}>
+              Depts ({departments.length})
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setCatalogTab('PROGRAMS')}
+            style={[styles.segmentBtn, catalogTab === 'PROGRAMS' && styles.segmentBtnActive]}
+          >
+            <Text style={[styles.segmentBtnText, catalogTab === 'PROGRAMS' && styles.segmentBtnTextActive]}>
+              Programs ({programs.length})
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setCatalogTab('SUBJECTS')}
+            style={[styles.segmentBtn, catalogTab === 'SUBJECTS' && styles.segmentBtnActive]}
+          >
+            <Text style={[styles.segmentBtnText, catalogTab === 'SUBJECTS' && styles.segmentBtnTextActive]}>
+              Subjects ({subjects.length})
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setCatalogTab('SECTIONS')}
+            style={[styles.segmentBtn, catalogTab === 'SECTIONS' && styles.segmentBtnActive]}
+          >
+            <Text style={[styles.segmentBtnText, catalogTab === 'SECTIONS' && styles.segmentBtnTextActive]}>
+              Sections ({sections.length})
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setCatalogTab('TIMETABLE')}
+            style={[styles.segmentBtn, catalogTab === 'TIMETABLE' && styles.segmentBtnActive]}
+          >
+            <Text style={[styles.segmentBtnText, catalogTab === 'TIMETABLE' && styles.segmentBtnTextActive]}>
+              Timetable ({timetable.length})
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setCatalogTab('CAMPUSES')}
+            style={[styles.segmentBtn, catalogTab === 'CAMPUSES' && styles.segmentBtnActive]}
+          >
+            <Text style={[styles.segmentBtnText, catalogTab === 'CAMPUSES' && styles.segmentBtnTextActive]}>
+              Campuses ({campuses.length})
+            </Text>
+          </Pressable>
+        </View>
+      </ScrollView>
 
       {/* --- TAB CONTENT: DEPARTMENTS --- */}
       {catalogTab === 'DEPTS' && (
@@ -782,6 +1151,46 @@ export default function AdminAcademicsScreen() {
                     <Text style={styles.deptName}>{d.name}</Text>
                     <Text style={styles.deptSub}>
                       {d.code} · {d.sections} sections · {d.subjects} subjects
+                    </Text>
+                  </View>
+                  <ChevronRight size={18} color={Colors.soft} />
+                </Card>
+              ))
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* --- TAB CONTENT: PROGRAMS --- */}
+      {catalogTab === 'PROGRAMS' && (
+        <View style={{ marginBottom: 16 }}>
+          <SectionTitle>Degree & Academic Programs</SectionTitle>
+          <View style={styles.departmentsList}>
+            {loading && programs.length === 0 ? (
+              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+            ) : programs.length === 0 ? (
+              <Card style={styles.deptCard}>
+                <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
+                  No programs configured. Tap "Add program" below.
+                </Text>
+              </Card>
+            ) : (
+              programs.map((p) => (
+                <Card
+                  key={p.id}
+                  style={styles.deptCard}
+                  onPress={() => {
+                    setEditingProgram(p);
+                    setEditProgCode(p.code);
+                    setEditProgName(p.name);
+                    setErrorMessage(null);
+                  }}
+                >
+                  <IconBubble icon={GraduationCap} tone="forest" size={42} />
+                  <View style={styles.deptTextCol}>
+                    <Text style={styles.deptName}>{p.name}</Text>
+                    <Text style={styles.deptSub}>
+                      Code: {p.code} · Dept: {p.department_name || p.department_id.slice(0, 8)}
                     </Text>
                   </View>
                   <ChevronRight size={18} color={Colors.soft} />
@@ -861,11 +1270,82 @@ export default function AdminAcademicsScreen() {
                   <IconBubble icon={Layers} tone="forest" size={42} />
                   <View style={styles.deptTextCol}>
                     <Text style={styles.deptName}>Section {sec.section_code}</Text>
-                    <Text style={styles.deptSub}>Cohort Year: {sec.cohort_year || 2026}</Text>
+                    <Text style={styles.deptSub}>
+                      {sec.program_name ? `${sec.program_name} · ` : ''}Cohort: {sec.cohort_year || 2026}
+                    </Text>
                   </View>
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleOpenRoster(sec);
+                    }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 4,
+                      backgroundColor: Colors.forest50,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      marginRight: 6,
+                    }}
+                  >
+                    <UserCheck size={14} color={Colors.forest} />
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.forest }}>Roster</Text>
+                  </Pressable>
                   <ChevronRight size={18} color={Colors.soft} />
                 </Card>
               ))
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* --- TAB CONTENT: TIMETABLE --- */}
+      {catalogTab === 'TIMETABLE' && (
+        <View style={{ marginBottom: 16 }}>
+          <SectionTitle>Timetable & Period Schedule</SectionTitle>
+          <View style={styles.departmentsList}>
+            {loading && timetable.length === 0 ? (
+              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+            ) : timetable.length === 0 ? (
+              <Card style={styles.deptCard}>
+                <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
+                  No timetable slots configured. Tap "Add timetable slot" below.
+                </Text>
+              </Card>
+            ) : (
+              timetable.map((tt) => {
+                const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+                const dayLabel = dayNames[tt.day_of_week] || `Day ${tt.day_of_week}`;
+                return (
+                  <Card key={tt.id} style={styles.deptCard}>
+                    <IconBubble icon={Clock} tone="lilac" size={42} />
+                    <View style={styles.deptTextCol}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={styles.deptName}>{tt.subject_code || 'Subject'}</Text>
+                        <Chip tone="forest">{dayLabel}</Chip>
+                        <Chip tone="secondary">{tt.period_name || `P${tt.period_number}`}</Chip>
+                      </View>
+                      <Text style={styles.deptSub}>
+                        Sec: {tt.section_code || '—'} · Room: {tt.room_number || '—'}
+                        {tt.faculty_name ? ` · ${tt.faculty_name}` : ''}
+                      </Text>
+                      {tt.start_time && tt.end_time && (
+                        <Text style={[styles.deptSub, { fontSize: 11 }]}>
+                          {tt.start_time.slice(0, 5)} - {tt.end_time.slice(0, 5)}
+                        </Text>
+                      )}
+                    </View>
+                    <Pressable
+                      onPress={() => handleDeleteTimetable(tt)}
+                      style={{ padding: 6 }}
+                    >
+                      <Trash2 size={16} color={Colors.rose} />
+                    </Pressable>
+                  </Card>
+                );
+              })
             )}
           </View>
         </View>
@@ -989,6 +1469,36 @@ export default function AdminAcademicsScreen() {
           >
             <Link2 size={24} color={Colors.forest} />
             <Text style={styles.actionLabel}>Assign teacher</Text>
+          </Card>
+
+          {/* 5. Add Program */}
+          <Card
+            onPress={() => {
+              setErrorMessage(null);
+              setActiveSheet('PROGRAM');
+            }}
+            style={styles.actionCard}
+            accessibilityRole="button"
+            accessibilityLabel="Add program"
+            accessibilityHint="Opens sheet to establish an academic program"
+          >
+            <GraduationCap size={24} color={Colors.forest} />
+            <Text style={styles.actionLabel}>Add program</Text>
+          </Card>
+
+          {/* 6. Add Timetable Slot */}
+          <Card
+            onPress={() => {
+              setErrorMessage(null);
+              setActiveSheet('TIMETABLE');
+            }}
+            style={styles.actionCard}
+            accessibilityRole="button"
+            accessibilityLabel="Add timetable slot"
+            accessibilityHint="Opens sheet to schedule a period slot"
+          >
+            <Clock size={24} color={Colors.forest} />
+            <Text style={styles.actionLabel}>Add timetable slot</Text>
           </Card>
         </View>
       ) : (
@@ -1185,6 +1695,48 @@ export default function AdminAcademicsScreen() {
               onPress={() => handleDeleteCampus(editingCampus)}
             >
               Delete Campus
+            </Button>
+          </View>
+        </Sheet>
+      )}
+
+      {/* --- EDIT PROGRAM SHEET --- */}
+      {editingProgram && (
+        <Sheet visible={!!editingProgram} onClose={() => setEditingProgram(null)}>
+          <Text style={styles.sheetTitle}>Manage Academic Program</Text>
+          <Text style={styles.sheetSub}>Update program code, name, or delete program</Text>
+
+          {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
+
+          <Text style={styles.inputLabel}>Program Code</Text>
+          <TextInput
+            value={editProgCode}
+            onChangeText={setEditProgCode}
+            autoCapitalize="characters"
+            style={styles.textInput}
+          />
+
+          <Text style={styles.inputLabel}>Program Name</Text>
+          <TextInput
+            value={editProgName}
+            onChangeText={setEditProgName}
+            style={styles.textInput}
+          />
+
+          <View style={{ marginTop: 20, gap: 10 }}>
+            <Button
+              tone="forest"
+              disabled={submitting}
+              onPress={handleUpdateProgram}
+            >
+              {submitting ? 'Saving…' : 'Save Changes'}
+            </Button>
+            <Button
+              tone="rose"
+              disabled={submitting}
+              onPress={() => handleDeleteProgram(editingProgram)}
+            >
+              Delete Program
             </Button>
           </View>
         </Sheet>
@@ -1489,6 +2041,287 @@ export default function AdminAcademicsScreen() {
           </Button>
         </View>
       </Sheet>
+
+      {/* --- SHEET: ADD PROGRAM --- */}
+      <Sheet visible={activeSheet === 'PROGRAM'} onClose={() => setActiveSheet('NONE')}>
+        <Text style={styles.sheetTitle}>Add Academic Program</Text>
+        <Text style={styles.sheetSub}>Establish a degree program (e.g. B.Tech CSE, MBA, MCA)</Text>
+
+        {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
+
+        <Text style={styles.inputLabel}>Program Code</Text>
+        <TextInput
+          value={progCode}
+          onChangeText={setProgCode}
+          placeholder="e.g. BTECH-CSE, MBA-FIN"
+          placeholderTextColor={Colors.soft}
+          autoCapitalize="characters"
+          style={styles.textInput}
+        />
+
+        <Text style={styles.inputLabel}>Program Name</Text>
+        <TextInput
+          value={progName}
+          onChangeText={setProgName}
+          placeholder="e.g. Bachelor of Technology in Computer Science"
+          placeholderTextColor={Colors.soft}
+          style={styles.textInput}
+        />
+
+        <Text style={styles.inputLabel}>Department</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {(rawDepartments.length > 0 ? rawDepartments : departments).map((d) => (
+              <Pressable
+                key={d.id}
+                onPress={() => setProgDeptId(d.id)}
+                style={[
+                  styles.pickerChip,
+                  progDeptId === d.id && styles.pickerChipActive,
+                ]}
+              >
+                <Text style={[styles.pickerChipText, progDeptId === d.id && styles.pickerChipTextActive]}>
+                  {d.code || d.name}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+
+        <View style={{ marginTop: 20 }}>
+          <Button
+            tone="forest"
+            disabled={submitting}
+            onPress={handleCreateProgram}
+          >
+            {submitting ? 'Creating…' : 'Create Program'}
+          </Button>
+        </View>
+      </Sheet>
+
+      {/* --- SHEET: ADD TIMETABLE SLOT --- */}
+      <Sheet visible={activeSheet === 'TIMETABLE'} onClose={() => setActiveSheet('NONE')}>
+        <Text style={styles.sheetTitle}>Add Timetable Slot</Text>
+        <Text style={styles.sheetSub}>Schedule a course offering period with double-booking validation</Text>
+
+        {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
+
+        <Text style={styles.inputLabel}>Select Teaching Assignment</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {assignments.map((a) => (
+              <Pressable
+                key={a.id}
+                onPress={() => {
+                  setTtAssignmentId(a.id);
+                  setTtSectionId(a.class_section_id);
+                  setTtTermId(a.academic_term_id);
+                }}
+                style={[
+                  styles.pickerChip,
+                  ttAssignmentId === a.id && styles.pickerChipActive,
+                ]}
+              >
+                <Text style={[styles.pickerChipText, ttAssignmentId === a.id && styles.pickerChipTextActive]}>
+                  {a.subject_code || 'Course'} · {a.section_code || 'Sec'} ({a.faculty_name || 'Faculty'})
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+
+        <Text style={styles.inputLabel}>Select Period</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {periods
+              .filter((p) => !p.is_break)
+              .map((p) => (
+                <Pressable
+                  key={p.id}
+                  onPress={() => setTtPeriodId(p.id)}
+                  style={[
+                    styles.pickerChip,
+                    ttPeriodId === p.id && styles.pickerChipActive,
+                  ]}
+                >
+                  <Text style={[styles.pickerChipText, ttPeriodId === p.id && styles.pickerChipTextActive]}>
+                    P{p.period_number} ({p.start_time.slice(0, 5)})
+                  </Text>
+                </Pressable>
+              ))}
+          </View>
+        </ScrollView>
+
+        <Text style={styles.inputLabel}>Day of Week</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {[
+              { day: '1', label: 'Mon' },
+              { day: '2', label: 'Tue' },
+              { day: '3', label: 'Wed' },
+              { day: '4', label: 'Thu' },
+              { day: '5', label: 'Fri' },
+              { day: '6', label: 'Sat' },
+            ].map((d) => (
+              <Pressable
+                key={d.day}
+                onPress={() => setTtDayOfWeek(d.day)}
+                style={[
+                  styles.pickerChip,
+                  ttDayOfWeek === d.day && styles.pickerChipActive,
+                ]}
+              >
+                <Text style={[styles.pickerChipText, ttDayOfWeek === d.day && styles.pickerChipTextActive]}>
+                  {d.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+
+        <Text style={styles.inputLabel}>Room / Hall</Text>
+        <TextInput
+          value={ttRoom}
+          onChangeText={setTtRoom}
+          placeholder="e.g. LH-101, LAB-B"
+          placeholderTextColor={Colors.soft}
+          style={styles.textInput}
+        />
+
+        <View style={{ marginTop: 20 }}>
+          <Button
+            tone="forest"
+            disabled={submitting}
+            onPress={handleCreateTimetable}
+          >
+            {submitting ? 'Scheduling…' : 'Schedule Slot'}
+          </Button>
+        </View>
+      </Sheet>
+
+      {/* --- SECTION ROSTER MODAL SHEET --- */}
+      {selectedRosterSection && (
+        <Sheet visible={!!selectedRosterSection} onClose={() => setSelectedRosterSection(null)}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <Text style={styles.sheetTitle}>Section {selectedRosterSection.section_code} Roster</Text>
+            <Chip tone="forest">{rosterStudents.length} Students</Chip>
+          </View>
+          <Text style={styles.sheetSub}>
+            Cohort: {selectedRosterSection.cohort_year || 2026} · Active academic section roster
+          </Text>
+
+          <View style={[styles.textInput, { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8, marginBottom: 12 }]}>
+            <Search size={16} color={Colors.soft} />
+            <TextInput
+              placeholder="Search by name, roll, or email..."
+              placeholderTextColor={Colors.soft}
+              value={rosterSearch}
+              onChangeText={setRosterSearch}
+              style={{ flex: 1, fontSize: 13, color: Colors.ink, padding: 0 }}
+            />
+          </View>
+
+          {loadingRoster ? (
+            <ActivityIndicator color={Colors.forest} style={{ marginVertical: 30 }} />
+          ) : rosterStudents.length === 0 ? (
+            <Text style={{ textAlign: 'center', color: Colors.soft, marginVertical: 20 }}>
+              No students enrolled in this section.
+            </Text>
+          ) : (
+            <ScrollView style={{ maxHeight: 350 }}>
+              <View style={{ gap: 8, paddingBottom: 16 }}>
+                {rosterStudents
+                  .filter((st) => {
+                    const q = rosterSearch.toLowerCase();
+                    return (
+                      st.student_name.toLowerCase().includes(q) ||
+                      st.institutional_id.toLowerCase().includes(q) ||
+                      st.email.toLowerCase().includes(q)
+                    );
+                  })
+                  .map((st) => {
+                    const faceTone =
+                      st.face_registration_state === 'REGISTERED'
+                        ? 'forest'
+                        : st.face_registration_state === 'PENDING'
+                        ? 'apricot'
+                        : 'soft';
+
+                    const statusTone =
+                      st.enrollment_status === 'ACTIVE'
+                        ? 'forest'
+                        : st.enrollment_status === 'TRANSFERRED'
+                        ? 'apricot'
+                        : 'rose';
+
+                    return (
+                      <View
+                        key={st.enrollment_id}
+                        style={{
+                          backgroundColor: Colors.card,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: Colors.line,
+                          padding: 10,
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.ink }}>
+                              {st.student_name}
+                            </Text>
+                            <Text style={{ fontSize: 11, color: Colors.soft }}>
+                              ID: {st.institutional_id} · {st.email}
+                            </Text>
+                          </View>
+                          <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                            <Chip tone={statusTone}>{st.enrollment_status}</Chip>
+                            <Chip tone={faceTone}>{st.face_registration_state}</Chip>
+                          </View>
+                        </View>
+                        {/* Status Quick Actions */}
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8, justifyContent: 'flex-end' }}>
+                          {st.enrollment_status !== 'ACTIVE' && (
+                            <Pressable
+                              onPress={() => handleUpdateStudentStatus(st.enrollment_id, 'ACTIVE')}
+                              style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: Colors.forest50 }}
+                            >
+                              <Text style={{ fontSize: 10, fontWeight: '600', color: Colors.forest }}>Set Active</Text>
+                            </Pressable>
+                          )}
+                          {st.enrollment_status !== 'TRANSFERRED' && (
+                            <Pressable
+                              onPress={() => handleUpdateStudentStatus(st.enrollment_id, 'TRANSFERRED')}
+                              style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: Colors.apricot50 }}
+                            >
+                              <Text style={{ fontSize: 10, fontWeight: '600', color: Colors.apricot }}>Transfer</Text>
+                            </Pressable>
+                          )}
+                          {st.enrollment_status !== 'WITHDRAWN' && (
+                            <Pressable
+                              onPress={() => handleUpdateStudentStatus(st.enrollment_id, 'WITHDRAWN')}
+                              style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#ffebe9' }}
+                            >
+                              <Text style={{ fontSize: 10, fontWeight: '600', color: Colors.rose }}>Withdraw</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </View>
+                    );
+                  })}
+              </View>
+            </ScrollView>
+          )}
+
+          <Button
+            variant="soft"
+            onPress={() => setSelectedRosterSection(null)}
+            style={{ marginTop: 12 }}
+          >
+            Close Roster
+          </Button>
+        </Sheet>
+      )}
     </Screen>
   );
 }

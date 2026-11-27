@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional, Dict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import EntityNotFoundError, OutOfScopeError, ConflictError
-from src.core.permissions import require_admin, resolve_tenant_and_membership
+from src.core.permissions import require_admin, require_permission, resolve_tenant_and_membership
 from src.core.security import get_password_hash
 from src.database import get_db_session
 from src.models.access_control import (
@@ -29,9 +29,10 @@ from src.models.access_control import (
     AuthorizationAudit,
     AuditOutcome,
 )
-from src.models.academic import AcademicTerm, ClassSection, Department, Subject
+from src.models.academic import AcademicTerm, ClassSection, Department, Subject, Program, AcademicPeriod, TimetableEntry
 from src.models.assignment import TeachingAssignment
 from src.models.user import User, UserRole, AccountStatus
+from src.models.enrollment import EnrollmentStatus
 from src.schemas.access_control import (
     CampusCreate,
     CampusUpdate,
@@ -58,9 +59,18 @@ from src.schemas.academic import (
     DepartmentCreate,
     DepartmentUpdate,
     DepartmentResponse,
+    ProgramCreate,
+    ProgramUpdate,
+    ProgramResponse,
     SubjectCreate,
     SubjectUpdate,
     SubjectResponse,
+    AcademicPeriodCreate,
+    AcademicPeriodUpdate,
+    AcademicPeriodResponse,
+    TimetableEntryCreate,
+    TimetableEntryUpdate,
+    TimetableEntryResponse,
 )
 from src.schemas.assignment import (
     TeachingAssignmentCreate,
@@ -72,7 +82,13 @@ from src.schemas.enrollment import (
     StudentEnrollmentResponse,
     StudentTransferRequest,
     StudentTransferResponse,
+    BulkEnrollmentPreviewRequest,
+    BulkEnrollmentPreviewResponse,
+    BulkEnrollmentExecuteRequest,
+    BulkEnrollmentExecuteResponse,
+    SectionRosterResponse,
 )
+from src.services.timetable_service import TimetableService
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin Academic Catalog"])
 
@@ -160,6 +176,140 @@ async def delete_department(
     await db.delete(dept)
     await db.flush()
     return {"message": f"Department '{dept.code}' deleted successfully", "id": str(department_id)}
+
+
+# ==========================================
+# ACADEMIC PROGRAMS
+# ==========================================
+
+@router.get("/programs", response_model=List[ProgramResponse], summary="List degree programs")
+async def list_programs(
+    department_id: Optional[uuid.UUID] = Query(None, description="Filter by department"),
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("academic_structure.view")),
+):
+    stmt = select(Program).options(selectinload(Program.department))
+    if department_id:
+        stmt = stmt.where(Program.department_id == department_id)
+    stmt = stmt.order_by(Program.name.asc())
+    res = await db.execute(stmt)
+    programs = res.scalars().all()
+    return [
+        ProgramResponse(
+            id=p.id,
+            department_id=p.department_id,
+            department_name=p.department.name if p.department else None,
+            code=p.code,
+            name=p.name,
+            is_active=p.is_active,
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+        )
+        for p in programs
+    ]
+
+
+@router.post("/programs", response_model=ProgramResponse, status_code=status.HTTP_201_CREATED, summary="Create a degree program")
+async def create_program(
+    payload: ProgramCreate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("academic_structure.create")),
+):
+    dept = (await db.execute(select(Department).where(Department.id == payload.department_id))).scalar_one_or_none()
+    if not dept:
+        raise EntityNotFoundError(f"Department {payload.department_id} not found")
+
+    code_clean = payload.code.strip().upper()
+    name_clean = payload.name.strip()
+    dup_stmt = select(Program).where(
+        Program.department_id == payload.department_id,
+        Program.code == code_clean,
+    )
+    if (await db.execute(dup_stmt)).scalar_one_or_none():
+        raise ConflictError(f"Program with code '{code_clean}' already exists in this department")
+
+    prog = Program(
+        department_id=payload.department_id,
+        code=code_clean,
+        name=name_clean,
+        is_active=payload.is_active,
+    )
+    db.add(prog)
+    await db.flush()
+    await db.refresh(prog)
+    return ProgramResponse(
+        id=prog.id,
+        department_id=prog.department_id,
+        department_name=dept.name,
+        code=prog.code,
+        name=prog.name,
+        is_active=prog.is_active,
+        created_at=prog.created_at,
+        updated_at=prog.updated_at,
+    )
+
+
+@router.patch("/programs/{program_id}", response_model=ProgramResponse, summary="Update degree program")
+async def update_program(
+    program_id: uuid.UUID,
+    payload: ProgramUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("academic_structure.update")),
+):
+    prog = (await db.execute(select(Program).options(selectinload(Program.department)).where(Program.id == program_id))).scalar_one_or_none()
+    if not prog:
+        raise EntityNotFoundError(f"Program {program_id} not found")
+
+    if payload.code is not None:
+        new_code = payload.code.strip().upper()
+        dup_stmt = select(Program).where(
+            Program.department_id == prog.department_id,
+            Program.code == new_code,
+            Program.id != program_id,
+        )
+        if (await db.execute(dup_stmt)).scalar_one_or_none():
+            raise ConflictError(f"Program code '{new_code}' already exists in this department")
+        prog.code = new_code
+
+    if payload.name is not None:
+        prog.name = payload.name.strip()
+    if payload.is_active is not None:
+        prog.is_active = payload.is_active
+
+    await db.flush()
+    await db.refresh(prog)
+    return ProgramResponse(
+        id=prog.id,
+        department_id=prog.department_id,
+        department_name=prog.department.name if prog.department else None,
+        code=prog.code,
+        name=prog.name,
+        is_active=prog.is_active,
+        created_at=prog.created_at,
+        updated_at=prog.updated_at,
+    )
+
+
+@router.delete("/programs/{program_id}", status_code=status.HTTP_200_OK, summary="Delete degree program")
+async def delete_program(
+    program_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("academic_structure.archive")),
+):
+    prog = (await db.execute(select(Program).where(Program.id == program_id))).scalar_one_or_none()
+    if not prog:
+        raise EntityNotFoundError(f"Program {program_id} not found")
+
+    sec_count = (await db.execute(select(func.count(ClassSection.id)).where(ClassSection.program_id == program_id))).scalar() or 0
+    if sec_count > 0:
+        prog.is_active = False
+        await db.flush()
+        return {"message": f"Program '{prog.code}' has {sec_count} class sections; marked inactive.", "id": str(program_id)}
+
+    await db.delete(prog)
+    await db.flush()
+    return {"message": f"Program '{prog.code}' deleted successfully", "id": str(program_id)}
+
 
 
 @router.get("/terms", response_model=List[AcademicTermResponse], summary="List all academic terms")
@@ -289,28 +439,59 @@ async def delete_subject(
 @router.get("/sections", response_model=List[ClassSectionResponse], summary="List class sections")
 async def list_sections(
     department_id: Optional[uuid.UUID] = Query(None),
+    program_id: Optional[uuid.UUID] = Query(None),
+    academic_term_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.view")),
 ):
-    stmt = select(ClassSection)
+    stmt = (
+        select(ClassSection)
+        .options(
+            selectinload(ClassSection.department),
+            selectinload(ClassSection.academic_term),
+            selectinload(ClassSection.program),
+        )
+    )
     if department_id:
         stmt = stmt.where(ClassSection.department_id == department_id)
+    if program_id:
+        stmt = stmt.where(ClassSection.program_id == program_id)
+    if academic_term_id:
+        stmt = stmt.where(ClassSection.academic_term_id == academic_term_id)
     stmt = stmt.order_by(ClassSection.section_code.asc())
     res = await db.execute(stmt)
-    return res.scalars().all()
+    sections = res.scalars().all()
+    return [
+        ClassSectionResponse(
+            id=s.id,
+            section_code=s.section_code,
+            department_id=s.department_id,
+            academic_term_id=s.academic_term_id,
+            cohort_year=s.cohort_year,
+            program_id=s.program_id,
+            campus_id=s.campus_id,
+            department_name=s.department.name if s.department else None,
+            term_name=s.academic_term.name if s.academic_term else None,
+            program_name=s.program.name if s.program else None,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in sections
+    ]
 
 
 @router.post("/sections", response_model=ClassSectionResponse, status_code=status.HTTP_201_CREATED)
 async def create_section(
     payload: ClassSectionCreate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.create")),
 ):
     section = ClassSection(
         section_code=payload.section_code.strip().upper(),
         department_id=payload.department_id,
         academic_term_id=payload.academic_term_id,
         cohort_year=payload.cohort_year,
+        program_id=payload.program_id,
     )
     db.add(section)
     await db.flush()
@@ -371,6 +552,59 @@ async def delete_section(
     return {"message": f"Class section '{sec.section_code}' deleted successfully", "id": str(section_id)}
 
 
+@router.get("/assignments", response_model=List[TeachingAssignmentResponse], summary="List teaching assignments")
+async def list_teaching_assignments(
+    section_id: Optional[uuid.UUID] = None,
+    term_id: Optional[uuid.UUID] = None,
+    faculty_id: Optional[uuid.UUID] = None,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_admin),
+):
+    stmt = (
+        select(TeachingAssignment)
+        .options(
+            selectinload(TeachingAssignment.subject),
+            selectinload(TeachingAssignment.class_section),
+            selectinload(TeachingAssignment.faculty_user),
+        )
+        .order_by(TeachingAssignment.created_at.desc())
+    )
+    if section_id:
+        stmt = stmt.where(TeachingAssignment.class_section_id == section_id)
+    if term_id:
+        stmt = stmt.where(TeachingAssignment.academic_term_id == term_id)
+    if faculty_id:
+        stmt = stmt.where(TeachingAssignment.faculty_user_id == faculty_id)
+
+    res = await db.execute(stmt)
+    assignments = res.scalars().all()
+    results = []
+    for a in assignments:
+        status_val = a.assignment_status.value if hasattr(a.assignment_status, "value") else str(a.assignment_status)
+        results.append(
+            TeachingAssignmentResponse(
+                id=a.id,
+                faculty_user_id=a.faculty_user_id,
+                class_section_id=a.class_section_id,
+                subject_id=a.subject_id,
+                academic_term_id=a.academic_term_id,
+                teaching_group=a.teaching_group or "DEFAULT",
+                assignment_status=status_val,
+                start_date=a.start_date,
+                end_date=a.end_date,
+                is_active=a.is_active,
+                created_by_user_id=a.created_by_user_id,
+                created_at=a.created_at,
+                updated_at=a.updated_at,
+                subject_code=a.subject.code if a.subject else None,
+                subject_name=a.subject.name if a.subject else None,
+                section_code=a.class_section.section_code if a.class_section else None,
+                faculty_name=a.faculty_user.full_name if a.faculty_user else None,
+            )
+        )
+    return results
+
+
 @router.post("/assignments", response_model=TeachingAssignmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_teaching_assignment(
     payload: TeachingAssignmentCreate,
@@ -399,6 +633,9 @@ async def create_teaching_assignment(
         class_section_id=payload.class_section_id,
         subject_id=payload.subject_id,
         academic_term_id=payload.academic_term_id,
+        teaching_group=payload.teaching_group or "DEFAULT",
+        start_date=payload.start_date,
+        end_date=payload.end_date,
         is_active=payload.is_active,
         created_by_user_id=admin_user.id,
     )
@@ -503,6 +740,181 @@ async def transfer_student(
         previous_enrollment=StudentEnrollmentResponse.model_validate(prev_enr),
         new_enrollment=StudentEnrollmentResponse.model_validate(new_enr),
     )
+
+
+# ==========================================
+# BULK ENROLLMENT & SECTION ROSTER
+# ==========================================
+
+class EnrollmentStatusUpdateRequest(BaseModel):
+    status: EnrollmentStatus
+    effective_end_date: Optional[date] = None
+
+
+@router.get(
+    "/sections/{section_id}/roster",
+    response_model=SectionRosterResponse,
+    summary="Get full section roster with biometric state and lifecycle status",
+)
+async def get_section_roster(
+    section_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("student_enrollment.view")),
+):
+    from src.services.enrollment_service import EnrollmentService
+    service = EnrollmentService(db)
+    return await service.get_section_roster(section_id)
+
+
+@router.post(
+    "/enrollments/bulk-preview",
+    response_model=BulkEnrollmentPreviewResponse,
+    summary="Dry-run preview and row-level validation for bulk student enrollment",
+)
+async def bulk_enroll_preview(
+    payload: BulkEnrollmentPreviewRequest,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("student_enrollment.create")),
+):
+    from src.services.enrollment_service import EnrollmentService
+    service = EnrollmentService(db)
+    return await service.bulk_enroll_preview(payload)
+
+
+@router.post(
+    "/enrollments/bulk-execute",
+    response_model=BulkEnrollmentExecuteResponse,
+    summary="Execute transactional bulk student enrollment",
+)
+async def bulk_enroll_execute(
+    payload: BulkEnrollmentExecuteRequest,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("student_enrollment.create")),
+):
+    from src.services.enrollment_service import EnrollmentService
+    service = EnrollmentService(db)
+    return await service.bulk_enroll_execute(payload)
+
+
+@router.patch(
+    "/enrollments/{enrollment_id}/status",
+    response_model=StudentEnrollmentResponse,
+    summary="Update student enrollment lifecycle status (WITHDRAWN, COMPLETED, ACTIVE)",
+)
+async def update_enrollment_status(
+    enrollment_id: uuid.UUID,
+    payload: EnrollmentStatusUpdateRequest,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("student_enrollment.withdraw")),
+):
+    from src.services.enrollment_service import EnrollmentService
+    service = EnrollmentService(db)
+    enr = await service.update_enrollment_status(enrollment_id, payload.status, payload.effective_end_date)
+    return StudentEnrollmentResponse.model_validate(enr)
+
+
+# ==========================================
+# ACADEMIC PERIODS CONFIGURATION
+# ==========================================
+
+@router.get("/periods", response_model=List[AcademicPeriodResponse], summary="List academic periods")
+async def list_periods(
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("timetable.view")),
+):
+    service = TimetableService(db)
+    periods = await service.list_periods()
+    return [AcademicPeriodResponse.model_validate(p) for p in periods]
+
+
+@router.post("/periods", response_model=AcademicPeriodResponse, status_code=status.HTTP_201_CREATED, summary="Create academic period")
+async def create_period(
+    payload: AcademicPeriodCreate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("timetable.manage")),
+):
+    service = TimetableService(db)
+    period = await service.create_period(payload)
+    return AcademicPeriodResponse.model_validate(period)
+
+
+@router.patch("/periods/{period_id}", response_model=AcademicPeriodResponse, summary="Update academic period")
+async def update_period(
+    period_id: uuid.UUID,
+    payload: AcademicPeriodUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("timetable.manage")),
+):
+    service = TimetableService(db)
+    period = await service.update_period(period_id, payload)
+    return AcademicPeriodResponse.model_validate(period)
+
+
+@router.delete("/periods/{period_id}", status_code=status.HTTP_200_OK, summary="Delete academic period")
+async def delete_period(
+    period_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("timetable.manage")),
+):
+    service = TimetableService(db)
+    await service.delete_period(period_id)
+    return {"message": "Academic period deleted or deactivated successfully", "id": str(period_id)}
+
+
+# ==========================================
+# TIMETABLE MANAGEMENT
+# ==========================================
+
+@router.get("/timetable", response_model=List[TimetableEntryResponse], summary="List timetable entries with filters")
+async def list_timetable(
+    class_section_id: Optional[uuid.UUID] = Query(None, description="Filter by class section"),
+    academic_term_id: Optional[uuid.UUID] = Query(None, description="Filter by academic term"),
+    day_of_week: Optional[int] = Query(None, ge=1, le=7, description="Filter by day of week (1=Mon..7=Sun)"),
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("timetable.view")),
+):
+    service = TimetableService(db)
+    return await service.list_timetable(
+        class_section_id=class_section_id,
+        academic_term_id=academic_term_id,
+        day_of_week=day_of_week,
+    )
+
+
+@router.post("/timetable", response_model=TimetableEntryResponse, status_code=status.HTTP_201_CREATED, summary="Create timetable entry with conflict prevention")
+async def create_timetable_entry(
+    payload: TimetableEntryCreate,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("timetable.manage")),
+):
+    service = TimetableService(db)
+    entry = await service.create_timetable_entry(payload)
+    # Re-query formatted entry
+    results = await service.list_timetable(
+        class_section_id=entry.class_section_id,
+        academic_term_id=entry.academic_term_id,
+        day_of_week=entry.day_of_week,
+    )
+    for r in results:
+        if r.id == entry.id:
+            return r
+    return TimetableEntryResponse.model_validate(entry)
+
+
+@router.delete("/timetable/{entry_id}", status_code=status.HTTP_200_OK, summary="Delete timetable entry")
+async def delete_timetable_entry(
+    entry_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(require_permission("timetable.manage")),
+):
+    entry = (await db.execute(select(TimetableEntry).where(TimetableEntry.id == entry_id))).scalar_one_or_none()
+    if not entry:
+        raise EntityNotFoundError(f"Timetable entry {entry_id} not found")
+
+    await db.delete(entry)
+    await db.flush()
+    return {"message": "Timetable entry deleted successfully", "id": str(entry_id)}
+
 
 
 class AdminUserListItem(BaseModel):

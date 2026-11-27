@@ -28,6 +28,20 @@ from src.services.scoping_service import ScopingService
 router = APIRouter(prefix="/api/v1/faculty", tags=["Faculty Scoped Attendance"])
 
 
+@router.get("/timetable/today", summary="Retrieve today's scheduled classes for faculty")
+async def get_faculty_today_schedule(
+    on_date: Optional[date] = Query(None, description="Optional target date (defaults to today)"),
+    current_faculty: User = Depends(require_faculty),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from src.services.timetable_service import TimetableService
+    service = TimetableService(db)
+    return await service.get_faculty_today_schedule(
+        faculty_user_id=current_faculty.id,
+        target_date=on_date or date.today(),
+    )
+
+
 @router.get("/assignments", response_model=List[FacultyTeachingAssignment])
 async def get_faculty_assignments(
     academic_term_id: Optional[uuid.UUID] = Query(None),

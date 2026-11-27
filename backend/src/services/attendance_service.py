@@ -219,6 +219,7 @@ class AttendanceService:
                 institution_id=assignment.institution_id if hasattr(assignment, "institution_id") and assignment.institution_id else None,
                 client_session_uuid=session_req.client_session_uuid,
                 teaching_assignment_id=session_req.teaching_assignment_id,
+                timetable_entry_id=getattr(session_req, "timetable_entry_id", None),
                 session_date=session_req.session_date,
                 period_slot_or_sequence=session_req.period_slot_or_sequence,
                 applicability_status=session_req.applicability_status,

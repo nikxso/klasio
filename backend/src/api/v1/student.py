@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from src.schemas.enrollment import (
     StudentPersonalAttendanceResponse,
     StudentSubjectHistoryResponse,
+    StudentCurrentEnrollmentResponse,
 )
 from src.schemas.request import (
     CreateAttendanceRequest,
@@ -19,6 +20,25 @@ from src.services.enrollment_service import EnrollmentService
 from src.services.request_service import RequestService
 
 router = APIRouter(prefix="/api/v1/student", tags=["Student Attendance Portal"])
+
+
+@router.get("/enrollment/current", response_model=Optional[StudentCurrentEnrollmentResponse], summary="Get student's current active class section and academic term")
+async def get_student_current_enrollment(
+    current_student: User = Depends(require_student),
+    db: AsyncSession = Depends(get_db_session),
+):
+    enrollment_service = EnrollmentService(db)
+    return await enrollment_service.get_student_current_enrollment(current_student.id)
+
+
+@router.get("/timetable/weekly", summary="Get student's weekly timetable schedule")
+async def get_student_weekly_timetable(
+    current_student: User = Depends(require_student),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from src.services.timetable_service import TimetableService
+    service = TimetableService(db)
+    return await service.get_student_weekly_schedule(current_student.id)
 
 
 class StudentDailySessionItem(BaseModel):

@@ -39,13 +39,40 @@ import { SessionStore } from '@/storage/sessionStore';
 import { NotificationRepository } from '@/storage/notificationRepository';
 import { AttendanceBarChart, AttendanceTrendLineChart } from '@/components/charts';
 
+interface CurrentEnrollment {
+  has_active_enrollment: boolean;
+  section_code?: string;
+  department_name?: string;
+  program_name?: string;
+  academic_term_name?: string;
+  cohort_year?: number;
+  enrollment_status?: string;
+}
+
 export default function StudentHomeScreen() {
   const router = useRouter();
   const [user, setUser] = useState(SessionStore.getUser());
   const [data, setData] = useState<StudentPersonalAttendanceResponse | null>(null);
+  const [enrollment, setEnrollment] = useState<CurrentEnrollment | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [unreadCount, setUnreadCount] = useState<number>(0);
+
+  const fetchEnrollment = useCallback(async () => {
+    const token = SessionStore.getToken();
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/student/enrollment/current`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const enrData = await res.json();
+        setEnrollment(enrData);
+      }
+    } catch (e) {
+      console.warn('Failed to sync student enrollment:', e);
+    }
+  }, []);
 
   const fetchAttendance = useCallback(async () => {
     const token = SessionStore.getToken();
@@ -69,7 +96,7 @@ export default function StudentHomeScreen() {
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchAttendance();
+    await Promise.all([fetchAttendance(), fetchEnrollment()]);
     const stored = SessionStore.getUser();
     const token = SessionStore.getToken();
     if (stored) {
@@ -77,7 +104,7 @@ export default function StudentHomeScreen() {
       setUnreadCount(count);
     }
     setRefreshing(false);
-  }, [fetchAttendance]);
+  }, [fetchAttendance, fetchEnrollment]);
 
   const faceStatus: 'none' | 'pending' | 'approved' = useMemo(() => {
     const state = user?.faceRegistrationState;
@@ -154,6 +181,10 @@ export default function StudentHomeScreen() {
         const count = await NotificationRepository.getUnreadCount(stored.id, token);
         if (!isCancelled) setUnreadCount(count);
       }
+
+      if (!isCancelled) {
+        fetchEnrollment();
+      }
     }
     loadData();
     return () => {
@@ -207,6 +238,25 @@ export default function StudentHomeScreen() {
       }
       scrollable
     >
+      {enrollment?.has_active_enrollment && (
+        <Card style={styles.enrollmentBanner}>
+          <IconBubble icon={GraduationCap} tone="forest" size={40} />
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.enrollmentSection}>
+                Section {enrollment.section_code}
+              </Text>
+              <Chip tone="forest">{enrollment.enrollment_status || 'ACTIVE'}</Chip>
+            </View>
+            <Text style={styles.enrollmentSub}>
+              {[enrollment.program_name || enrollment.department_name, enrollment.academic_term_name]
+                .filter(Boolean)
+                .join(' · ')}
+            </Text>
+          </View>
+        </Card>
+      )}
+
       <Card style={styles.heroCard}>
         <Ring pct={overall ?? 0} size={110} />
         <View style={styles.heroTextCol}>
@@ -506,5 +556,22 @@ const styles = StyleSheet.create({
   subjectGuidance: {
     fontSize: 11,
     color: Colors.soft,
+  },
+  enrollmentBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  enrollmentSection: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  enrollmentSub: {
+    fontSize: 12,
+    color: Colors.soft,
+    marginTop: 2,
   },
 });

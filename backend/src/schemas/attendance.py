@@ -32,6 +32,7 @@ class SubmitAttendanceSessionRequest(BaseModel):
 
     client_session_uuid: uuid.UUID = Field(..., validation_alias=AliasChoices("client_session_uuid", "clientSessionUuid"))
     teaching_assignment_id: uuid.UUID = Field(..., validation_alias=AliasChoices("teaching_assignment_id", "teachingAssignmentId"))
+    timetable_entry_id: Optional[uuid.UUID] = Field(default=None, validation_alias=AliasChoices("timetable_entry_id", "timetableEntryId"))
     session_date: date = Field(..., validation_alias=AliasChoices("session_date", "sessionDate"))
     period_slot_or_sequence: int = Field(default=1, ge=1, validation_alias=AliasChoices("period_slot_or_sequence", "periodSlotOrSequence"))
     applicability_status: SessionApplicability = Field(

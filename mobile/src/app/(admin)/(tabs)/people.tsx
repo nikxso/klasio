@@ -63,6 +63,28 @@ interface ClassSectionItem {
   academic_term_id: string;
 }
 
+interface BulkPreviewStudent {
+  row_index: number;
+  institutional_id: string;
+  student_name: string;
+  email: string;
+  user_exists: boolean;
+  membership_exists: boolean;
+  is_valid: boolean;
+  validation_error?: string | null;
+  status: string;
+}
+
+interface BulkPreviewResult {
+  total_submitted: number;
+  valid_count: number;
+  duplicate_count: number;
+  new_accounts_count: number;
+  existing_memberships_count: number;
+  rejected_count: number;
+  preview_rows: BulkPreviewStudent[];
+}
+
 interface SubjectItem {
   id: string;
   code: string;
@@ -206,6 +228,15 @@ export default function AdminPeopleScreen() {
   const [grantingRole, setGrantingRole] = useState(false);
   const [grantRoleError, setGrantRoleError] = useState<string | null>(null);
 
+  // Bulk Enrollment State
+  const [showBulkEnrollSheet, setShowBulkEnrollSheet] = useState(false);
+  const [bulkSectionId, setBulkSectionId] = useState('');
+  const [bulkCsvText, setBulkCsvText] = useState('');
+  const [bulkPreviewResult, setBulkPreviewResult] = useState<BulkPreviewResult | null>(null);
+  const [bulkPreviewing, setBulkPreviewing] = useState(false);
+  const [bulkExecuting, setBulkExecuting] = useState(false);
+  const [bulkEnrollError, setBulkEnrollError] = useState<string | null>(null);
+
   // Faculty Assignments State
   const [facultyAssignments, setFacultyAssignments] = useState<FacultyAssignment[]>([]);
   const [allSections, setAllSections] = useState<ClassSectionItem[]>([]);
@@ -247,6 +278,113 @@ export default function AdminPeopleScreen() {
       setLoading(false);
     }
   }, [selectedRoleTemplateId]);
+
+  const parseBulkCsvRows = (text: string) => {
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const rows = [];
+    for (const line of lines) {
+      const parts = line.split(/[,;\t]+/).map((p) => p.trim());
+      if (parts.length >= 2) {
+        rows.push({
+          institutional_id: parts[0],
+          full_name: parts[1],
+          email: parts[2] || `${parts[0].toLowerCase().replace(/[^a-z0-9]/g, '')}@student.edu`,
+        });
+      }
+    }
+    return rows;
+  };
+
+  const handleBulkPreview = async () => {
+    if (!bulkSectionId) {
+      setBulkEnrollError('Please select a target class section.');
+      return;
+    }
+    const rows = parseBulkCsvRows(bulkCsvText);
+    if (rows.length === 0) {
+      setBulkEnrollError('Please enter at least one student row: RollNumber, Full Name, Email');
+      return;
+    }
+    const sec = allSections.find((s) => s.id === bulkSectionId);
+    if (!sec?.academic_term_id) {
+      setBulkEnrollError('Selected section does not have an associated academic term.');
+      return;
+    }
+
+    setBulkPreviewing(true);
+    setBulkEnrollError(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/enrollments/bulk-preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          academic_term_id: sec.academic_term_id,
+          class_section_id: bulkSectionId,
+          rows,
+        }),
+      });
+      if (res.ok) {
+        const previewData = await res.json();
+        setBulkPreviewResult(previewData);
+      } else {
+        const msg = await extractErrorMessage(res, 'Failed to preview bulk enrollment');
+        setBulkEnrollError(msg);
+      }
+    } catch (e: any) {
+      setBulkEnrollError(e?.message || 'Network error');
+    } finally {
+      setBulkPreviewing(false);
+    }
+  };
+
+  const handleBulkExecute = async () => {
+    if (!bulkSectionId) return;
+    const rows = parseBulkCsvRows(bulkCsvText);
+    if (rows.length === 0) return;
+    const sec = allSections.find((s) => s.id === bulkSectionId);
+    if (!sec?.academic_term_id) return;
+
+    setBulkExecuting(true);
+    setBulkEnrollError(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/enrollments/bulk-execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          academic_term_id: sec.academic_term_id,
+          class_section_id: bulkSectionId,
+          rows,
+          create_missing_accounts: true,
+        }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        Alert.alert(
+          'Bulk Enrollment Completed',
+          `Successfully enrolled ${result.created_enrollments_count} students.\n(${result.created_users_count} new accounts created).`
+        );
+        setShowBulkEnrollSheet(false);
+        setBulkCsvText('');
+        setBulkPreviewResult(null);
+        await loadDirectory();
+      } else {
+        const msg = await extractErrorMessage(res, 'Failed to execute bulk enrollment');
+        setBulkEnrollError(msg);
+      }
+    } catch (e: any) {
+      setBulkEnrollError(e?.message || 'Network error');
+    } finally {
+      setBulkExecuting(false);
+    }
+  };
 
   const handleCreateRoleAssignment = async () => {
     if (!assignRoleTargetMembershipId || !selectedRoleTemplateId) {
@@ -874,6 +1012,22 @@ export default function AdminPeopleScreen() {
               style={styles.searchInput}
             />
           </View>
+          {who === 'student' && (SessionStore.hasPermission('membership.invite') || SessionStore.hasAnyRole(['ADMIN', 'INSTITUTION_OWNER', 'CENTRAL_INSTITUTION_ADMIN'])) && (
+            <Pressable
+              onPress={() => {
+                setBulkEnrollError(null);
+                setBulkPreviewResult(null);
+                if (allSections.length > 0 && !bulkSectionId) setBulkSectionId(allSections[0].id);
+                setShowBulkEnrollSheet(true);
+              }}
+              style={[styles.addUserButton, { backgroundColor: Colors.forest, paddingHorizontal: 12, width: 'auto', flexDirection: 'row', gap: 6 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Bulk enroll students"
+            >
+              <Users size={16} color="#ffffff" />
+              <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }}>Bulk Enroll</Text>
+            </Pressable>
+          )}
           {(SessionStore.hasPermission('membership.invite') || SessionStore.hasAnyRole(['ADMIN', 'INSTITUTION_OWNER', 'CENTRAL_INSTITUTION_ADMIN'])) && (
             <Pressable
               onPress={() => {
@@ -1747,6 +1901,124 @@ export default function AdminPeopleScreen() {
             {assignRoleSubmitting ? 'Granting…' : 'Grant Role Assignment'}
           </Button>
         </View>
+      </Sheet>
+
+      {/* --- SHEET: BULK STUDENT ENROLLMENT --- */}
+      <Sheet visible={showBulkEnrollSheet} onClose={() => setShowBulkEnrollSheet(false)}>
+        <Text style={styles.sheetTitle}>Bulk Student Enrollment</Text>
+        <Text style={styles.sheetSub}>Import and admit a class cohort using CSV format</Text>
+
+        {bulkEnrollError && <Text style={styles.errorBanner}>{bulkEnrollError}</Text>}
+
+        <Text style={styles.inputLabel}>Target Class Section</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {allSections.map((s) => (
+              <Pressable
+                key={s.id}
+                onPress={() => setBulkSectionId(s.id)}
+                style={[
+                  styles.pickerChip,
+                  bulkSectionId === s.id && styles.pickerChipActive,
+                ]}
+              >
+                <Text style={[styles.pickerChipText, bulkSectionId === s.id && styles.pickerChipTextActive]}>
+                  {s.section_code}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+
+        <Text style={styles.inputLabel}>Student Roster Records</Text>
+        <Text style={{ fontSize: 11, color: Colors.soft, marginBottom: 6 }}>
+          Format: RollNumber, Full Name, Email (one student per line)
+        </Text>
+        <TextInput
+          value={bulkCsvText}
+          onChangeText={setBulkCsvText}
+          multiline
+          numberOfLines={6}
+          placeholder={"CSE201, Priya Sharma, priya@attendly.edu\nCSE202, Rahul Verma, rahul@attendly.edu"}
+          placeholderTextColor={Colors.soft}
+          style={[styles.textInput, { height: 110, textAlignVertical: 'top' }]}
+        />
+
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+          <Button
+            variant="soft"
+            style={{ flex: 1 }}
+            disabled={bulkPreviewing}
+            onPress={handleBulkPreview}
+          >
+            {bulkPreviewing ? 'Validating…' : 'Preview Roster'}
+          </Button>
+          <Button
+            variant="ghost"
+            onPress={() => {
+              setBulkCsvText('');
+              setBulkPreviewResult(null);
+            }}
+          >
+            Clear
+          </Button>
+        </View>
+
+        {bulkPreviewResult && (
+          <View style={{ marginBottom: 16 }}>
+            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+              <Chip tone="forest">{bulkPreviewResult.valid_count} Valid</Chip>
+              <Chip tone="secondary">{bulkPreviewResult.new_accounts_count} New Users</Chip>
+              <Chip tone="apricot">{bulkPreviewResult.duplicate_count} Existing</Chip>
+              {bulkPreviewResult.rejected_count > 0 && (
+                <Chip tone="rose">{bulkPreviewResult.rejected_count} Rejected</Chip>
+              )}
+            </View>
+
+            <ScrollView style={{ maxHeight: 180, marginBottom: 12 }}>
+              <View style={{ gap: 6 }}>
+                {bulkPreviewResult.preview_rows.map((row) => (
+                  <View
+                    key={row.row_index}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: Colors.card,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: Colors.line,
+                      padding: 8,
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.ink }}>
+                        {row.student_name}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: Colors.soft }}>
+                        {row.institutional_id} · {row.email}
+                      </Text>
+                      {row.validation_error && (
+                        <Text style={{ fontSize: 10, color: Colors.rose, marginTop: 2 }}>
+                          {row.validation_error}
+                        </Text>
+                      )}
+                    </View>
+                    <Chip tone={row.is_valid ? 'forest' : 'rose'}>{row.status}</Chip>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+
+            <Button
+              tone="forest"
+              disabled={bulkExecuting || bulkPreviewResult.valid_count === 0}
+              onPress={handleBulkExecute}
+            >
+              {bulkExecuting ? 'Enrolling Students…' : `Confirm & Enroll ${bulkPreviewResult.valid_count} Students`}
+            </Button>
+          </View>
+        )}
       </Sheet>
     </Screen>
   );

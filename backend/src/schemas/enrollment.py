@@ -116,3 +116,92 @@ class StudentTransferResponse(BaseModel):
     new_enrollment: StudentEnrollmentResponse
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class BulkStudentEnrollmentRow(BaseModel):
+    institutional_id: str = Field(..., min_length=1, max_length=64)
+    full_name: str = Field(..., min_length=1, max_length=255)
+    email: str = Field(..., min_length=3, max_length=255)
+    effective_start_date: Optional[date] = None
+
+
+class BulkEnrollmentPreviewItem(BaseModel):
+    row_index: int
+    institutional_id: str
+    full_name: str
+    email: str
+    effective_start_date: date
+    is_valid: bool
+    status: str
+    error_message: Optional[str] = None
+
+
+class BulkEnrollmentPreviewRequest(BaseModel):
+    academic_term_id: uuid.UUID
+    class_section_id: uuid.UUID
+    students: List[BulkStudentEnrollmentRow]
+
+
+class BulkEnrollmentPreviewResponse(BaseModel):
+    total_rows: int
+    valid_count: int
+    error_count: int
+    existing_user_count: int
+    new_user_count: int
+    preview_rows: List[BulkEnrollmentPreviewItem]
+
+
+class BulkEnrollmentExecuteRequest(BaseModel):
+    academic_term_id: uuid.UUID
+    class_section_id: uuid.UUID
+    students: List[BulkStudentEnrollmentRow]
+
+
+class BulkEnrollmentExecuteResponse(BaseModel):
+    success: bool
+    enrolled_count: int
+    failed_count: int
+    errors: List[BulkEnrollmentPreviewItem] = []
+
+
+class SectionRosterStudentItem(BaseModel):
+    enrollment_id: uuid.UUID
+    student_user_id: uuid.UUID
+    institutional_id: str
+    student_name: str
+    email: str
+    effective_start_date: date
+    effective_end_date: Optional[date] = None
+    enrollment_status: EnrollmentStatus
+    face_registration_state: str = "UNREGISTERED"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SectionRosterResponse(BaseModel):
+    section_id: uuid.UUID
+    section_code: str
+    academic_term_id: uuid.UUID
+    academic_term_name: str
+    department_name: str
+    total_enrolled: int
+    active_count: int
+    students: List[SectionRosterStudentItem]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StudentCurrentEnrollmentResponse(BaseModel):
+    student_user_id: uuid.UUID
+    section_id: uuid.UUID
+    section_code: str
+    program_name: Optional[str] = None
+    department_name: str
+    academic_term_id: uuid.UUID
+    academic_term_name: str
+    academic_year: str
+    enrollment_status: EnrollmentStatus
+    effective_start_date: date
+
+    model_config = ConfigDict(from_attributes=True)
+

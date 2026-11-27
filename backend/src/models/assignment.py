@@ -13,10 +13,17 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import Base, TimestampMixin
+
+
+class AssignmentStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    CONCLUDED = "CONCLUDED"
+    REASSIGNED = "REASSIGNED"
 
 
 class DelegationStatus(str, enum.Enum):
@@ -28,7 +35,7 @@ class DelegationStatus(str, enum.Enum):
 class TeachingAssignment(Base, TimestampMixin):
     __tablename__ = "teaching_assignments"
     __table_args__ = (
-        UniqueConstraint("class_section_id", "subject_id", "academic_term_id", name="uq_section_subject_term"),
+        UniqueConstraint("class_section_id", "subject_id", "academic_term_id", "teaching_group", name="uq_section_subject_term_group"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -67,6 +74,26 @@ class TeachingAssignment(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
+    teaching_group: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="DEFAULT",
+        server_default=text("'DEFAULT'"),
+    )
+    assignment_status: Mapped[AssignmentStatus] = mapped_column(
+        SQLEnum(AssignmentStatus, name="assignment_status", native_enum=False),
+        nullable=False,
+        default=AssignmentStatus.ACTIVE,
+        server_default=text("'ACTIVE'"),
+    )
+    start_date: Mapped[Optional[date]] = mapped_column(
+        Date,
+        nullable=True,
+    )
+    end_date: Mapped[Optional[date]] = mapped_column(
+        Date,
+        nullable=True,
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -84,6 +111,7 @@ class TeachingAssignment(Base, TimestampMixin):
     subject = relationship("Subject", back_populates="teaching_assignments")
     academic_term = relationship("AcademicTerm", back_populates="teaching_assignments")
     delegations = relationship("SubstituteDelegation", back_populates="teaching_assignment", cascade="all, delete-orphan")
+    timetable_entries = relationship("TimetableEntry", back_populates="teaching_assignment", passive_deletes="all")
 
     def __repr__(self) -> str:
         return f"<TeachingAssignment {self.id} Faculty: {self.faculty_user_id} Section: {self.class_section_id}>"

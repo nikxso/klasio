@@ -18,6 +18,15 @@ from src.models.enrollment import EnrollmentStatus, FaceRegistrationStatus, Stud
 from src.models.user import AccountStatus, User, UserRole
 from src.schemas.assignment import FaceRegistrationState, RosterStudentItem
 from src.schemas.enrollment import (
+    BulkStudentEnrollmentRow,
+    BulkEnrollmentPreviewItem,
+    BulkEnrollmentPreviewRequest,
+    BulkEnrollmentPreviewResponse,
+    BulkEnrollmentExecuteRequest,
+    BulkEnrollmentExecuteResponse,
+    SectionRosterStudentItem,
+    SectionRosterResponse,
+    StudentCurrentEnrollmentResponse,
     StudentEnrollmentCreate,
     StudentPersonalAttendanceResponse,
     StudentSessionHistoryItem,
@@ -26,6 +35,8 @@ from src.schemas.enrollment import (
     StudentTransferRequest,
     StudentWeeklyTrendPoint,
 )
+from src.core.security import get_password_hash
+from src.models.access_control import InstitutionMembership, MembershipStatus, DEFAULT_INSTITUTION_ID
 from src.services.analytics_service import calculate_recovery_classes, calculate_can_miss_classes
 
 
@@ -551,3 +562,416 @@ class EnrollmentService:
         await self.db.refresh(new_enr)
 
         return active_enr, new_enr
+
+    async def bulk_enroll_preview(
+        self,
+        payload: BulkEnrollmentPreviewRequest,
+    ) -> BulkEnrollmentPreviewResponse:
+        """Validate a batch of student enrollment records without writing changes."""
+        # 1. Verify class section & term exist
+        sec_stmt = (
+            select(ClassSection)
+            .options(selectinload(ClassSection.academic_term))
+            .where(ClassSection.id == payload.class_section_id)
+        )
+        sec = (await self.db.execute(sec_stmt)).scalar_one_or_none()
+        if not sec:
+            raise EntityNotFoundError(f"Class section {payload.class_section_id} not found")
+
+        term_start = sec.academic_term.start_date if sec.academic_term else date.today()
+        preview_rows: List[BulkEnrollmentPreviewItem] = []
+        seen_inst_ids = set()
+        seen_emails = set()
+        existing_count = 0
+        new_count = 0
+        error_count = 0
+        valid_count = 0
+
+        for idx, row in enumerate(payload.students):
+            inst_id_clean = row.institutional_id.strip()
+            email_clean = row.email.strip().lower()
+            name_clean = row.full_name.strip()
+            eff_start = row.effective_start_date or term_start
+
+            # Syntax checks
+            if not inst_id_clean or not name_clean:
+                preview_rows.append(
+                    BulkEnrollmentPreviewItem(
+                        row_index=idx,
+                        institutional_id=inst_id_clean,
+                        full_name=name_clean,
+                        email=email_clean,
+                        effective_start_date=eff_start,
+                        is_valid=False,
+                        status="INVALID_DATA",
+                        error_message="Missing required institutional ID or full name",
+                    )
+                )
+                error_count += 1
+                continue
+
+            if "@" not in email_clean:
+                preview_rows.append(
+                    BulkEnrollmentPreviewItem(
+                        row_index=idx,
+                        institutional_id=inst_id_clean,
+                        full_name=name_clean,
+                        email=email_clean,
+                        effective_start_date=eff_start,
+                        is_valid=False,
+                        status="INVALID_DATA",
+                        error_message="Invalid email address format",
+                    )
+                )
+                error_count += 1
+                continue
+
+            # Batch internal duplicate check
+            if inst_id_clean in seen_inst_ids:
+                preview_rows.append(
+                    BulkEnrollmentPreviewItem(
+                        row_index=idx,
+                        institutional_id=inst_id_clean,
+                        full_name=name_clean,
+                        email=email_clean,
+                        effective_start_date=eff_start,
+                        is_valid=False,
+                        status="DUPLICATE_IN_FILE",
+                        error_message=f"Duplicate institutional ID '{inst_id_clean}' in import batch",
+                    )
+                )
+                error_count += 1
+                continue
+
+            if email_clean in seen_emails:
+                preview_rows.append(
+                    BulkEnrollmentPreviewItem(
+                        row_index=idx,
+                        institutional_id=inst_id_clean,
+                        full_name=name_clean,
+                        email=email_clean,
+                        effective_start_date=eff_start,
+                        is_valid=False,
+                        status="DUPLICATE_IN_FILE",
+                        error_message=f"Duplicate email '{email_clean}' in import batch",
+                    )
+                )
+                error_count += 1
+                continue
+
+            seen_inst_ids.add(inst_id_clean)
+            seen_emails.add(email_clean)
+
+            # Check if user account already exists in institution
+            user_stmt = select(User).where(
+                or_(
+                    User.institutional_id == inst_id_clean,
+                    User.email == email_clean,
+                )
+            )
+            user_res = await self.db.execute(user_stmt)
+            existing_user = user_res.scalar_one_or_none()
+
+            if existing_user:
+                if existing_user.role != UserRole.STUDENT:
+                    preview_rows.append(
+                        BulkEnrollmentPreviewItem(
+                            row_index=idx,
+                            institutional_id=inst_id_clean,
+                            full_name=name_clean,
+                            email=email_clean,
+                            effective_start_date=eff_start,
+                            is_valid=False,
+                            status="ROLE_MISMATCH",
+                            error_message=f"Existing user has role '{existing_user.role.value}', expected STUDENT",
+                        )
+                    )
+                    error_count += 1
+                    continue
+
+                # Check if already active in this section
+                active_enr_stmt = select(StudentEnrollment).where(
+                    and_(
+                        StudentEnrollment.student_user_id == existing_user.id,
+                        StudentEnrollment.class_section_id == payload.class_section_id,
+                        StudentEnrollment.enrollment_status == EnrollmentStatus.ACTIVE,
+                    )
+                )
+                if (await self.db.execute(active_enr_stmt)).scalar_one_or_none():
+                    preview_rows.append(
+                        BulkEnrollmentPreviewItem(
+                            row_index=idx,
+                            institutional_id=inst_id_clean,
+                            full_name=name_clean,
+                            email=email_clean,
+                            effective_start_date=eff_start,
+                            is_valid=False,
+                            status="ALREADY_ENROLLED",
+                            error_message="Student is already actively enrolled in this section",
+                        )
+                    )
+                    error_count += 1
+                    continue
+
+                # Check if overlapping enrollment in another section in same term
+                overlap_stmt = select(StudentEnrollment).where(
+                    and_(
+                        StudentEnrollment.student_user_id == existing_user.id,
+                        StudentEnrollment.academic_term_id == payload.academic_term_id,
+                        StudentEnrollment.enrollment_status == EnrollmentStatus.ACTIVE,
+                    )
+                )
+                other_enr = (await self.db.execute(overlap_stmt)).scalar_one_or_none()
+                if other_enr:
+                    preview_rows.append(
+                        BulkEnrollmentPreviewItem(
+                            row_index=idx,
+                            institutional_id=inst_id_clean,
+                            full_name=name_clean,
+                            email=email_clean,
+                            effective_start_date=eff_start,
+                            is_valid=False,
+                            status="OVERLAPPING_ENROLLMENT",
+                            error_message=f"Student has conflicting active enrollment in another section in this term",
+                        )
+                    )
+                    error_count += 1
+                    continue
+
+                preview_rows.append(
+                    BulkEnrollmentPreviewItem(
+                        row_index=idx,
+                        institutional_id=inst_id_clean,
+                        full_name=name_clean,
+                        email=email_clean,
+                        effective_start_date=eff_start,
+                        is_valid=True,
+                        status="EXISTING_USER",
+                        error_message=None,
+                    )
+                )
+                existing_count += 1
+                valid_count += 1
+            else:
+                preview_rows.append(
+                    BulkEnrollmentPreviewItem(
+                        row_index=idx,
+                        institutional_id=inst_id_clean,
+                        full_name=name_clean,
+                        email=email_clean,
+                        effective_start_date=eff_start,
+                        is_valid=True,
+                        status="NEW_USER_TO_CREATE",
+                        error_message=None,
+                    )
+                )
+                new_count += 1
+                valid_count += 1
+
+        return BulkEnrollmentPreviewResponse(
+            total_rows=len(payload.students),
+            valid_count=valid_count,
+            error_count=error_count,
+            existing_user_count=existing_count,
+            new_user_count=new_count,
+            preview_rows=preview_rows,
+        )
+
+    async def bulk_enroll_execute(
+        self,
+        payload: BulkEnrollmentExecuteRequest,
+    ) -> BulkEnrollmentExecuteResponse:
+        """Execute transactional bulk enrollment for validated rows."""
+        preview = await self.bulk_enroll_preview(
+            BulkEnrollmentPreviewRequest(
+                academic_term_id=payload.academic_term_id,
+                class_section_id=payload.class_section_id,
+                students=payload.students,
+            )
+        )
+
+        valid_items = [p for p in preview.preview_rows if p.is_valid]
+        failed_items = [p for p in preview.preview_rows if not p.is_valid]
+
+        # In transactional context, enroll all valid items
+        enrolled_count = 0
+        for item in valid_items:
+            # 1. Resolve or create student User
+            user_stmt = select(User).where(
+                or_(
+                    User.institutional_id == item.institutional_id,
+                    User.email == item.email.lower(),
+                )
+            )
+            student_user = (await self.db.execute(user_stmt)).scalar_one_or_none()
+            if not student_user:
+                student_user = User(
+                    institutional_id=item.institutional_id,
+                    full_name=item.full_name,
+                    email=item.email.lower(),
+                    password_hash=get_password_hash("KlasioStudent@2026"),
+                    role=UserRole.STUDENT,
+                    account_status=AccountStatus.ACTIVE,
+                )
+                self.db.add(student_user)
+                await self.db.flush()
+
+                # Ensure active membership
+                mem = InstitutionMembership(
+                    institution_id=uuid.UUID(str(DEFAULT_INSTITUTION_ID)),
+                    user_id=student_user.id,
+                    status=MembershipStatus.ACTIVE,
+                )
+                self.db.add(mem)
+                await self.db.flush()
+
+            # 2. Create StudentEnrollment
+            enrollment = StudentEnrollment(
+                student_user_id=student_user.id,
+                class_section_id=payload.class_section_id,
+                academic_term_id=payload.academic_term_id,
+                effective_start_date=item.effective_start_date,
+                effective_end_date=None,
+                enrollment_status=EnrollmentStatus.ACTIVE,
+            )
+            self.db.add(enrollment)
+            enrolled_count += 1
+
+        await self.db.flush()
+        return BulkEnrollmentExecuteResponse(
+            success=True,
+            enrolled_count=enrolled_count,
+            failed_count=len(failed_items),
+            errors=failed_items,
+        )
+
+    async def get_section_roster(
+        self,
+        class_section_id: uuid.UUID,
+    ) -> SectionRosterResponse:
+        """Retrieve full academic section roster with biometric state and lifecycle status."""
+        sec_stmt = (
+            select(ClassSection)
+            .options(
+                selectinload(ClassSection.academic_term),
+                selectinload(ClassSection.department),
+            )
+            .where(ClassSection.id == class_section_id)
+        )
+        sec = (await self.db.execute(sec_stmt)).scalar_one_or_none()
+        if not sec:
+            raise EntityNotFoundError(f"Class section {class_section_id} not found")
+
+        enr_stmt = (
+            select(StudentEnrollment)
+            .options(
+                selectinload(StudentEnrollment.student_user).selectinload(User.face_profile)
+            )
+            .where(StudentEnrollment.class_section_id == class_section_id)
+            .order_by(StudentEnrollment.created_at.desc())
+        )
+        enrollments = (await self.db.execute(enr_stmt)).scalars().all()
+
+        students: List[SectionRosterStudentItem] = []
+        active_count = 0
+        for enr in enrollments:
+            face_state = "UNREGISTERED"
+            u = enr.student_user
+            if u and u.face_profile:
+                face_state = u.face_profile.registration_state.value if hasattr(u.face_profile.registration_state, "value") else str(u.face_profile.registration_state)
+
+            if enr.enrollment_status == EnrollmentStatus.ACTIVE:
+                active_count += 1
+
+            students.append(
+                SectionRosterStudentItem(
+                    enrollment_id=enr.id,
+                    student_user_id=enr.student_user_id,
+                    institutional_id=u.institutional_id if u else "N/A",
+                    student_name=u.full_name if u else "Unknown",
+                    email=u.email if u else "",
+                    effective_start_date=enr.effective_start_date,
+                    effective_end_date=enr.effective_end_date,
+                    enrollment_status=enr.enrollment_status,
+                    face_registration_state=face_state,
+                )
+            )
+
+        return SectionRosterResponse(
+            section_id=sec.id,
+            section_code=sec.section_code,
+            academic_term_id=sec.academic_term_id,
+            academic_term_name=sec.academic_term.name if sec.academic_term else "N/A",
+            department_name=sec.department.name if sec.department else "N/A",
+            total_enrolled=len(students),
+            active_count=active_count,
+            students=students,
+        )
+
+    async def update_enrollment_status(
+        self,
+        enrollment_id: uuid.UUID,
+        new_status: EnrollmentStatus,
+        effective_end_date: Optional[date] = None,
+    ) -> StudentEnrollment:
+        """Transition an enrollment lifecycle status (WITHDRAWN, COMPLETED, ACTIVE)."""
+        stmt = select(StudentEnrollment).where(StudentEnrollment.id == enrollment_id)
+        enr = (await self.db.execute(stmt)).scalar_one_or_none()
+        if not enr:
+            raise EntityNotFoundError(f"Student enrollment {enrollment_id} not found")
+
+        enr.enrollment_status = new_status
+        if new_status in [EnrollmentStatus.WITHDRAWN, EnrollmentStatus.COMPLETED, EnrollmentStatus.TRANSFERRED]:
+            enr.effective_end_date = effective_end_date or date.today()
+        elif new_status == EnrollmentStatus.ACTIVE:
+            enr.effective_end_date = None
+
+        await self.db.flush()
+        await self.db.refresh(enr)
+        return enr
+
+    async def get_student_current_enrollment(
+        self,
+        student_user_id: uuid.UUID,
+        target_date: Optional[date] = None,
+    ) -> Optional[StudentCurrentEnrollmentResponse]:
+        """Self-service resolution of student's active academic section enrollment."""
+        today = target_date or date.today()
+        stmt = (
+            select(StudentEnrollment)
+            .options(
+                selectinload(StudentEnrollment.class_section).selectinload(ClassSection.department),
+                selectinload(StudentEnrollment.class_section).selectinload(ClassSection.program),
+                selectinload(StudentEnrollment.academic_term),
+            )
+            .where(
+                and_(
+                    StudentEnrollment.student_user_id == student_user_id,
+                    StudentEnrollment.enrollment_status == EnrollmentStatus.ACTIVE,
+                    StudentEnrollment.effective_start_date <= today,
+                    or_(
+                        StudentEnrollment.effective_end_date.is_(None),
+                        StudentEnrollment.effective_end_date >= today,
+                    ),
+                )
+            )
+        )
+        enr = (await self.db.execute(stmt)).scalar_one_or_none()
+        if not enr or not enr.class_section:
+            return None
+
+        sec = enr.class_section
+        term = enr.academic_term
+        return StudentCurrentEnrollmentResponse(
+            student_user_id=student_user_id,
+            section_id=sec.id,
+            section_code=sec.section_code,
+            program_name=sec.program.name if sec.program else None,
+            department_name=sec.department.name if sec.department else "N/A",
+            academic_term_id=sec.academic_term_id,
+            academic_term_name=term.name if term else "N/A",
+            academic_year=term.academic_year if term else "N/A",
+            enrollment_status=enr.enrollment_status,
+            effective_start_date=enr.effective_start_date,
+        )
+

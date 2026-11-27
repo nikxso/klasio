@@ -8,8 +8,15 @@ from src.models.academic import (
     TermStatus,
     DeploymentConfig,
     Program,
+    AcademicPeriod,
+    TimetableEntry,
 )
-from src.models.assignment import TeachingAssignment, SubstituteDelegation, DelegationStatus
+from src.models.assignment import (
+    TeachingAssignment,
+    SubstituteDelegation,
+    DelegationStatus,
+    AssignmentStatus,
+)
 from src.models.enrollment import (
     StudentEnrollment,
     EnrollmentStatus,
@@ -73,9 +80,12 @@ __all__ = [
     "TermStatus",
     "DeploymentConfig",
     "Program",
+    "AcademicPeriod",
+    "TimetableEntry",
     "TeachingAssignment",
     "SubstituteDelegation",
     "DelegationStatus",
+    "AssignmentStatus",
     "StudentEnrollment",
     "EnrollmentStatus",
     "StudentFaceProfile",

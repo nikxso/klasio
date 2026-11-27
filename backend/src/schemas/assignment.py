@@ -41,16 +41,28 @@ class TeachingAssignmentCreate(BaseModel):
     class_section_id: uuid.UUID
     subject_id: uuid.UUID
     academic_term_id: uuid.UUID
+    teaching_group: str = Field(default="DEFAULT", max_length=64)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
     is_active: bool = True
 
 
 class TeachingAssignmentUpdate(BaseModel):
     faculty_user_id: Optional[uuid.UUID] = None
+    teaching_group: Optional[str] = Field(None, max_length=64)
+    assignment_status: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
     is_active: Optional[bool] = None
 
 
 class TeachingAssignmentResponse(TeachingAssignmentCreate):
     id: uuid.UUID
+    assignment_status: str = "ACTIVE"
+    subject_code: Optional[str] = None
+    subject_name: Optional[str] = None
+    section_code: Optional[str] = None
+    faculty_name: Optional[str] = None
     created_by_user_id: uuid.UUID
     created_at: datetime
     updated_at: datetime

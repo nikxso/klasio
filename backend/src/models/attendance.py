@@ -89,6 +89,12 @@ class AttendanceSession(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
+    timetable_entry_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("timetable_entries.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     session_date: Mapped[date] = mapped_column(
         Date,
         nullable=False,
@@ -189,6 +195,7 @@ class AttendanceSession(Base, TimestampMixin):
     )
 
     teaching_assignment = relationship("TeachingAssignment")
+    timetable_entry = relationship("TimetableEntry", back_populates="attendance_sessions")
     regular_faculty = relationship("User", foreign_keys=[regular_faculty_user_id])
     conducting_faculty = relationship("User", foreign_keys=[conducting_faculty_user_id])
     substitute_delegation = relationship("SubstituteDelegation", foreign_keys=[substitute_delegation_id])
