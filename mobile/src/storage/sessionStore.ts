@@ -548,13 +548,6 @@ export const SessionStore = {
   async clearSession(preservePendingSync: boolean = true): Promise<void> {
     activeSession = null;
     isInitialized = true;
-    sessionListeners.forEach((listener) => {
-      try {
-        listener(null);
-      } catch (err) {
-        console.warn('[SessionStore] Listener callback error:', err);
-      }
-    });
     try {
       const db = await getSessionDb();
       await db.runAsync('DELETE FROM local_auth_session WHERE id = 1;');
@@ -566,11 +559,6 @@ export const SessionStore = {
         console.warn('[SessionStore] clearSession storage warning:', e?.message || e);
       }
     }
-  },
-
-  clear(): void {
-    activeSession = null;
-    isInitialized = true;
     sessionListeners.forEach((listener) => {
       try {
         listener(null);
@@ -578,6 +566,11 @@ export const SessionStore = {
         console.warn('[SessionStore] Listener callback error:', err);
       }
     });
+  },
+
+  clear(): void {
+    activeSession = null;
+    isInitialized = true;
     this.clearSession(true).catch(() => {});
   },
 };

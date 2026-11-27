@@ -1,16 +1,19 @@
-import React from 'react';
-import { Stack, Redirect } from 'expo-router';
+import React, { useEffect } from 'react';
+import { Stack, useRouter } from 'expo-router';
 import { useSession } from '@/hooks/useSession';
 
 export default function StudentStackLayout() {
+  const router = useRouter();
   const { isAuthenticated, isLoaded } = useSession();
 
-  if (!isLoaded) {
-    return null;
-  }
+  useEffect(() => {
+    if (isLoaded && !isAuthenticated) {
+      router.replace('/');
+    }
+  }, [isLoaded, isAuthenticated]);
 
-  if (!isAuthenticated) {
-    return <Redirect href="/" />;
+  if (!isLoaded || !isAuthenticated) {
+    return null;
   }
   return (
     <Stack

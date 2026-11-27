@@ -106,6 +106,8 @@ export default function FacultyProfileScreen() {
     setIsSigningOut(true);
     try {
       setShowSignOutSheet(false);
+      // Allow native dialog to dismiss on UI thread before navigation transition
+      await new Promise((resolve) => setTimeout(resolve, 150));
       await SessionStore.clearSession(true);
       router.replace('/');
     } catch (e) {

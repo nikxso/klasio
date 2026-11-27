@@ -1,5 +1,5 @@
-import React from 'react';
-import { Stack, useRouter, Redirect } from 'expo-router';
+import React, { useEffect } from 'react';
+import { Stack, useRouter } from 'expo-router';
 import { useSession } from '@/hooks/useSession';
 import { AccessRestrictedView } from '@/components/ui/kit';
 
@@ -7,12 +7,14 @@ export default function AdminStackLayout() {
   const router = useRouter();
   const { user, isAuthenticated, isLoaded } = useSession();
 
-  if (!isLoaded) {
-    return null;
-  }
+  useEffect(() => {
+    if (isLoaded && (!isAuthenticated || !user)) {
+      router.replace('/');
+    }
+  }, [isLoaded, isAuthenticated, user]);
 
-  if (!isAuthenticated || !user) {
-    return <Redirect href="/" />;
+  if (!isLoaded || !isAuthenticated || !user) {
+    return null;
   }
 
   if (user?.role?.toUpperCase() === 'STUDENT') {
