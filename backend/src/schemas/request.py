@@ -10,6 +10,7 @@ class CreateAttendanceRequest(BaseModel):
     teaching_assignment_id: uuid.UUID
     session_date: date
     student_note: str = Field(..., min_length=3, max_length=1000)
+    attendance_session_id: Optional[uuid.UUID] = None
 
 
 class ResolveAttendanceRequest(BaseModel):
@@ -31,3 +32,8 @@ class StudentAttendanceRequestResponse(BaseModel):
     created_at: datetime
     resolved_at: Optional[datetime] = None
     subject_name: Optional[str] = None
+    student_name: Optional[str] = None
+    student_institutional_id: Optional[str] = None
+    student_email: Optional[str] = None
+    attendance_session_id: Optional[uuid.UUID] = None
+    attendance_adjusted: Optional[bool] = None

@@ -11,6 +11,7 @@ export interface CachedStudentRequest {
   studentNote: string;
   status: RequestState;
   resolutionNote?: string | null;
+  attendanceAdjusted?: boolean | null;
   createdAt: string;
 }
 

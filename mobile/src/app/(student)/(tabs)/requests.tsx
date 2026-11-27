@@ -99,6 +99,7 @@ export default function StudentRequestsScreen() {
                     ? 'Being reviewed'
                     : 'Sent',
                 resolutionNote: r.resolution_note,
+                attendanceAdjusted: r.attendance_adjusted ?? null,
                 createdAt: r.created_at,
               }));
               setRequests(mapped);
@@ -270,10 +271,37 @@ export default function StudentRequestsScreen() {
 
               <Text style={styles.requestNote}>"{r.studentNote}"</Text>
 
-              {r.resolutionNote && (
-                <View style={styles.resolutionBox}>
-                  <Text style={styles.resolutionTitle}>Faculty Review:</Text>
-                  <Text style={styles.resolutionNote}>{r.resolutionNote}</Text>
+              {(r.status === 'Accepted' || r.status === 'Not accepted') && (
+                <View
+                  style={[
+                    styles.resolutionBox,
+                    r.status === 'Accepted'
+                      ? styles.resolutionBoxAccepted
+                      : styles.resolutionBoxRejected,
+                  ]}
+                >
+                  <View style={styles.resolutionHeader}>
+                    {r.status === 'Accepted' ? (
+                      <CheckCircle2 size={14} color={Colors.forest} />
+                    ) : (
+                      <AlertCircle size={14} color={Colors.rose} />
+                    )}
+                    <Text
+                      style={[
+                        styles.resolutionTitle,
+                        r.status === 'Not accepted' && { color: Colors.rose },
+                      ]}
+                    >
+                      {r.status === 'Accepted'
+                        ? 'Your attendance was corrected to Present'
+                        : 'Your absence record was maintained'}
+                    </Text>
+                  </View>
+                  {r.resolutionNote ? (
+                    <Text style={styles.resolutionNote}>
+                      Faculty note: {r.resolutionNote}
+                    </Text>
+                  ) : null}
                 </View>
               )}
 
@@ -428,13 +456,23 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   resolutionBox: {
-    backgroundColor: Colors.forest50,
     borderRadius: Radii.button,
     padding: 10,
     marginTop: 10,
   },
+  resolutionBoxAccepted: {
+    backgroundColor: Colors.forest50,
+  },
+  resolutionBoxRejected: {
+    backgroundColor: Colors.rose50,
+  },
+  resolutionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   resolutionTitle: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.forest,
   },

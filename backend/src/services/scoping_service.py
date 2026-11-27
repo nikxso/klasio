@@ -28,6 +28,55 @@ class ScopingService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def get_permitted_assignment_ids(self, user: User) -> List[uuid.UUID]:
+        """
+        Return all teaching assignment IDs that the user is authorized to review or manage.
+        If user is ADMIN: returns all active teaching assignment IDs.
+        If user is FACULTY: returns IDs of:
+          - Direct teaching assignments owned by faculty (where faculty_user_id == user.id)
+          - Active substitute delegations where substitute_faculty_user_id == user.id
+          - Teaching assignments for sessions conducted by this faculty
+        """
+        if user.role == UserRole.ADMIN:
+            stmt = select(TeachingAssignment.id).where(TeachingAssignment.is_active == True)
+            res = await self.db.execute(stmt)
+            return list(res.scalars().all())
+
+        assignment_ids = set()
+
+        # 1. Direct assignments
+        direct_stmt = select(TeachingAssignment.id).where(
+            and_(
+                TeachingAssignment.faculty_user_id == user.id,
+                TeachingAssignment.is_active == True,
+            )
+        )
+        direct_res = await self.db.execute(direct_stmt)
+        for aid in direct_res.scalars().all():
+            assignment_ids.add(aid)
+
+        # 2. Active delegations
+        deleg_stmt = select(SubstituteDelegation.teaching_assignment_id).where(
+            and_(
+                SubstituteDelegation.substitute_faculty_user_id == user.id,
+                SubstituteDelegation.status == DelegationStatus.ACTIVE,
+            )
+        )
+        deleg_res = await self.db.execute(deleg_stmt)
+        for aid in deleg_res.scalars().all():
+            assignment_ids.add(aid)
+
+        # 3. Sessions conducted by this faculty
+        sess_stmt = select(AttendanceSession.teaching_assignment_id).where(
+            AttendanceSession.conducting_faculty_user_id == user.id
+        )
+        sess_res = await self.db.execute(sess_stmt)
+        for aid in sess_res.scalars().all():
+            assignment_ids.add(aid)
+
+        return list(assignment_ids)
+
+
     async def get_faculty_assignments(
         self,
         faculty_user_id: uuid.UUID,

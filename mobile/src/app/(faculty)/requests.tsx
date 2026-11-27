@@ -20,6 +20,7 @@ import {
   AlertCircle,
   CheckCircle2,
   XCircle,
+  User as UserIcon,
 } from 'lucide-react-native';
 
 import {
@@ -49,6 +50,11 @@ export interface AttendanceRequestItem {
   created_at: string;
   resolved_at?: string | null;
   subject_name?: string | null;
+  student_name?: string | null;
+  student_institutional_id?: string | null;
+  student_email?: string | null;
+  attendance_session_id?: string | null;
+  attendance_adjusted?: boolean | null;
 }
 
 export default function FacultyRequestsScreen() {
@@ -69,6 +75,7 @@ export default function FacultyRequestsScreen() {
   const [requests, setRequests] = useState<AttendanceRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [filter, setFilter] = useState<'PENDING' | 'RESOLVED' | 'ALL'>('PENDING');
 
   // Sheet state for approval/rejection
@@ -90,6 +97,7 @@ export default function FacultyRequestsScreen() {
     }
 
     try {
+      setErrorMsg(null);
       const res = await fetch(`${API_BASE_URL}/api/v1/attendance/requests`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -102,9 +110,13 @@ export default function FacultyRequestsScreen() {
         if (Array.isArray(data)) {
           setRequests(data);
         }
+      } else {
+        const err = await extractErrorMessage(res, 'Failed to load requests');
+        setErrorMsg(err);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to load reviewable attendance requests:', err);
+      setErrorMsg(err?.message || 'Could not connect to server');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -124,14 +136,16 @@ export default function FacultyRequestsScreen() {
     setSelectedRequest(req);
     setResolveAction(action);
     setResolutionNote(
-      action === 'APPROVED' ? 'Approved by conducting faculty' : 'Absence record confirmed accurate'
+      action === 'APPROVED'
+        ? 'Approved by conducting faculty after attendance verification'
+        : 'Absence record confirmed accurate against classroom roll.'
     );
   };
 
   const handleConfirmResolve = async () => {
     if (!selectedRequest) return;
     if (!resolutionNote.trim()) {
-      Alert.alert('Resolution Note Required', 'Please enter a brief note explaining the resolution decision.');
+      Alert.alert('Resolution Statement Required', 'Please enter a note explaining the resolution decision.');
       return;
     }
 
@@ -162,6 +176,8 @@ export default function FacultyRequestsScreen() {
         throw new Error(errMsg);
       }
 
+      const updated = await res.json();
+
       // Update locally
       setRequests((prev) =>
         prev.map((r) =>
@@ -171,6 +187,7 @@ export default function FacultyRequestsScreen() {
                 status: resolveAction,
                 resolution_note: resolutionNote.trim(),
                 resolved_at: new Date().toISOString(),
+                attendance_adjusted: updated?.attendance_adjusted ?? (resolveAction === 'APPROVED'),
               }
             : r
         )
@@ -179,7 +196,9 @@ export default function FacultyRequestsScreen() {
       setSelectedRequest(null);
       Alert.alert(
         resolveAction === 'APPROVED' ? 'Request Approved' : 'Request Rejected',
-        `Attendance request for ${selectedRequest.subject_name || 'session'} on ${selectedRequest.session_date} marked as ${resolveAction.toLowerCase()}.`
+        resolveAction === 'APPROVED'
+          ? `Attendance for ${selectedRequest.student_name || 'student'} on ${selectedRequest.session_date} marked as PRESENT.`
+          : `Attendance excuse for ${selectedRequest.student_name || 'student'} was rejected. Absence record maintained.`
       );
     } catch (err: any) {
       Alert.alert('Resolution Error', err?.message || 'Could not update request status.');
@@ -242,6 +261,15 @@ export default function FacultyRequestsScreen() {
           <ActivityIndicator size="large" color={Colors.forest} />
           <Text style={styles.loadingText}>Loading student requests...</Text>
         </View>
+      ) : errorMsg && requests.length === 0 ? (
+        <Card style={styles.emptyCard}>
+          <IconBubble icon={AlertCircle} tone="rose" size={48} />
+          <Text style={styles.emptyTitle}>Could Not Load Requests</Text>
+          <Text style={styles.emptySub}>{errorMsg}</Text>
+          <Button tone="forest" variant="soft" onPress={handleRefresh} style={{ marginTop: 12 }}>
+            <Text style={{ color: Colors.forest, fontWeight: '600' }}>Retry</Text>
+          </Button>
+        </Card>
       ) : filteredRequests.length === 0 ? (
         <Card style={styles.emptyCard}>
           <IconBubble icon={MessageSquare} tone="forest" size={48} />
@@ -266,6 +294,20 @@ export default function FacultyRequestsScreen() {
                 <View style={styles.cardHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.subjectName}>{req.subject_name || 'Class Session'}</Text>
+
+                    {/* Student Info */}
+                    <View style={styles.studentInfoRow}>
+                      <UserIcon size={13} color={Colors.forest} />
+                      <Text style={styles.studentNameText}>
+                        {req.student_name || 'Student'}
+                      </Text>
+                      {req.student_institutional_id ? (
+                        <Text style={styles.studentIdBadge}>
+                          ({req.student_institutional_id})
+                        </Text>
+                      ) : null}
+                    </View>
+
                     <View style={styles.dateRow}>
                       <Calendar size={13} color={Colors.soft} />
                       <Text style={styles.dateText}>Session Date: {req.session_date}</Text>
@@ -279,19 +321,46 @@ export default function FacultyRequestsScreen() {
                   </Chip>
                 </View>
 
-                {/* Student Note */}
+                {/* Student Explanation Note */}
                 <View style={styles.noteBox}>
                   <Text style={styles.noteLabel}>Student Explanation:</Text>
                   <Text style={styles.noteText}>"{req.student_note}"</Text>
                 </View>
 
-                {/* Resolution info if resolved */}
-                {req.resolution_note && (
-                  <View style={styles.resolutionBox}>
-                    <Text style={styles.resolutionLabel}>
-                      Faculty Decision ({req.status.toLowerCase()}):
-                    </Text>
-                    <Text style={styles.resolutionText}>"{req.resolution_note}"</Text>
+                {/* Resolved History Card Section */}
+                {isApproved && (
+                  <View style={styles.approvedBox}>
+                    <View style={styles.resolutionHeaderRow}>
+                      <CheckCircle2 size={15} color={Colors.forest} />
+                      <Text style={styles.approvedLabel}>Decision: Approved (Marked Present)</Text>
+                    </View>
+                    <Text style={styles.resolutionText}>"{req.resolution_note || 'Approved by faculty.'}"</Text>
+                    <View style={styles.resolvedMetaRow}>
+                      <Text style={styles.adjustedBadge}>✓ Attendance record adjusted to PRESENT</Text>
+                      {req.resolved_at && (
+                        <Text style={styles.resolvedDateText}>
+                          {new Date(req.resolved_at).toLocaleDateString()}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                )}
+
+                {isRejected && (
+                  <View style={styles.rejectedBox}>
+                    <View style={styles.resolutionHeaderRow}>
+                      <XCircle size={15} color={Colors.rose} />
+                      <Text style={styles.rejectedLabel}>Decision: Rejected (Absence Maintained)</Text>
+                    </View>
+                    <Text style={styles.resolutionText}>"{req.resolution_note || 'Absence confirmed.'}"</Text>
+                    <View style={styles.resolvedMetaRow}>
+                      <Text style={styles.rejectedBadge}>✕ Record remains ABSENT</Text>
+                      {req.resolved_at && (
+                        <Text style={styles.resolvedDateText}>
+                          {new Date(req.resolved_at).toLocaleDateString()}
+                        </Text>
+                      )}
+                    </View>
                   </View>
                 )}
 
@@ -340,16 +409,22 @@ export default function FacultyRequestsScreen() {
             </Text>
             <Text style={styles.sheetDesc}>
               {resolveAction === 'APPROVED'
-                ? `Approving this request will credit attendance for the student on ${selectedRequest.session_date} in ${selectedRequest.subject_name || 'the course'}.`
-                : `Rejecting this request will keep the student's absence record intact for ${selectedRequest.session_date}.`}
+                ? `Approving this request will credit attendance for ${selectedRequest.student_name || 'the student'} on ${selectedRequest.session_date} in ${selectedRequest.subject_name || 'the course'} and adjust their record to PRESENT.`
+                : `Rejecting this request will keep ${selectedRequest.student_name || 'the student'}'s absence record intact for ${selectedRequest.session_date}.`}
             </Text>
 
-            <Text style={styles.inputLabel}>Resolution Decision Note</Text>
+            <Text style={styles.inputLabel}>
+              {resolveAction === 'APPROVED' ? 'Approval Resolution Note' : 'Rejection Reason / Statement'}
+            </Text>
             <TextInput
               style={styles.noteInput}
               value={resolutionNote}
               onChangeText={setResolutionNote}
-              placeholder="Enter decision rationale..."
+              placeholder={
+                resolveAction === 'APPROVED'
+                  ? 'e.g. Approved after verifying attendance photo roll'
+                  : 'e.g. Student confirmed absent; absence record verified accurate'
+              }
               placeholderTextColor={Colors.soft}
               multiline
               numberOfLines={3}
@@ -456,8 +531,24 @@ const styles = StyleSheet.create({
   },
   subjectName: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
     color: Colors.ink,
+  },
+  studentInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 4,
+  },
+  studentNameText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.forest,
+  },
+  studentIdBadge: {
+    fontSize: 12,
+    color: Colors.soft,
+    fontWeight: '500',
   },
   dateRow: {
     flexDirection: 'row',
@@ -474,7 +565,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: Radii.md,
     borderLeftWidth: 3,
-    borderLeftColor: Colors.forest,
+    borderLeftColor: Colors.primary,
   },
   noteLabel: {
     fontSize: 11,
@@ -489,20 +580,61 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontStyle: 'italic',
   },
-  resolutionBox: {
-    backgroundColor: 'rgba(16, 185, 129, 0.05)',
-    padding: 10,
+  approvedBox: {
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
+    padding: 12,
     borderRadius: Radii.md,
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.forest,
+    gap: 6,
   },
-  resolutionLabel: {
-    fontSize: 11,
-    fontWeight: '600',
+  rejectedBox: {
+    backgroundColor: 'rgba(239, 68, 68, 0.06)',
+    padding: 12,
+    borderRadius: Radii.md,
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.rose,
+    gap: 6,
+  },
+  resolutionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  approvedLabel: {
+    fontSize: 12,
+    fontWeight: '700',
     color: Colors.forest,
-    marginBottom: 2,
+  },
+  rejectedLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.rose,
   },
   resolutionText: {
     fontSize: 13,
     color: Colors.ink,
+    lineHeight: 18,
+  },
+  resolvedMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  adjustedBadge: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.forest,
+  },
+  rejectedBadge: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.rose,
+  },
+  resolvedDateText: {
+    fontSize: 11,
+    color: Colors.soft,
   },
   actionRow: {
     flexDirection: 'row',
