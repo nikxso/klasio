@@ -11,6 +11,7 @@ from src.models.assignment import TeachingAssignment
 from src.models.attendance import (
     AttendanceRecord,
     AttendanceSession,
+    AttendanceSessionStatus,
     AttendanceStatus,
     SessionApplicability,
 )
@@ -37,7 +38,11 @@ from src.schemas.enrollment import (
 )
 from src.core.security import get_password_hash
 from src.models.access_control import InstitutionMembership, MembershipStatus, DEFAULT_INSTITUTION_ID
-from src.services.analytics_service import calculate_recovery_classes, calculate_can_miss_classes
+from src.services.analytics_service import (
+    calculate_recovery_classes,
+    calculate_can_miss_classes,
+    get_institution_threshold,
+)
 
 
 class EnrollmentService:
@@ -172,7 +177,11 @@ class EnrollmentService:
         """
         Calculate personal attendance summary strictly bounded by enrollment dates.
         Sessions prior to effective_start_date or after effective_end_date are omitted from both numerator and denominator.
+        Consolidates subjects across section transfers within the same academic term so that students retain complete
+        historical attendance without fragmented duplicates.
         """
+        threshold = await get_institution_threshold(self.db)
+
         enr_stmt = (
             select(StudentEnrollment)
             .options(
@@ -187,35 +196,53 @@ class EnrollmentService:
         enr_res = await self.db.execute(enr_stmt)
         enrollments = enr_res.scalars().all()
 
-        summaries: List[StudentSubjectAttendanceSummary] = []
+        # If academic_term_id was not specified, default to student's current active term (or latest term)
+        if not academic_term_id and enrollments:
+            today = date.today()
+            active_enr = next(
+                (
+                    e
+                    for e in enrollments
+                    if e.enrollment_status == EnrollmentStatus.ACTIVE
+                    and (e.effective_end_date is None or e.effective_end_date >= today)
+                ),
+                None,
+            )
+            if active_enr:
+                academic_term_id = active_enr.academic_term_id
+                enrollments = [e for e in enrollments if e.academic_term_id == academic_term_id]
+            else:
+                latest_enr = max(enrollments, key=lambda e: e.effective_start_date)
+                academic_term_id = latest_enr.academic_term_id
+                enrollments = [e for e in enrollments if e.academic_term_id == academic_term_id]
+
         total_eligible_all = 0
         total_attended_all = 0
         all_eligible_sessions: List[AttendanceSession] = []
         attended_session_ids = set()
 
+        # Map by subject_id -> aggregated subject metrics
+        subject_map: dict = {}
+
         for enr in enrollments:
-            # Query teaching assignments for this section
+            # Query all teaching assignments for this section (including reassigned / historical)
             ta_stmt = (
                 select(TeachingAssignment)
                 .options(
                     selectinload(TeachingAssignment.subject),
                     selectinload(TeachingAssignment.faculty_user),
                 )
-                .where(
-                    and_(
-                        TeachingAssignment.class_section_id == enr.class_section_id,
-                        TeachingAssignment.is_active == True,
-                    )
-                )
+                .where(TeachingAssignment.class_section_id == enr.class_section_id)
             )
             ta_res = await self.db.execute(ta_stmt)
             assignments = ta_res.scalars().all()
 
             for ta in assignments:
-                # Query COUNTED attendance sessions strictly bounded by student's enrollment interval
+                # Query COUNTED, FINALIZED/SYNCED attendance sessions strictly bounded by student's enrollment interval
                 conditions = [
                     AttendanceSession.teaching_assignment_id == ta.id,
                     AttendanceSession.applicability_status == SessionApplicability.COUNTED,
+                    AttendanceSession.session_status.in_([AttendanceSessionStatus.FINALIZED, AttendanceSessionStatus.SYNCED]),
                     AttendanceSession.session_date >= enr.effective_start_date,
                 ]
                 if enr.effective_end_date is not None:
@@ -226,6 +253,7 @@ class EnrollmentService:
                 eligible_sessions = sess_res.scalars().all()
                 total_eligible = len(eligible_sessions)
 
+                attended = 0
                 if total_eligible > 0:
                     all_eligible_sessions.extend(eligible_sessions)
                     sess_ids = [s.id for s in eligible_sessions]
@@ -241,35 +269,67 @@ class EnrollmentService:
                     attended = len(present_records)
                     for r in present_records:
                         attended_session_ids.add(r.attendance_session_id)
-                else:
-                    attended = 0
 
-                pct = 100.0 if total_eligible == 0 else round((attended / total_eligible) * 100, 1)
-                threshold = 75.0
-                recover, is_rec = calculate_recovery_classes(attended, total_eligible, threshold=threshold)
-                miss = calculate_can_miss_classes(attended, total_eligible, threshold=threshold)
-                is_shortage = total_eligible > 0 and pct < threshold
+                # Consolidate by subject_id
+                sub_id = ta.subject_id
+                if sub_id not in subject_map:
+                    subject_map[sub_id] = {
+                        "subject_id": sub_id,
+                        "teaching_assignment_id": ta.id,
+                        "subject_code": ta.subject.code,
+                        "subject_name": ta.subject.name,
+                        "faculty_name": ta.faculty_user.full_name,
+                        "total_eligible_sessions": 0,
+                        "attended_sessions": 0,
+                        "effective_start_date": enr.effective_start_date,
+                        "is_active_assignment": ta.is_active,
+                    }
 
-                summaries.append(
-                    StudentSubjectAttendanceSummary(
-                        subject_id=ta.subject_id,
-                        teaching_assignment_id=ta.id,
-                        subject_code=ta.subject.code,
-                        subject_name=ta.subject.name,
-                        faculty_name=ta.faculty_user.full_name,
-                        total_eligible_sessions=total_eligible,
-                        attended_sessions=attended,
-                        attendance_percentage=pct,
-                        effective_start_date=enr.effective_start_date,
-                        classes_to_recover=recover,
-                        classes_can_miss=miss,
-                        is_shortage=is_shortage,
-                        is_recoverable=is_rec,
-                        threshold=threshold,
-                    )
-                )
+                # Update with active assignment if previous was inactive or older
+                if ta.is_active or enr.enrollment_status == EnrollmentStatus.ACTIVE:
+                    subject_map[sub_id]["teaching_assignment_id"] = ta.id
+                    subject_map[sub_id]["faculty_name"] = ta.faculty_user.full_name
+                    subject_map[sub_id]["is_active_assignment"] = True
+
+                if enr.effective_start_date < subject_map[sub_id]["effective_start_date"]:
+                    subject_map[sub_id]["effective_start_date"] = enr.effective_start_date
+
+                subject_map[sub_id]["total_eligible_sessions"] += total_eligible
+                subject_map[sub_id]["attended_sessions"] += attended
+
                 total_eligible_all += total_eligible
                 total_attended_all += attended
+
+        summaries: List[StudentSubjectAttendanceSummary] = []
+        for sub_id, s_data in subject_map.items():
+            tot_e = s_data["total_eligible_sessions"]
+            att = s_data["attended_sessions"]
+            pct = 100.0 if tot_e == 0 else round((att / tot_e) * 100.0, 1)
+            recover, is_rec = calculate_recovery_classes(att, tot_e, threshold=threshold)
+            miss = calculate_can_miss_classes(att, tot_e, threshold=threshold)
+            is_shortage = tot_e > 0 and pct < threshold
+
+            summaries.append(
+                StudentSubjectAttendanceSummary(
+                    subject_id=s_data["subject_id"],
+                    teaching_assignment_id=s_data["teaching_assignment_id"],
+                    subject_code=s_data["subject_code"],
+                    subject_name=s_data["subject_name"],
+                    faculty_name=s_data["faculty_name"],
+                    total_eligible_sessions=tot_e,
+                    attended_sessions=att,
+                    attendance_percentage=pct,
+                    effective_start_date=s_data["effective_start_date"],
+                    classes_to_recover=recover,
+                    classes_can_miss=miss,
+                    is_shortage=is_shortage,
+                    is_recoverable=is_rec,
+                    threshold=threshold,
+                )
+            )
+
+        # Sort summaries alphabetically by subject code
+        summaries.sort(key=lambda s: s.subject_code)
 
         # Calculate weekly trend dynamically across all attended classes
         weekly_trend: List[StudentWeeklyTrendPoint] = []
@@ -300,7 +360,7 @@ class EnrollmentService:
         overall_pct = (
             100.0
             if total_eligible_all == 0
-            else round((total_attended_all / total_eligible_all) * 100, 1)
+            else round((total_attended_all / total_eligible_all) * 100.0, 1)
         )
 
         return StudentPersonalAttendanceResponse(
@@ -317,13 +377,17 @@ class EnrollmentService:
         self,
         student_user_id: uuid.UUID,
         teaching_assignment_id: uuid.UUID,
-        threshold: float = 75.0,
+        threshold: Optional[float] = None,
     ) -> StudentSubjectHistoryResponse:
         """
         Retrieve chronological attendance history for a student in a specific teaching assignment.
-        Validates that the student is enrolled in the class section associated with the teaching assignment.
+        Validates that the student is enrolled in the class section associated with the teaching assignment
+        or transferred between sections offering the same subject in the same term.
         Only sessions within [effective_start_date, effective_end_date] are returned.
         """
+        if threshold is None:
+            threshold = await get_institution_threshold(self.db)
+
         # 1. Fetch teaching assignment
         ta_stmt = (
             select(TeachingAssignment)
@@ -338,42 +402,70 @@ class EnrollmentService:
         if not ta:
             raise EntityNotFoundError(f"Teaching assignment {teaching_assignment_id} not found")
 
-        # 2. Check student enrollment in this assignment's class section
+        # 2. Check student enrollments in this term offering the same subject
         enr_stmt = (
             select(StudentEnrollment)
             .where(
                 and_(
                     StudentEnrollment.student_user_id == student_user_id,
-                    StudentEnrollment.class_section_id == ta.class_section_id,
+                    StudentEnrollment.academic_term_id == ta.academic_term_id,
                 )
             )
-            .order_by(StudentEnrollment.effective_start_date.desc())
+            .order_by(StudentEnrollment.effective_start_date.asc())
         )
         enr_res = await self.db.execute(enr_stmt)
-        enrollments = enr_res.scalars().all()
-        if not enrollments:
+        term_enrollments = enr_res.scalars().all()
+
+        # Find teaching assignments for this subject across enrolled sections
+        sec_ids = [e.class_section_id for e in term_enrollments]
+        matching_ta_stmt = select(TeachingAssignment).where(
+            and_(
+                TeachingAssignment.class_section_id.in_(sec_ids),
+                TeachingAssignment.subject_id == ta.subject_id,
+                TeachingAssignment.academic_term_id == ta.academic_term_id,
+            )
+        )
+        matching_ta_res = await self.db.execute(matching_ta_stmt)
+        matching_tas = matching_ta_res.scalars().all()
+        matching_ta_map = {m.class_section_id: m for m in matching_tas}
+
+        if not matching_tas and ta.class_section_id not in sec_ids:
             raise EntityNotFoundError("Student is not enrolled in this subject's class section")
 
-        # Query all sessions for this teaching assignment
-        sess_stmt = (
-            select(AttendanceSession)
-            .where(AttendanceSession.teaching_assignment_id == teaching_assignment_id)
-            .order_by(AttendanceSession.session_date.desc(), AttendanceSession.period_slot_or_sequence.desc())
-        )
-        sess_res = await self.db.execute(sess_stmt)
-        all_sessions = sess_res.scalars().all()
-
-        # Filter sessions to those falling within any active/past enrollment interval for this student
+        # 3. Query all applicable sessions across the matching teaching assignments
         applicable_sessions = []
-        for s in all_sessions:
-            for enr in enrollments:
-                if s.session_date >= enr.effective_start_date and (
-                    enr.effective_end_date is None or s.session_date <= enr.effective_end_date
-                ):
-                    applicable_sessions.append(s)
-                    break
+        for enr in term_enrollments:
+            matched_ta = matching_ta_map.get(enr.class_section_id)
+            if not matched_ta and enr.class_section_id != ta.class_section_id:
+                continue
+            effective_ta_id = matched_ta.id if matched_ta else ta.id
 
-        session_ids = [s.id for s in applicable_sessions]
+            sess_stmt = (
+                select(AttendanceSession)
+                .where(
+                    and_(
+                        AttendanceSession.teaching_assignment_id == effective_ta_id,
+                        AttendanceSession.session_status.in_([AttendanceSessionStatus.FINALIZED, AttendanceSessionStatus.SYNCED]),
+                        AttendanceSession.session_date >= enr.effective_start_date,
+                    )
+                )
+                .order_by(AttendanceSession.session_date.desc(), AttendanceSession.period_slot_or_sequence.desc())
+            )
+            if enr.effective_end_date is not None:
+                sess_stmt = sess_stmt.where(AttendanceSession.session_date <= enr.effective_end_date)
+
+            sess_res = await self.db.execute(sess_stmt)
+            applicable_sessions.extend(sess_res.scalars().all())
+
+        # Deduplicate and sort chronologically descending
+        sess_dict = {s.id: s for s in applicable_sessions}
+        sorted_sessions = sorted(
+            sess_dict.values(),
+            key=lambda s: (s.session_date, s.period_slot_or_sequence),
+            reverse=True,
+        )
+
+        session_ids = [s.id for s in sorted_sessions]
         record_map = {}
         if session_ids:
             rec_stmt = select(AttendanceRecord).where(
@@ -389,7 +481,7 @@ class EnrollmentService:
         attended = 0
         items: List[StudentSessionHistoryItem] = []
 
-        for s in applicable_sessions:
+        for s in sorted_sessions:
             rec = record_map.get(s.id)
             status = rec.attendance_status if rec else AttendanceStatus.ABSENT
             mark_source = rec.mark_source if rec else None

@@ -145,6 +145,14 @@ export default function AdminAcademicsScreen() {
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [rosterSearch, setRosterSearch] = useState('');
 
+  // Section Single Student Direct Enrollment State
+  const [showAddStudentSheet, setShowAddStudentSheet] = useState(false);
+  const [studentRoll, setStudentRoll] = useState('');
+  const [studentFullName, setStudentFullName] = useState('');
+  const [studentEmail, setStudentEmail] = useState('');
+  const [enrollingStudent, setEnrollingStudent] = useState(false);
+  const [enrollStudentError, setEnrollStudentError] = useState<string | null>(null);
+
   // Modal Sheet Visibility States (Create)
   const [activeSheet, setActiveSheet] = useState<'NONE' | 'CAMPUS' | 'DEPT' | 'PROGRAM' | 'SUBJECT' | 'SECTION' | 'ASSIGN' | 'TIMETABLE'>('NONE');
   const [submitting, setSubmitting] = useState(false);
@@ -1044,6 +1052,47 @@ export default function AdminAcademicsScreen() {
     }
   };
 
+  const handleEnrollSingleStudent = async () => {
+    if (!selectedRosterSection) return;
+    if (!studentRoll.trim() || !studentFullName.trim()) {
+      setEnrollStudentError('Roll number and student full name are required.');
+      return;
+    }
+    setEnrollingStudent(true);
+    setEnrollStudentError(null);
+    try {
+      const token = SessionStore.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/sections/${selectedRosterSection.id}/enroll`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          institutional_id: studentRoll.trim(),
+          full_name: studentFullName.trim(),
+          email: studentEmail.trim() || undefined,
+        }),
+      });
+      if (res.ok) {
+        const resData = await res.json();
+        Alert.alert('Student Enrolled', resData.message || 'Student admitted successfully.');
+        setShowAddStudentSheet(false);
+        setStudentRoll('');
+        setStudentFullName('');
+        setStudentEmail('');
+        await handleOpenRoster(selectedRosterSection);
+      } else {
+        const msg = await extractErrorMessage(res, 'Failed to enroll student');
+        setEnrollStudentError(msg);
+      }
+    } catch (e: any) {
+      setEnrollStudentError(e?.message || 'Network error');
+    } finally {
+      setEnrollingStudent(false);
+    }
+  };
+
   if (!SessionStore.canManageAcademics()) {
     return (
       <AccessRestrictedView
@@ -1067,59 +1116,113 @@ export default function AdminAcademicsScreen() {
       }}
       scrollable
     >
-      {/* Segmented Catalog Navigator */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-        <View style={styles.segmentContainer}>
-          <Pressable
-            onPress={() => setCatalogTab('DEPTS')}
-            style={[styles.segmentBtn, catalogTab === 'DEPTS' && styles.segmentBtnActive]}
-          >
-            <Text style={[styles.segmentBtnText, catalogTab === 'DEPTS' && styles.segmentBtnTextActive]}>
-              Depts ({departments.length})
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setCatalogTab('PROGRAMS')}
-            style={[styles.segmentBtn, catalogTab === 'PROGRAMS' && styles.segmentBtnActive]}
-          >
-            <Text style={[styles.segmentBtnText, catalogTab === 'PROGRAMS' && styles.segmentBtnTextActive]}>
-              Programs ({programs.length})
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setCatalogTab('SUBJECTS')}
-            style={[styles.segmentBtn, catalogTab === 'SUBJECTS' && styles.segmentBtnActive]}
-          >
-            <Text style={[styles.segmentBtnText, catalogTab === 'SUBJECTS' && styles.segmentBtnTextActive]}>
-              Subjects ({subjects.length})
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setCatalogTab('SECTIONS')}
-            style={[styles.segmentBtn, catalogTab === 'SECTIONS' && styles.segmentBtnActive]}
-          >
-            <Text style={[styles.segmentBtnText, catalogTab === 'SECTIONS' && styles.segmentBtnTextActive]}>
-              Sections ({sections.length})
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setCatalogTab('TIMETABLE')}
-            style={[styles.segmentBtn, catalogTab === 'TIMETABLE' && styles.segmentBtnActive]}
-          >
-            <Text style={[styles.segmentBtnText, catalogTab === 'TIMETABLE' && styles.segmentBtnTextActive]}>
-              Timetable ({timetable.length})
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setCatalogTab('CAMPUSES')}
-            style={[styles.segmentBtn, catalogTab === 'CAMPUSES' && styles.segmentBtnActive]}
-          >
-            <Text style={[styles.segmentBtnText, catalogTab === 'CAMPUSES' && styles.segmentBtnTextActive]}>
-              Campuses ({campuses.length})
-            </Text>
-          </Pressable>
+      {/* Modern Segmented Navigation Bar */}
+      <View style={styles.tabBarWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.modernTabScrollContent}
+        >
+          {[
+            { key: 'DEPTS', label: 'Departments', icon: Building2, count: departments.length },
+            { key: 'PROGRAMS', label: 'Programs', icon: GraduationCap, count: programs.length },
+            { key: 'SUBJECTS', label: 'Subjects', icon: BookOpen, count: subjects.length },
+            { key: 'SECTIONS', label: 'Sections', icon: Users, count: sections.length },
+            { key: 'TIMETABLE', label: 'Timetable', icon: Calendar, count: timetable.length },
+            { key: 'CAMPUSES', label: 'Campuses', icon: Landmark, count: campuses.length },
+          ].map((tab) => {
+            const isActive = catalogTab === tab.key;
+            const Icon = tab.icon;
+            return (
+              <Pressable
+                key={tab.key}
+                onPress={() => setCatalogTab(tab.key as any)}
+                style={({ pressed }) => [
+                  styles.modernTabPill,
+                  isActive ? styles.modernTabPillActive : styles.modernTabPillInactive,
+                  pressed && { opacity: 0.85 },
+                ]}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isActive }}
+              >
+                <Icon
+                  size={15}
+                  color={isActive ? '#ffffff' : Colors.forest}
+                  strokeWidth={isActive ? 2.5 : 2}
+                />
+                <Text
+                  style={[
+                    styles.modernTabPillText,
+                    isActive ? styles.modernTabPillTextActive : styles.modernTabPillTextInactive,
+                  ]}
+                >
+                  {tab.label}
+                </Text>
+                <View
+                  style={[
+                    styles.modernTabBadge,
+                    isActive ? styles.modernTabBadgeActive : styles.modernTabBadgeInactive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.modernTabBadgeText,
+                      isActive ? styles.modernTabBadgeTextActive : styles.modernTabBadgeTextInactive,
+                    ]}
+                  >
+                    {tab.count}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* Dynamic Context Header with Quick Add Action */}
+      <View style={styles.tabContextBanner}>
+        <View style={{ flex: 1, paddingRight: 8 }}>
+          <Text style={styles.tabContextTitle}>
+            {catalogTab === 'DEPTS' ? 'Academic Departments' :
+             catalogTab === 'PROGRAMS' ? 'Degree Programs' :
+             catalogTab === 'SUBJECTS' ? 'Curriculum Subjects' :
+             catalogTab === 'SECTIONS' ? 'Class Sections & Rosters' :
+             catalogTab === 'TIMETABLE' ? 'Timetable & Class Schedules' :
+             'University Campuses'}
+          </Text>
+          <Text style={styles.tabContextSub} numberOfLines={2}>
+            {catalogTab === 'DEPTS' ? 'Configure organizational units, faculty and course offerings' :
+             catalogTab === 'PROGRAMS' ? 'Undergraduate and postgraduate degree curricula' :
+             catalogTab === 'SUBJECTS' ? 'Course units, syllabus codes and credit weighting' :
+             catalogTab === 'SECTIONS' ? 'Student cohorts, rosters, faculty assignments & enrollments' :
+             catalogTab === 'TIMETABLE' ? 'Weekly schedule matrix, periods and room allocations' :
+             'Multi-campus facilities and branch coordination'}
+          </Text>
         </View>
-      </ScrollView>
+        {SessionStore.canEditAcademics() && (
+          <Pressable
+            onPress={() => {
+              if (catalogTab === 'DEPTS') setActiveSheet('DEPT');
+              else if (catalogTab === 'PROGRAMS') setActiveSheet('PROGRAM');
+              else if (catalogTab === 'SUBJECTS') setActiveSheet('SUBJECT');
+              else if (catalogTab === 'SECTIONS') setActiveSheet('SECTION');
+              else if (catalogTab === 'TIMETABLE') setActiveSheet('TIMETABLE');
+              else if (catalogTab === 'CAMPUSES') setActiveSheet('CAMPUS');
+            }}
+            style={styles.quickAddPill}
+          >
+            <Plus size={14} color="#ffffff" strokeWidth={2.5} />
+            <Text style={styles.quickAddPillText}>
+              {catalogTab === 'DEPTS' ? 'New Dept' :
+               catalogTab === 'PROGRAMS' ? 'New Program' :
+               catalogTab === 'SUBJECTS' ? 'New Subject' :
+               catalogTab === 'SECTIONS' ? 'New Section' :
+               catalogTab === 'TIMETABLE' ? 'Add Slot' :
+               'New Campus'}
+            </Text>
+          </Pressable>
+        )}
+      </View>
 
       {/* --- TAB CONTENT: DEPARTMENTS --- */}
       {catalogTab === 'DEPTS' && (
@@ -1274,25 +1377,51 @@ export default function AdminAcademicsScreen() {
                       {sec.program_name ? `${sec.program_name} · ` : ''}Cohort: {sec.cohort_year || 2026}
                     </Text>
                   </View>
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      handleOpenRoster(sec);
-                    }}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 4,
-                      backgroundColor: Colors.forest50,
-                      paddingHorizontal: 10,
-                      paddingVertical: 6,
-                      borderRadius: 8,
-                      marginRight: 6,
-                    }}
-                  >
-                    <UserCheck size={14} color={Colors.forest} />
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.forest }}>Roster</Text>
-                  </Pressable>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 6 }}>
+                    {SessionStore.canEnrollStudents() && (
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          setSelectedRosterSection(sec);
+                          setEnrollStudentError(null);
+                          setStudentRoll('');
+                          setStudentFullName('');
+                          setStudentEmail('');
+                          setShowAddStudentSheet(true);
+                        }}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4,
+                          backgroundColor: Colors.forest,
+                          paddingHorizontal: 8,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Plus size={13} color="#ffffff" strokeWidth={2.5} />
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>Add</Text>
+                      </Pressable>
+                    )}
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleOpenRoster(sec);
+                      }}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 4,
+                        backgroundColor: Colors.forest50,
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 8,
+                      }}
+                    >
+                      <UserCheck size={14} color={Colors.forest} />
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.forest }}>Roster</Text>
+                    </Pressable>
+                  </View>
                   <ChevronRight size={18} color={Colors.soft} />
                 </Card>
               ))
@@ -2210,6 +2339,46 @@ export default function AdminAcademicsScreen() {
             Cohort: {selectedRosterSection.cohort_year || 2026} · Active academic section roster
           </Text>
 
+          <View style={{ flexDirection: 'row', gap: 8, marginVertical: 8 }}>
+            {SessionStore.canEnrollStudents() && (
+              <Pressable
+                onPress={() => {
+                  setEnrollStudentError(null);
+                  setStudentRoll('');
+                  setStudentFullName('');
+                  setStudentEmail('');
+                  setShowAddStudentSheet(true);
+                }}
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  backgroundColor: Colors.forest,
+                  paddingVertical: 9,
+                  borderRadius: 8,
+                }}
+              >
+                <Plus size={16} color="#ffffff" strokeWidth={2.5} />
+                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }}>+ Add Student</Text>
+              </Pressable>
+            )}
+            <Pressable
+              onPress={() => handleOpenRoster(selectedRosterSection)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 9,
+                borderRadius: 8,
+                backgroundColor: Colors.forest50,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Text style={{ color: Colors.forest, fontSize: 13, fontWeight: '600' }}>Refresh</Text>
+            </Pressable>
+          </View>
+
           <View style={[styles.textInput, { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8, marginBottom: 12 }]}>
             <Search size={16} color={Colors.soft} />
             <TextInput
@@ -2322,11 +2491,168 @@ export default function AdminAcademicsScreen() {
           </Button>
         </Sheet>
       )}
+
+      {/* --- SHEET: ADD STUDENT TO SECTION --- */}
+      {selectedRosterSection && (
+        <Sheet visible={showAddStudentSheet} onClose={() => setShowAddStudentSheet(false)}>
+          <Text style={styles.sheetTitle}>Add Student to Section {selectedRosterSection.section_code}</Text>
+          <Text style={styles.sheetSub}>Directly enroll an individual student into this section roster</Text>
+
+          {enrollStudentError && <Text style={styles.errorBanner}>{enrollStudentError}</Text>}
+
+          <View style={{ gap: 12, marginVertical: 12 }}>
+            <View>
+              <Text style={styles.inputLabel}>Roll Number / Student ID</Text>
+              <TextInput
+                value={studentRoll}
+                onChangeText={setStudentRoll}
+                placeholder="e.g. 21CS042 or 2024-CSE-001"
+                placeholderTextColor={Colors.soft}
+                autoCapitalize="characters"
+                style={styles.textInput}
+              />
+            </View>
+            <View>
+              <Text style={styles.inputLabel}>Student Full Name</Text>
+              <TextInput
+                value={studentFullName}
+                onChangeText={setStudentFullName}
+                placeholder="e.g. Rahul Sharma"
+                placeholderTextColor={Colors.soft}
+                style={styles.textInput}
+              />
+            </View>
+            <View>
+              <Text style={styles.inputLabel}>Student Email (Optional)</Text>
+              <TextInput
+                value={studentEmail}
+                onChangeText={setStudentEmail}
+                placeholder="e.g. rahul.sharma@attendly.edu"
+                placeholderTextColor={Colors.soft}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                style={styles.textInput}
+              />
+            </View>
+            <Button
+              tone="forest"
+              disabled={enrollingStudent}
+              onPress={handleEnrollSingleStudent}
+            >
+              {enrollingStudent ? 'Enrolling Student…' : `Admit to Section ${selectedRosterSection.section_code}`}
+            </Button>
+          </View>
+        </Sheet>
+      )}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  tabBarWrapper: {
+    marginBottom: 12,
+  },
+  modernTabScrollContent: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  modernTabPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 24,
+    borderWidth: 1,
+  },
+  modernTabPillActive: {
+    backgroundColor: Colors.forest,
+    borderColor: Colors.forest,
+    elevation: 3,
+    shadowColor: Colors.forest,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  modernTabPillInactive: {
+    backgroundColor: Colors.card,
+    borderColor: Colors.line,
+  },
+  modernTabPillText: {
+    fontSize: 13,
+  },
+  modernTabPillTextActive: {
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  modernTabPillTextInactive: {
+    fontWeight: '600',
+    color: Colors.ink,
+  },
+  modernTabBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  modernTabBadgeActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  modernTabBadgeInactive: {
+    backgroundColor: Colors.mist,
+  },
+  modernTabBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  modernTabBadgeTextActive: {
+    color: '#ffffff',
+  },
+  modernTabBadgeTextInactive: {
+    color: Colors.forest,
+  },
+  tabContextBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  tabContextTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.ink,
+    letterSpacing: -0.2,
+  },
+  tabContextSub: {
+    fontSize: 12,
+    color: Colors.soft,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  quickAddPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.forest,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    elevation: 2,
+    shadowColor: Colors.forest,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  quickAddPillText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   segmentContainer: {
     flexDirection: 'row',
     backgroundColor: Colors.line,

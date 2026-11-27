@@ -10,7 +10,7 @@ from src.core.permissions import require_faculty_or_admin
 from src.database import get_db_session
 from src.models.user import User, UserRole
 from src.schemas.analytics import AnalyticsOverviewResponse, SectionAnalyticsResponse
-from src.services.analytics_service import AnalyticsService
+from src.services.analytics_service import AnalyticsService, get_institution_threshold
 from src.services.export_service import ExportService
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Attendance Analytics & Intelligence"])
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/v1/analytics", tags=["Attendance Analytics & Int
 @router.get("/overview", response_model=AnalyticsOverviewResponse, summary="Retrieve attendance analytics overview")
 async def get_analytics_overview(
     academic_term_id: Optional[uuid.UUID] = Query(None, description="Filter overview to an academic term"),
-    threshold: float = Query(75.0, ge=1.0, le=100.0, description="Configured shortage threshold percentage"),
+    threshold: Optional[float] = Query(None, ge=1.0, le=100.0, description="Configured shortage threshold percentage"),
     consecutive_absent_threshold: int = Query(2, ge=1, le=20, description="Consecutive absent alert threshold"),
     current_user: User = Depends(require_faculty_or_admin),
     db: AsyncSession = Depends(get_db_session),
@@ -27,18 +27,21 @@ async def get_analytics_overview(
     """
     Retrieve aggregated attendance overview.
     - Admin: institutional summary across active teaching assignments.
-    - Faculty: scoped strictly to assigned offerings and active substitute delegations.
+    - Faculty: scoped strictly to assigned offerings, active substitute delegations, or departmental/section IAC scopes.
     - Students are strictly forbidden (use /api/v1/student/attendance).
     """
+    inst_threshold = await get_institution_threshold(db)
+    effective_threshold = threshold if threshold is not None else inst_threshold
+
     if current_user.role != UserRole.ADMIN:
-        if threshold != 75.0 or consecutive_absent_threshold != 2:
+        if effective_threshold != inst_threshold or consecutive_absent_threshold != 2:
             raise UnauthorizedRoleError("Only administrators can override institutional policy thresholds")
 
     service = AnalyticsService(db)
     return await service.get_overview(
         current_user=current_user,
         academic_term_id=academic_term_id,
-        threshold=threshold,
+        threshold=effective_threshold,
         consecutive_threshold=consecutive_absent_threshold,
     )
 
@@ -50,7 +53,7 @@ async def get_analytics_overview(
 )
 async def get_section_analytics(
     teaching_assignment_id: uuid.UUID,
-    threshold: float = Query(75.0, ge=1.0, le=100.0, description="Configured shortage threshold percentage"),
+    threshold: Optional[float] = Query(None, ge=1.0, le=100.0, description="Configured shortage threshold percentage"),
     consecutive_absent_threshold: int = Query(2, ge=1, le=20, description="Consecutive absent alert threshold"),
     start_date: Optional[date] = Query(None, description="Optional start date filter"),
     end_date: Optional[date] = Query(None, description="Optional end date filter"),
@@ -62,14 +65,17 @@ async def get_section_analytics(
     Scoped to assigned faculty, valid substitute faculty, or Admin.
     Students are strictly forbidden.
     """
+    inst_threshold = await get_institution_threshold(db)
+    effective_threshold = threshold if threshold is not None else inst_threshold
+
     if current_user.role != UserRole.ADMIN:
-        if threshold != 75.0 or consecutive_absent_threshold != 2:
+        if effective_threshold != inst_threshold or consecutive_absent_threshold != 2:
             raise UnauthorizedRoleError("Only administrators can override institutional policy thresholds")
     service = AnalyticsService(db)
     return await service.get_assignment_analytics(
         current_user=current_user,
         teaching_assignment_id=teaching_assignment_id,
-        threshold=threshold,
+        threshold=effective_threshold,
         consecutive_threshold=consecutive_absent_threshold,
         start_date=start_date,
         end_date=end_date,

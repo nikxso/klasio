@@ -413,6 +413,26 @@ export const SessionStore = {
         'DEPARTMENT_HEAD_COORDINATOR',
         'PROGRAM_COORDINATOR',
         'TIMETABLE_COORDINATOR',
+        'FACULTY',
+        'TEACHING_FACULTY',
+        'SECTION_COORDINATOR',
+      ])
+    );
+  },
+
+  canEnrollStudents(): boolean {
+    return (
+      this.hasPermission('student_enrollment.create') ||
+      this.hasPermission('membership.invite') ||
+      this.hasAnyRole([
+        'ADMIN',
+        'INSTITUTION_OWNER',
+        'CENTRAL_INSTITUTION_ADMIN',
+        'ACADEMIC_REGISTRAR',
+        'DEPARTMENT_HEAD',
+        'FACULTY',
+        'TEACHING_FACULTY',
+        'SECTION_COORDINATOR',
       ])
     );
   },

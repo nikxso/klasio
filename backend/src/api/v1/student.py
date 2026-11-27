@@ -62,7 +62,7 @@ async def get_student_calendar_attendance(
 ):
     from src.models.enrollment import StudentEnrollment
     from src.models.assignment import TeachingAssignment
-    from src.models.attendance import AttendanceSession, AttendanceRecord, AttendanceStatus
+    from src.models.attendance import AttendanceSession, AttendanceRecord, AttendanceStatus, AttendanceSessionStatus
     from sqlalchemy import and_, select
     from sqlalchemy.orm import selectinload
 
@@ -93,7 +93,12 @@ async def get_student_calendar_attendance(
 
     sess_stmt = (
         select(AttendanceSession)
-        .where(AttendanceSession.teaching_assignment_id.in_(list(assignments.keys())))
+        .where(
+            and_(
+                AttendanceSession.teaching_assignment_id.in_(list(assignments.keys())),
+                AttendanceSession.session_status.in_([AttendanceSessionStatus.FINALIZED, AttendanceSessionStatus.SYNCED]),
+            )
+        )
         .order_by(AttendanceSession.session_date.desc(), AttendanceSession.period_slot_or_sequence.asc())
     )
     sess_res = await db.execute(sess_stmt)
@@ -101,8 +106,11 @@ async def get_student_calendar_attendance(
 
     applicable_sessions = []
     for s in all_sessions:
+        ta = assignments.get(s.teaching_assignment_id)
+        if not ta:
+            continue
         for enr in enrollments:
-            if s.session_date >= enr.effective_start_date and (
+            if enr.class_section_id == ta.class_section_id and s.session_date >= enr.effective_start_date and (
                 enr.effective_end_date is None or s.session_date <= enr.effective_end_date
             ):
                 applicable_sessions.append(s)

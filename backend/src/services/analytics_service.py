@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.exceptions import EntityNotFoundError, OutOfScopeError, UnauthorizedRoleError
-from src.models.academic import AcademicTerm, ClassSection, Subject
+from src.models.academic import AcademicTerm, ClassSection, Subject, DeploymentConfig
 from src.models.assignment import TeachingAssignment, SubstituteDelegation, DelegationStatus
 from src.models.attendance import (
     AttendanceSession,
@@ -26,6 +26,15 @@ from src.schemas.analytics import (
     WeeklyTrendPoint,
 )
 from src.services.scoping_service import ScopingService
+
+
+async def get_institution_threshold(db: AsyncSession, institution_id: Optional[uuid.UUID] = None) -> float:
+    """Retrieve institution-configured attendance shortage threshold from DeploymentConfig."""
+    stmt = select(DeploymentConfig.attendance_shortage_threshold).limit(1)
+    if institution_id:
+        stmt = stmt.where(DeploymentConfig.institution_id == institution_id)
+    val = (await db.execute(stmt)).scalar_one_or_none()
+    return float(val) if val is not None else 75.0
 
 
 def calculate_recovery_classes(attended: int, held: int, threshold: float = 75.0) -> Tuple[Optional[int], bool]:
@@ -142,12 +151,25 @@ class AnalyticsService:
 
         # 1. Scoping guard
         if current_user.role == UserRole.FACULTY:
-            scoping = ScopingService(self.db)
-            await scoping.verify_faculty_scope(
-                faculty_user_id=current_user.id,
-                teaching_assignment_id=teaching_assignment_id,
-                session_date=date.today(),
+            # Check IAC v1 hierarchical scope first (covers HOD at Department level, Class Advisor at Section level, etc.)
+            from src.services.authorization_evaluator import AuthorizationEvaluator
+            from src.models.access_control import DEFAULT_INSTITUTION_ID
+            evaluator = AuthorizationEvaluator(self.db)
+            decision = await evaluator.evaluate(
+                actor_user_id=current_user.id,
+                permission_code="reports.view",
+                institution_id=uuid.UUID(str(DEFAULT_INSTITUTION_ID)),
+                resource_type="TEACHING_ASSIGNMENT",
+                resource_id=teaching_assignment_id,
             )
+            if not decision.allowed:
+                # Fall back to direct faculty assignment or substitute delegation
+                scoping = ScopingService(self.db)
+                await scoping.verify_faculty_scope(
+                    faculty_user_id=current_user.id,
+                    teaching_assignment_id=teaching_assignment_id,
+                    session_date=date.today(),
+                )
 
         # 2. Fetch assignment metadata
         ta_stmt = (
@@ -175,7 +197,7 @@ class AnalyticsService:
             .where(
                 and_(
                     AttendanceSession.teaching_assignment_id == teaching_assignment_id,
-                    AttendanceSession.session_status == AttendanceSessionStatus.FINALIZED,
+                    AttendanceSession.session_status.in_([AttendanceSessionStatus.FINALIZED, AttendanceSessionStatus.SYNCED]),
                 )
             )
             .order_by(AttendanceSession.session_date.asc(), AttendanceSession.period_slot_or_sequence.asc())
@@ -195,7 +217,7 @@ class AnalyticsService:
         counted_sessions = [s for s in all_sessions if s.applicability_status == SessionApplicability.COUNTED]
         counted_session_ids = [s.id for s in counted_sessions]
 
-        # 4. Fetch enrolled students for section
+        # 4. Fetch enrolled students for section (including active, transferred, completed, and withdrawn)
         enr_stmt = (
             select(StudentEnrollment)
             .options(
@@ -204,7 +226,12 @@ class AnalyticsService:
             .where(
                 and_(
                     StudentEnrollment.class_section_id == ta.class_section_id,
-                    StudentEnrollment.enrollment_status.in_([EnrollmentStatus.ACTIVE, EnrollmentStatus.TRANSFERRED]),
+                    StudentEnrollment.enrollment_status.in_([
+                        EnrollmentStatus.ACTIVE,
+                        EnrollmentStatus.TRANSFERRED,
+                        EnrollmentStatus.WITHDRAWN,
+                        EnrollmentStatus.COMPLETED,
+                    ]),
                 )
             )
             .order_by(StudentEnrollment.created_at.asc())
@@ -381,10 +408,58 @@ class AnalyticsService:
                 academic_term_id=academic_term_id,
                 on_date=date.today(),
             )
-            assignment_ids = [fa.teaching_assignment_id for fa in faculty_assignments]
+            assignment_ids = set(fa.teaching_assignment_id for fa in faculty_assignments)
             for fa in faculty_assignments:
                 if fa.is_delegated:
                     delegated_assignment_ids.add(fa.teaching_assignment_id)
+
+            # Check active IAC scopes (e.g. HOD scoped to Department, Class Advisor scoped to Section, Academic Admin)
+            from src.models.access_control import (
+                InstitutionMembership,
+                MembershipStatus,
+                RoleAssignment,
+                AssignmentStatus,
+                RoleAssignmentScope,
+                RoleScopeType,
+            )
+            now = datetime.now(timezone.utc)
+            ra_stmt = (
+                select(RoleAssignmentScope)
+                .join(RoleAssignment, RoleAssignmentScope.role_assignment_id == RoleAssignment.id)
+                .join(InstitutionMembership, RoleAssignment.membership_id == InstitutionMembership.id)
+                .where(
+                    and_(
+                        InstitutionMembership.user_id == current_user.id,
+                        InstitutionMembership.status == MembershipStatus.ACTIVE,
+                        RoleAssignment.status == AssignmentStatus.ACTIVE,
+                        RoleAssignment.valid_from <= now,
+                        or_(RoleAssignment.valid_until.is_(None), RoleAssignment.valid_until > now),
+                    )
+                )
+            )
+            ra_scopes = (await self.db.execute(ra_stmt)).scalars().all()
+
+            extra_conditions = []
+            for scope in ra_scopes:
+                if scope.scope_type == RoleScopeType.INSTITUTION:
+                    extra_conditions.append(True)
+                    break
+                elif scope.scope_type == RoleScopeType.DEPARTMENT and scope.department_id:
+                    extra_conditions.append(
+                        TeachingAssignment.class_section.has(ClassSection.department_id == scope.department_id)
+                    )
+                elif scope.scope_type == RoleScopeType.CLASS_SECTION and scope.class_section_id:
+                    extra_conditions.append(TeachingAssignment.class_section_id == scope.class_section_id)
+
+            if extra_conditions:
+                scoped_stmt = select(TeachingAssignment.id).where(
+                    TeachingAssignment.is_active == True,
+                    or_(*extra_conditions),
+                )
+                if academic_term_id:
+                    scoped_stmt = scoped_stmt.where(TeachingAssignment.academic_term_id == academic_term_id)
+                scoped_ids = (await self.db.execute(scoped_stmt)).scalars().all()
+                assignment_ids.update(scoped_ids)
 
             if assignment_ids:
                 stmt = (
@@ -395,8 +470,10 @@ class AnalyticsService:
                         selectinload(TeachingAssignment.academic_term),
                         selectinload(TeachingAssignment.faculty_user),
                     )
-                    .where(TeachingAssignment.id.in_(assignment_ids))
+                    .where(TeachingAssignment.id.in_(list(assignment_ids)))
                 )
+                if academic_term_id:
+                    stmt = stmt.where(TeachingAssignment.academic_term_id == academic_term_id)
                 res = await self.db.execute(stmt)
                 target_assignments = res.scalars().all()
         else:

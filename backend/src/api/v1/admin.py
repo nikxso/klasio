@@ -1,14 +1,14 @@
 import uuid
 from typing import List, Optional, Dict
 from datetime import datetime, timezone, date
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status, HTTPException
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import func, select
+from sqlalchemy import func, select, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import EntityNotFoundError, OutOfScopeError, ConflictError
-from src.core.permissions import require_admin, require_permission, resolve_tenant_and_membership
+from src.core.permissions import require_admin, require_permission, resolve_tenant_and_membership, get_current_user
 from src.core.security import get_password_hash
 from src.database import get_db_session
 from src.models.access_control import (
@@ -438,12 +438,23 @@ async def delete_subject(
 
 @router.get("/sections", response_model=List[ClassSectionResponse], summary="List class sections")
 async def list_sections(
+    request: Request,
     department_id: Optional[uuid.UUID] = Query(None),
     program_id: Optional[uuid.UUID] = Query(None),
     academic_term_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_permission("academic_structure.view")),
+    admin_user: User = Depends(get_current_user),
 ):
+    from src.services.authorization_evaluator import AuthorizationEvaluator
+    inst_id, _ = await resolve_tenant_and_membership(request, admin_user, db)
+    evaluator = AuthorizationEvaluator(db)
+    decision = await evaluator.evaluate(
+        actor_user_id=admin_user.id,
+        permission_code="academic_structure.view",
+        institution_id=inst_id,
+    )
+    is_global = decision.allowed or admin_user.role == UserRole.ADMIN
+
     stmt = (
         select(ClassSection)
         .options(
@@ -452,6 +463,12 @@ async def list_sections(
             selectinload(ClassSection.program),
         )
     )
+    if not is_global:
+        # Scoped strictly to sections taught by the active faculty member
+        stmt = stmt.join(TeachingAssignment, TeachingAssignment.class_section_id == ClassSection.id).where(
+            TeachingAssignment.faculty_user_id == admin_user.id
+        ).distinct()
+
     if department_id:
         stmt = stmt.where(ClassSection.department_id == department_id)
     if program_id:
@@ -751,6 +768,50 @@ class EnrollmentStatusUpdateRequest(BaseModel):
     effective_end_date: Optional[date] = None
 
 
+class SingleStudentEnrollRequest(BaseModel):
+    institutional_id: str
+    full_name: str
+    email: Optional[str] = None
+    effective_start_date: Optional[date] = None
+
+
+async def check_section_access(
+    user: User,
+    section_id: uuid.UUID,
+    db: AsyncSession,
+    write: bool = False,
+    request: Optional[Request] = None,
+) -> None:
+    perm = "student_enrollment.create" if write else "student_enrollment.view"
+    from src.services.authorization_evaluator import AuthorizationEvaluator
+    inst_id, _ = await resolve_tenant_and_membership(request, user, db)
+    evaluator = AuthorizationEvaluator(db)
+    decision = await evaluator.evaluate(
+        actor_user_id=user.id,
+        permission_code=perm,
+        institution_id=inst_id,
+    )
+    if decision.allowed or user.role == UserRole.ADMIN:
+        return
+
+    # Check if user is active faculty assigned to this section
+    ta_stmt = select(TeachingAssignment).where(
+        and_(
+            TeachingAssignment.faculty_user_id == user.id,
+            TeachingAssignment.class_section_id == section_id,
+        )
+    )
+    ta = (await db.execute(ta_stmt)).scalar_one_or_none()
+    if ta:
+        return
+
+    action_label = "enroll students into" if write else "view the roster for"
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"You are only authorized to {action_label} your assigned class section.",
+    )
+
+
 @router.get(
     "/sections/{section_id}/roster",
     response_model=SectionRosterResponse,
@@ -758,12 +819,61 @@ class EnrollmentStatusUpdateRequest(BaseModel):
 )
 async def get_section_roster(
     section_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_permission("student_enrollment.view")),
+    admin_user: User = Depends(get_current_user),
 ):
+    await check_section_access(admin_user, section_id, db, write=False, request=request)
     from src.services.enrollment_service import EnrollmentService
     service = EnrollmentService(db)
     return await service.get_section_roster(section_id)
+
+
+@router.post(
+    "/sections/{section_id}/enroll",
+    summary="Directly enroll an individual student into a class section",
+)
+async def enroll_single_student_to_section(
+    section_id: uuid.UUID,
+    payload: SingleStudentEnrollRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: User = Depends(get_current_user),
+):
+    await check_section_access(admin_user, section_id, db, write=True, request=request)
+    from src.services.enrollment_service import EnrollmentService
+    from src.schemas.enrollment import BulkEnrollmentExecuteRequest, BulkStudentEnrollmentRow
+
+    sec_stmt = select(ClassSection).where(ClassSection.id == section_id)
+    sec = (await db.execute(sec_stmt)).scalar_one_or_none()
+    if not sec:
+        raise HTTPException(status_code=404, detail="Class section not found")
+
+    clean_inst_id = payload.institutional_id.strip()
+    clean_name = payload.full_name.strip()
+    clean_email = payload.email.strip().lower() if payload.email and payload.email.strip() else f"{clean_inst_id.lower()}@student.edu"
+
+    service = EnrollmentService(db)
+    exec_req = BulkEnrollmentExecuteRequest(
+        academic_term_id=sec.academic_term_id,
+        class_section_id=section_id,
+        rows=[
+            BulkStudentEnrollmentRow(
+                institutional_id=clean_inst_id,
+                full_name=clean_name,
+                email=clean_email,
+                effective_start_date=payload.effective_start_date,
+            )
+        ],
+        create_missing_accounts=True,
+    )
+    res = await service.bulk_enroll_execute(exec_req)
+    return {
+        "status": "success",
+        "message": f"Successfully enrolled {clean_name} ({clean_inst_id}) into section {sec.section_code}.",
+        "created_enrollments_count": res.created_enrollments_count,
+        "created_users_count": res.created_users_count,
+    }
 
 
 @router.post(
@@ -773,9 +883,11 @@ async def get_section_roster(
 )
 async def bulk_enroll_preview(
     payload: BulkEnrollmentPreviewRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_permission("student_enrollment.create")),
+    admin_user: User = Depends(get_current_user),
 ):
+    await check_section_access(admin_user, payload.class_section_id, db, write=True, request=request)
     from src.services.enrollment_service import EnrollmentService
     service = EnrollmentService(db)
     return await service.bulk_enroll_preview(payload)
@@ -788,9 +900,11 @@ async def bulk_enroll_preview(
 )
 async def bulk_enroll_execute(
     payload: BulkEnrollmentExecuteRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_permission("student_enrollment.create")),
+    admin_user: User = Depends(get_current_user),
 ):
+    await check_section_access(admin_user, payload.class_section_id, db, write=True, request=request)
     from src.services.enrollment_service import EnrollmentService
     service = EnrollmentService(db)
     return await service.bulk_enroll_execute(payload)
