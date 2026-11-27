@@ -137,6 +137,16 @@ export async function applyUpdateAndReload(): Promise<void> {
 const promptedUpdateIds = new Set<string>();
 let isChecking = false;
 
+function getRoleAppropriateUpdateRoute(): string {
+  try {
+    const { SessionStore } = require('../storage/sessionStore');
+    const role = SessionStore.getUser()?.role?.toUpperCase();
+    if (role === 'STUDENT') return '/(student)/(tabs)/profile';
+    if (role === 'FACULTY') return '/(faculty)/(tabs)/profile';
+  } catch (_) {}
+  return '/(admin)/(tabs)/settings';
+}
+
 /**
  * Checks for OTA updates in production and prompts the user or automatically notifies.
  * 
@@ -222,7 +232,7 @@ export async function checkForAppUpdates(silent = true): Promise<UpdateCheckResp
         message: `A new Klasio update (${newManifestId ? newManifestId.slice(0, 8) : 'latest'}) is downloading in the background.`,
         category: 'SYSTEM',
         priority: 'NORMAL',
-        actionRoute: '/(admin)/(tabs)/settings',
+        actionRoute: getRoleAppropriateUpdateRoute(),
       });
     } catch (_) {}
 
@@ -245,7 +255,7 @@ export async function checkForAppUpdates(silent = true): Promise<UpdateCheckResp
         message: `Klasio update (${newManifestId ? newManifestId.slice(0, 8) : 'latest'}) has finished downloading. Tap to restart and apply.`,
         category: 'SYSTEM',
         priority: 'HIGH',
-        actionRoute: '/(admin)/(tabs)/settings',
+        actionRoute: getRoleAppropriateUpdateRoute(),
       });
     } catch (_) {}
 
@@ -319,7 +329,7 @@ export async function verifyAndRecordUpdateLifecycle(): Promise<void> {
       message: `You are now running version ${currentUpdateId.slice(0, 8)}.`,
       category: 'SYSTEM',
       priority: 'NORMAL',
-      actionRoute: '/(admin)/(tabs)/settings',
+      actionRoute: getRoleAppropriateUpdateRoute(),
     });
   } catch (err) {
     console.warn('[updateService] verifyAndRecordUpdateLifecycle error:', err);

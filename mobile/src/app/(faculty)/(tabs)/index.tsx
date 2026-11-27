@@ -23,6 +23,7 @@ import {
   GraduationCap,
   ShieldCheck,
   RefreshCw,
+  MessageSquare,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
@@ -373,6 +374,18 @@ export default function FacultyHomeScreen() {
                 <Text style={styles.adminCardSub}>Substitutes</Text>
               </Pressable>
             )}
+
+            <Pressable
+              onPress={() => router.push('/(faculty)/requests' as any)}
+              style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.8 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Requests: Student Excuses"
+              accessibilityHint="Navigates to student attendance mistake and excuse requests"
+            >
+              <MessageSquare size={22} color={Colors.forest} />
+              <Text style={styles.adminCardTitle}>Requests</Text>
+              <Text style={styles.adminCardSub}>Student Excuses</Text>
+            </Pressable>
 
             {SessionStore.canViewReports() && (
               <Pressable

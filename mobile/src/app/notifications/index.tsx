@@ -82,6 +82,87 @@ export default function NotificationCenterScreen() {
     loadNotifications(false);
   };
 
+  const resolveSafeActionRoute = (item: NotificationItem): string | null => {
+    const user = SessionStore.getUser();
+    const role = user?.role?.toUpperCase();
+    const route = item.action_route;
+
+    // 1. System / OTA Updates
+    if (
+      item.category === 'SYSTEM' ||
+      item.id?.startsWith('ota-') ||
+      route?.includes('settings') ||
+      route?.includes('updates')
+    ) {
+      if (role === 'STUDENT') return '/(student)/(tabs)/profile';
+      if (role === 'FACULTY') return '/(faculty)/(tabs)/profile';
+      if (!SessionStore.canManageSettings()) return '/(faculty)/(tabs)/profile';
+      return '/(admin)/(tabs)/settings';
+    }
+
+    // 2. Attendance Requests / Grievances (e.g. /requests/{id})
+    if (
+      item.category === 'REQUEST' ||
+      route?.startsWith('/requests') ||
+      route?.includes('request')
+    ) {
+      if (role === 'STUDENT') return '/(student)/(tabs)/requests';
+      if (
+        role === 'FACULTY' ||
+        SessionStore.hasAnyRole(['FACULTY', 'HEAD_OF_DEPARTMENT', 'CLASS_ADVISOR', 'ADMIN'])
+      ) {
+        return '/(faculty)/requests';
+      }
+      return null;
+    }
+
+    // 3. Delegations (e.g. /delegations or /delegations/approvals)
+    if (
+      item.category === 'DELEGATION' ||
+      route?.startsWith('/delegations') ||
+      route?.includes('delegation')
+    ) {
+      if (
+        role === 'FACULTY' ||
+        SessionStore.hasAnyRole(['FACULTY', 'HEAD_OF_DEPARTMENT', 'CLASS_ADVISOR'])
+      ) {
+        return '/(faculty)/delegations';
+      }
+      if (SessionStore.hasAnyRole(['ADMIN', 'INSTITUTION_OWNER', 'CENTRAL_INSTITUTION_ADMIN'])) {
+        return '/(admin)/(tabs)/people';
+      }
+      return null;
+    }
+
+    // 4. Session attendance (e.g. /attendance/session/{id})
+    if (route?.startsWith('/attendance/session/')) {
+      if (role === 'STUDENT') return '/(student)/(tabs)/attendance';
+      return '/(faculty)/(tabs)/assignments';
+    }
+
+    // 5. Shortage alerts (e.g. /analytics/shortage)
+    if (item.category === 'ALERT' || route?.includes('shortage')) {
+      if (role === 'STUDENT') return '/(student)/(tabs)/attendance';
+      return '/(faculty)/(tabs)/reports';
+    }
+
+    // 6. Direct canonical routes
+    if (
+      route &&
+      (route.startsWith('/(student)') ||
+        route.startsWith('/(faculty)') ||
+        route.startsWith('/(admin)'))
+    ) {
+      if (route.startsWith('/(admin)') && !SessionStore.canManageSettings() && role !== 'ADMIN') {
+        if (role === 'STUDENT') return '/(student)/(tabs)';
+        if (role === 'FACULTY') return '/(faculty)/(tabs)';
+      }
+      return route;
+    }
+
+    return route || null;
+  };
+
   const handleNotificationPress = async (item: NotificationItem) => {
     if (!item.is_read) {
       await NotificationRepository.markAsRead(item.id, token);
@@ -108,11 +189,12 @@ export default function NotificationCenterScreen() {
       return;
     }
 
-    if (item.action_route) {
+    const targetRoute = resolveSafeActionRoute(item);
+    if (targetRoute) {
       try {
-        router.push(item.action_route as any);
+        router.push(targetRoute as any);
       } catch (e) {
-        // Fallback if route fails
+        console.warn('Notification navigation error:', e);
       }
     }
   };
@@ -272,7 +354,7 @@ export default function NotificationCenterScreen() {
                         {item.category}
                       </Chip>
 
-                      {item.action_route && (
+                      {resolveSafeActionRoute(item) && (
                         <View style={styles.viewLinkRow}>
                           <Text style={styles.viewLinkText}>View</Text>
                           <ChevronRight size={12} color={Colors.forest} />
