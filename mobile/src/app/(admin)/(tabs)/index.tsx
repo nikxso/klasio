@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -17,6 +19,7 @@ import {
   Check,
   ChevronRight,
   Bell,
+  RefreshCw,
 } from 'lucide-react-native';
 
 import { Screen, Card, Chip, IconBubble, SectionTitle, Avatar, AccessRestrictedView } from '@/components/ui/kit';
@@ -39,104 +42,106 @@ export default function AdminHomeScreen() {
   const [approvals, setApprovals] = useState<{ id: string; name: string }[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadOverview = useCallback(async () => {
+    const token = SessionStore.getToken();
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+
+    try {
+      setLoading(true);
+      const [overviewRes, studentsRes, facultyRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/v1/analytics/overview`, { headers }),
+        fetch(`${API_BASE_URL}/api/v1/admin/users?role=student`, { headers }),
+        fetch(`${API_BASE_URL}/api/v1/admin/users?role=faculty`, { headers }),
+      ]);
+
+      let studentCount = 0;
+      let facultyCount = 0;
+      let pendingApprovals: { id: string; name: string }[] = [];
+
+      if (studentsRes.ok) {
+        const stuList = await studentsRes.json();
+        if (Array.isArray(stuList)) {
+          studentCount = stuList.length;
+          pendingApprovals = stuList
+            .filter((s: any) => s.tag === 'Pending' || s.face_registration_state === 'PENDING')
+            .map((s: any) => ({ id: s.identifier || s.id, name: s.name }));
+        }
+      }
+
+      if (facultyRes.ok) {
+        const facList = await facultyRes.json();
+        if (Array.isArray(facList)) {
+          facultyCount = facList.length;
+        }
+      }
+
+      let overallPct: number | null = null;
+      let totalSections = 0;
+
+      if (overviewRes.ok) {
+        const overview = await overviewRes.json();
+        if (overview.overall_attendance_percentage != null) {
+          overallPct = Math.round(overview.overall_attendance_percentage);
+        }
+        if (overview.total_sections != null) {
+          totalSections = overview.total_sections;
+        }
+      }
+
+      setMetrics([
+        {
+          label: 'Students',
+          value: String(studentCount),
+          icon: Users,
+          tone: 'forest',
+        },
+        {
+          label: 'Faculty',
+          value: String(facultyCount),
+          icon: GraduationCap,
+          tone: 'lilac',
+        },
+        {
+          label: 'Attendance',
+          value: overallPct !== null ? `${overallPct}%` : '—',
+          icon: Percent,
+          tone: 'apricot',
+        },
+        {
+          label: 'Sections',
+          value: String(totalSections),
+          icon: Smartphone,
+          tone: 'amber',
+        },
+      ]);
+      setApprovals(pendingApprovals);
+    } catch (e) {
+      console.warn('Failed to load admin overview:', e);
+    } finally {
+      setLoading(false);
+    }
+
+    const user = SessionStore.getUser();
+    if (user) {
+      const count = await NotificationRepository.getUnreadCount(user.id, token);
+      setUnreadCount(count);
+    }
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadOverview();
+    setRefreshing(false);
+  }, [loadOverview]);
 
   useEffect(() => {
-    let isCancelled = false;
-    async function loadOverview() {
-      const token = SessionStore.getToken();
-      const headers: Record<string, string> = {
-        Accept: 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-
-      try {
-        setLoading(true);
-        const [overviewRes, studentsRes, facultyRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/api/v1/analytics/overview`, { headers }),
-          fetch(`${API_BASE_URL}/api/v1/admin/users?role=student`, { headers }),
-          fetch(`${API_BASE_URL}/api/v1/admin/users?role=faculty`, { headers }),
-        ]);
-
-        let studentCount = 0;
-        let facultyCount = 0;
-        let pendingApprovals: { id: string; name: string }[] = [];
-
-        if (studentsRes.ok) {
-          const stuList = await studentsRes.json();
-          if (Array.isArray(stuList)) {
-            studentCount = stuList.length;
-            pendingApprovals = stuList
-              .filter((s: any) => s.tag === 'Pending' || s.face_registration_state === 'PENDING')
-              .map((s: any) => ({ id: s.identifier || s.id, name: s.name }));
-          }
-        }
-
-        if (facultyRes.ok) {
-          const facList = await facultyRes.json();
-          if (Array.isArray(facList)) {
-            facultyCount = facList.length;
-          }
-        }
-
-        let overallPct = 92;
-        let totalSections = 3;
-
-        if (overviewRes.ok) {
-          const overview = await overviewRes.json();
-          if (overview.overall_attendance_percentage != null) {
-            overallPct = Math.round(overview.overall_attendance_percentage);
-          }
-          if (overview.total_sections) {
-            totalSections = overview.total_sections;
-          }
-        }
-
-        if (!isCancelled) {
-          setMetrics([
-            {
-              label: 'Students',
-              value: String(studentCount),
-              icon: Users,
-              tone: 'forest',
-            },
-            {
-              label: 'Faculty',
-              value: String(facultyCount),
-              icon: GraduationCap,
-              tone: 'lilac',
-            },
-            {
-              label: 'Attendance',
-              value: `${overallPct}%`,
-              icon: Percent,
-              tone: 'apricot',
-            },
-            {
-              label: 'Sections',
-              value: String(totalSections),
-              icon: Smartphone,
-              tone: 'amber',
-            },
-          ]);
-          setApprovals(pendingApprovals);
-        }
-      } catch (e) {
-        console.warn('Failed to load admin overview:', e);
-      } finally {
-        if (!isCancelled) setLoading(false);
-      }
-
-      const user = SessionStore.getUser();
-      if (user) {
-        const count = await NotificationRepository.getUnreadCount(user.id, token);
-        if (!isCancelled) setUnreadCount(count);
-      }
-    }
     loadOverview();
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+  }, [loadOverview]);
 
   const handleApprove = (id: string) => {
     setApprovals((prev) => prev.filter((a) => a.id !== id));
@@ -174,14 +179,36 @@ export default function AdminHomeScreen() {
       subtitle="Keep track of academic activity and attendance across your institution."
       title="Your institution, at a glance"
       right={
-        <Pressable
-          style={styles.notificationWrapper}
-          onPress={() => router.push('/notifications' as any)}
-          accessibilityLabel="Notifications"
-        >
-          <Bell size={20} color={Colors.ink} />
-          {unreadCount > 0 && <View style={styles.unreadDot} />}
-        </Pressable>
+        <View style={styles.headerRightActions}>
+          <Pressable
+            style={styles.refreshButton}
+            onPress={handleRefresh}
+            accessibilityLabel="Refresh institutional overview"
+            hitSlop={8}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color={Colors.forest} />
+            ) : (
+              <RefreshCw size={18} color={Colors.ink} />
+            )}
+          </Pressable>
+          <Pressable
+            style={styles.notificationWrapper}
+            onPress={() => router.push('/notifications' as any)}
+            accessibilityLabel="Notifications"
+          >
+            <Bell size={20} color={Colors.ink} />
+            {unreadCount > 0 && <View style={styles.unreadDot} />}
+          </Pressable>
+        </View>
+      }
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={Colors.forest}
+          colors={[Colors.primary, Colors.forest]}
+        />
       }
       scrollable
     >
@@ -376,6 +403,21 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: Colors.line,
     marginVertical: 10,
+  },
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  refreshButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   notificationWrapper: {
     width: 36,

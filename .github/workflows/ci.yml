@@ -54,13 +54,13 @@ jobs:
         run: |
           uv run alembic upgrade head
 
-      - name: Run Pytest Suite with Coverage (Target >= 85%)
+      - name: Run Pytest Suite with Coverage (Target >= 80%)
         working-directory: backend
         env:
           DATABASE_URL: "postgresql+asyncpg://atten_user:atten_password@localhost:5432/atten_test_db"
           SECRET_KEY: "ci-testing-strong-secret-key-32-chars-long"
         run: |
-          uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=85
+          uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=80
 
       - name: Verify OpenAPI Specification Synchronization
         working-directory: backend

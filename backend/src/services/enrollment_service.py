@@ -233,7 +233,7 @@ class EnrollmentService:
                 else:
                     attended = 0
 
-                pct = 0.0 if total_eligible == 0 else round((attended / total_eligible) * 100, 1)
+                pct = 100.0 if total_eligible == 0 else round((attended / total_eligible) * 100, 1)
                 threshold = 75.0
                 recover, is_rec = calculate_recovery_classes(attended, total_eligible, threshold=threshold)
                 miss = calculate_can_miss_classes(attended, total_eligible, threshold=threshold)
@@ -287,7 +287,7 @@ class EnrollmentService:
                 )
 
         overall_pct = (
-            0.0
+            100.0
             if total_eligible_all == 0
             else round((total_attended_all / total_eligible_all) * 100, 1)
         )
@@ -403,7 +403,7 @@ class EnrollmentService:
                 )
             )
 
-        pct = 0.0 if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
+        pct = 100.0 if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
         recover, is_rec = calculate_recovery_classes(attended, total_eligible, threshold=threshold)
         miss = calculate_can_miss_classes(attended, total_eligible, threshold=threshold)
         is_shortage = total_eligible > 0 and pct < threshold

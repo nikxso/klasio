@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   TextInput,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -139,15 +140,10 @@ export default function FacultyReportsScreen() {
             subjectName: a.subject_name,
             sectionCode: a.section_code,
             room: a.room || 'LH-204',
-            held: a.held_count || 12,
-            avgPct: a.average_attendance_pct != null ? Math.round(a.average_attendance_pct) : 88,
+            held: a.held_count != null ? a.held_count : 0,
+            avgPct: a.average_attendance_pct != null ? Math.round(a.average_attendance_pct) : null,
             threshold: 75,
-            trend: [
-              { label: 'Oct W1', pct: 85 },
-              { label: 'Oct W2', pct: 89 },
-              { label: 'Oct W3', pct: 90 },
-              { label: 'Now', pct: 88 },
-            ],
+            trend: [],
             studentsNeedingAttention: [],
           }));
           setReportList(mapped);
@@ -185,6 +181,20 @@ export default function FacultyReportsScreen() {
       if (res.ok) {
         const data = await res.json();
         setDynamicAnalytics(data);
+        setReportList((prev) =>
+          prev.map((item) =>
+            item.id === assignmentId
+              ? {
+                  ...item,
+                  held: data.total_held_sessions ?? 0,
+                  avgPct:
+                    data.average_attendance_percentage != null
+                      ? Math.round(data.average_attendance_percentage)
+                      : null,
+                }
+              : item
+          )
+        );
       }
     } catch (err) {
       console.warn('Failed to load section analytics:', err);
@@ -243,20 +253,18 @@ export default function FacultyReportsScreen() {
     if (dynamicAnalytics?.trend && dynamicAnalytics.trend.length > 0) {
       return dynamicAnalytics.trend.map((t: any) => ({
         label: t.period_label,
-        value: t.attendance_percentage != null ? Math.round(t.attendance_percentage) : 80,
+        value: t.attendance_percentage != null ? Math.round(t.attendance_percentage) : 0,
       }));
     }
-    return (currentAssignment?.trend || []).map((t) => ({
-      label: t.label,
-      value: t.pct ?? 80,
-    }));
-  }, [dynamicAnalytics, currentAssignment]);
+    return [];
+  }, [dynamicAnalytics]);
 
   const distributionBins: HistogramBin[] = useMemo(() => {
     if (dynamicAnalytics?.roster_summaries && dynamicAnalytics.roster_summaries.length > 0) {
       let b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
       for (const s of dynamicAnalytics.roster_summaries) {
-        const pct = s.attendance_percentage != null ? s.attendance_percentage : 100;
+        if (s.attendance_percentage == null) continue;
+        const pct = s.attendance_percentage;
         if (pct < 50) b1++;
         else if (pct < 65) b2++;
         else if (pct < 75) b3++;
@@ -271,15 +279,14 @@ export default function FacultyReportsScreen() {
         { range: '90-100%', count: b5, label: 'Top', tone: 'forest' },
       ];
     }
-    const avg = currentAssignment?.avgPct ?? 85;
     return [
-      { range: '<50%', count: avg < 75 ? 3 : 1, label: 'Critical', tone: 'rose' },
-      { range: '50-64%', count: avg < 75 ? 6 : 2, label: 'Severe', tone: 'amber' },
-      { range: '65-74%', count: avg < 75 ? 8 : 4, label: 'At-Risk', tone: 'neutral' },
-      { range: '75-89%', count: 24, label: 'Good', tone: 'sage' },
-      { range: '90-100%', count: 19, label: 'Top', tone: 'forest' },
+      { range: '<50%', count: 0, label: 'Critical', tone: 'rose' },
+      { range: '50-64%', count: 0, label: 'Severe', tone: 'amber' },
+      { range: '65-74%', count: 0, label: 'At-Risk', tone: 'neutral' },
+      { range: '75-89%', count: 0, label: 'Good', tone: 'sage' },
+      { range: '90-100%', count: 0, label: 'Top', tone: 'forest' },
     ];
-  }, [dynamicAnalytics, currentAssignment]);
+  }, [dynamicAnalytics]);
 
   const assignmentComparisonData = useMemo(() => {
     return reportList.map((item) => ({
@@ -387,6 +394,14 @@ export default function FacultyReportsScreen() {
             <RefreshCw size={18} color={Colors.ink} />
           )}
         </Pressable>
+      }
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          tintColor={Colors.forest}
+          colors={[Colors.primary, Colors.forest]}
+        />
       }
     >
       {/* Academic Year Dynamic Filter */}
