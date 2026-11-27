@@ -42,36 +42,43 @@ async def test_engine():
         echo=False,
     )
 
+    is_sqlite = "sqlite" in engine.url.drivername
+    inst_id_str = "00000000000000000000000000000001" if is_sqlite else "00000000-0000-0000-0000-000000000001"
+    campus_id_str = "00000000000000000000000000000002" if is_sqlite else "00000000-0000-0000-0000-000000000002"
+    p1_str = "00000000000000000000000000000011" if is_sqlite else "00000000-0000-0000-0000-000000000011"
+    p2_str = "00000000000000000000000000000012" if is_sqlite else "00000000-0000-0000-0000-000000000012"
+    p3_str = "00000000000000000000000000000013" if is_sqlite else "00000000-0000-0000-0000-000000000013"
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(
-            text("""
+            text(f"""
                 INSERT INTO institutions (id, code, name, status, created_at, updated_at)
-                VALUES ('00000000-0000-0000-0000-000000000001', 'KLASIO_MAIN', 'Klasio Institute of Technology', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES ('{inst_id_str}', 'KLASIO_MAIN', 'Klasio Institute of Technology', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (id) DO NOTHING
             """)
         )
         await conn.execute(
-            text("""
+            text(f"""
                 INSERT INTO campuses (id, institution_id, code, name, status, created_at, updated_at)
-                VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'MAIN', 'Main Campus', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES ('{campus_id_str}', '{inst_id_str}', 'MAIN', 'Main Campus', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (id) DO NOTHING
             """)
         )
         await conn.execute(
-            text("""
+            text(f"""
                 INSERT INTO deployment_config (singleton_id, institution_id, deployment_mode, attendance_shortage_threshold, created_at, updated_at)
-                VALUES (1, '00000000-0000-0000-0000-000000000001', 'SINGLE_INSTITUTION_SELF_HOSTED', 75.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (1, '{inst_id_str}', 'SINGLE_INSTITUTION_SELF_HOSTED', 75.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (singleton_id) DO NOTHING
             """)
         )
         await conn.execute(
-            text("""
+            text(f"""
                 INSERT INTO academic_periods (id, institution_id, period_number, name, start_time, end_time, is_break, is_active, created_at, updated_at)
                 VALUES
-                    ('00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000001', 1, 'Period 1', '09:00:00', '10:00:00', false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                    ('00000000-0000-0000-0000-000000000012', '00000000-0000-0000-0000-000000000001', 2, 'Period 2', '10:00:00', '11:00:00', false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                    ('00000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000001', 3, 'Period 3', '11:00:00', '12:00:00', false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ('{p1_str}', '{inst_id_str}', 1, 'Period 1', '09:00:00', '10:00:00', false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    ('{p2_str}', '{inst_id_str}', 2, 'Period 2', '10:00:00', '11:00:00', false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    ('{p3_str}', '{inst_id_str}', 3, 'Period 3', '11:00:00', '12:00:00', false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (institution_id, period_number) DO NOTHING;
             """)
         )
@@ -105,13 +112,13 @@ async def test_engine():
             )
         else:
             await conn.execute(
-                text("""
+                text(f"""
                     CREATE TRIGGER IF NOT EXISTS trg_user_auto_membership
                     AFTER INSERT ON users
                     FOR EACH ROW
                     BEGIN
                         INSERT OR IGNORE INTO institution_memberships (id, institution_id, user_id, status, joined_at, created_at, updated_at)
-                        VALUES (lower(hex(randomblob(16))), '00000000-0000-0000-0000-000000000001', NEW.id, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+                        VALUES (lower(hex(randomblob(16))), '{inst_id_str}', NEW.id, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
                     END;
                 """)
             )

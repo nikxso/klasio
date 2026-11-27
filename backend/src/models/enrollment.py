@@ -50,6 +50,7 @@ class StudentEnrollment(Base, TimestampMixin):
             "academic_term_id",
             unique=True,
             postgresql_where=text("effective_end_date IS NULL"),
+            sqlite_where=text("effective_end_date IS NULL"),
         ),
         Index("ix_student_enrollments_student_status", "student_user_id", "enrollment_status"),
     )

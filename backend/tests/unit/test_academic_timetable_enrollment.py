@@ -321,23 +321,29 @@ async def test_timetable_conflict_prevention(db_session: AsyncSession):
     await db_session.flush()
 
     # Academic periods
-    period_p1 = AcademicPeriod(
-        institution_id=DEFAULT_INSTITUTION_ID,
-        period_number=1,
-        name="Period 1",
-        start_time=time(9, 0),
-        end_time=time(10, 0),
-        is_break=False,
-    )
-    period_break = AcademicPeriod(
-        institution_id=DEFAULT_INSTITUTION_ID,
-        period_number=4,
-        name="Lunch Break",
-        start_time=time(12, 0),
-        end_time=time(13, 0),
-        is_break=True,
-    )
-    db_session.add_all([period_p1, period_break])
+    period_p1 = (await db_session.execute(select(AcademicPeriod).where(AcademicPeriod.period_number == 1))).scalar_one_or_none()
+    if not period_p1:
+        period_p1 = AcademicPeriod(
+            institution_id=DEFAULT_INSTITUTION_ID,
+            period_number=1,
+            name="Period 1",
+            start_time=time(9, 0),
+            end_time=time(10, 0),
+            is_break=False,
+        )
+        db_session.add(period_p1)
+
+    period_break = (await db_session.execute(select(AcademicPeriod).where(AcademicPeriod.period_number == 4))).scalar_one_or_none()
+    if not period_break:
+        period_break = AcademicPeriod(
+            institution_id=DEFAULT_INSTITUTION_ID,
+            period_number=4,
+            name="Lunch Break",
+            start_time=time(12, 0),
+            end_time=time(13, 0),
+            is_break=True,
+        )
+        db_session.add(period_break)
     await db_session.flush()
 
     tt_service = TimetableService(db_session)
@@ -470,16 +476,18 @@ async def test_faculty_today_schedule_and_substitute_delegation(db_session: Asyn
     )
     db_session.add(delegation)
 
-    p1 = AcademicPeriod(
-        institution_id=DEFAULT_INSTITUTION_ID,
-        period_number=1,
-        name="P1",
-        start_time=time(9, 0),
-        end_time=time(10, 0),
-        is_break=False,
-    )
-    db_session.add(p1)
-    await db_session.flush()
+    p1 = (await db_session.execute(select(AcademicPeriod).where(AcademicPeriod.period_number == 1))).scalar_one_or_none()
+    if not p1:
+        p1 = AcademicPeriod(
+            institution_id=DEFAULT_INSTITUTION_ID,
+            period_number=1,
+            name="P1",
+            start_time=time(9, 0),
+            end_time=time(10, 0),
+            is_break=False,
+        )
+        db_session.add(p1)
+        await db_session.flush()
 
     tt = TimetableEntry(
         institution_id=DEFAULT_INSTITUTION_ID,

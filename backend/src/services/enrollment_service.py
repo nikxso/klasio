@@ -816,14 +816,20 @@ class EnrollmentService:
                 self.db.add(student_user)
                 await self.db.flush()
 
-                # Ensure active membership
-                mem = InstitutionMembership(
-                    institution_id=uuid.UUID(str(DEFAULT_INSTITUTION_ID)),
-                    user_id=student_user.id,
-                    status=MembershipStatus.ACTIVE,
+                # Ensure active membership (if trigger did not already create it)
+                mem_stmt = select(InstitutionMembership).where(
+                    InstitutionMembership.user_id == student_user.id,
+                    InstitutionMembership.institution_id == uuid.UUID(str(DEFAULT_INSTITUTION_ID)),
                 )
-                self.db.add(mem)
-                await self.db.flush()
+                mem = (await self.db.execute(mem_stmt)).scalar_one_or_none()
+                if not mem:
+                    mem = InstitutionMembership(
+                        institution_id=uuid.UUID(str(DEFAULT_INSTITUTION_ID)),
+                        user_id=student_user.id,
+                        status=MembershipStatus.ACTIVE,
+                    )
+                    self.db.add(mem)
+                    await self.db.flush()
 
             # 2. Create StudentEnrollment
             enrollment = StudentEnrollment(
