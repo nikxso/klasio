@@ -4,8 +4,8 @@ import { API_BASE_URL } from '@/config/api';
 export interface NotificationItem {
   id: string;
   recipient_user_id: string;
-  category: 'ATTENDANCE' | 'ALERT' | 'REQUEST' | 'SYSTEM';
-  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+  category: 'ATTENDANCE' | 'ALERT' | 'REQUEST' | 'SYSTEM' | 'DELEGATION' | 'SHORTAGE' | string;
+  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' | string;
   title: string;
   message: string;
   payload_json?: string | null;
@@ -213,7 +213,8 @@ export class NotificationRepository {
       [notificationId]
     );
 
-    if (token) {
+    const isLocal = notificationId.startsWith('local-') || notificationId.startsWith('ota-');
+    if (token && !isLocal) {
       try {
         await fetch(`${API_BASE_URL}/api/v1/notifications/${notificationId}/read`, {
           method: 'POST',
