@@ -167,6 +167,7 @@ class AttendanceSession(Base, TimestampMixin):
     finalized_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        default=lambda: datetime.now(timezone.utc),
     )
     payload_hash: Mapped[Optional[str]] = mapped_column(
         String(64),
@@ -264,6 +265,7 @@ class AttendanceRecord(Base, TimestampMixin):
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        default=lambda: datetime.now(timezone.utc),
     )
 
     attendance_session: Mapped["AttendanceSession"] = relationship(

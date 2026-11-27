@@ -2598,7 +2598,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
   },
   modernTabBadgeInactive: {
-    backgroundColor: Colors.mist,
+    backgroundColor: Colors.forest50,
   },
   modernTabBadgeText: {
     fontSize: 11,

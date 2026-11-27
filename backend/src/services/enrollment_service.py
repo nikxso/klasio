@@ -216,13 +216,11 @@ class EnrollmentService:
                 academic_term_id = latest_enr.academic_term_id
                 enrollments = [e for e in enrollments if e.academic_term_id == academic_term_id]
 
+        summaries: List[StudentSubjectAttendanceSummary] = []
         total_eligible_all = 0
         total_attended_all = 0
         all_eligible_sessions: List[AttendanceSession] = []
         attended_session_ids = set()
-
-        # Map by subject_id -> aggregated subject metrics
-        subject_map: dict = {}
 
         for enr in enrollments:
             # Query all teaching assignments for this section (including reassigned / historical)
@@ -270,63 +268,32 @@ class EnrollmentService:
                     for r in present_records:
                         attended_session_ids.add(r.attendance_session_id)
 
-                # Consolidate by subject_id
-                sub_id = ta.subject_id
-                if sub_id not in subject_map:
-                    subject_map[sub_id] = {
-                        "subject_id": sub_id,
-                        "teaching_assignment_id": ta.id,
-                        "subject_code": ta.subject.code,
-                        "subject_name": ta.subject.name,
-                        "faculty_name": ta.faculty_user.full_name,
-                        "total_eligible_sessions": 0,
-                        "attended_sessions": 0,
-                        "effective_start_date": enr.effective_start_date,
-                        "is_active_assignment": ta.is_active,
-                    }
+                pct = 100.0 if total_eligible == 0 else round((attended / total_eligible) * 100.0, 1)
+                recover, is_rec = calculate_recovery_classes(attended, total_eligible, threshold=threshold)
+                miss = calculate_can_miss_classes(attended, total_eligible, threshold=threshold)
+                is_shortage = total_eligible > 0 and pct < threshold
 
-                # Update with active assignment if previous was inactive or older
-                if ta.is_active or enr.enrollment_status == EnrollmentStatus.ACTIVE:
-                    subject_map[sub_id]["teaching_assignment_id"] = ta.id
-                    subject_map[sub_id]["faculty_name"] = ta.faculty_user.full_name
-                    subject_map[sub_id]["is_active_assignment"] = True
-
-                if enr.effective_start_date < subject_map[sub_id]["effective_start_date"]:
-                    subject_map[sub_id]["effective_start_date"] = enr.effective_start_date
-
-                subject_map[sub_id]["total_eligible_sessions"] += total_eligible
-                subject_map[sub_id]["attended_sessions"] += attended
+                summaries.append(
+                    StudentSubjectAttendanceSummary(
+                        subject_id=ta.subject_id,
+                        teaching_assignment_id=ta.id,
+                        subject_code=ta.subject.code,
+                        subject_name=ta.subject.name,
+                        faculty_name=ta.faculty_user.full_name,
+                        total_eligible_sessions=total_eligible,
+                        attended_sessions=attended,
+                        attendance_percentage=pct,
+                        effective_start_date=enr.effective_start_date,
+                        classes_to_recover=recover,
+                        classes_can_miss=miss,
+                        is_shortage=is_shortage,
+                        is_recoverable=is_rec,
+                        threshold=threshold,
+                    )
+                )
 
                 total_eligible_all += total_eligible
                 total_attended_all += attended
-
-        summaries: List[StudentSubjectAttendanceSummary] = []
-        for sub_id, s_data in subject_map.items():
-            tot_e = s_data["total_eligible_sessions"]
-            att = s_data["attended_sessions"]
-            pct = 100.0 if tot_e == 0 else round((att / tot_e) * 100.0, 1)
-            recover, is_rec = calculate_recovery_classes(att, tot_e, threshold=threshold)
-            miss = calculate_can_miss_classes(att, tot_e, threshold=threshold)
-            is_shortage = tot_e > 0 and pct < threshold
-
-            summaries.append(
-                StudentSubjectAttendanceSummary(
-                    subject_id=s_data["subject_id"],
-                    teaching_assignment_id=s_data["teaching_assignment_id"],
-                    subject_code=s_data["subject_code"],
-                    subject_name=s_data["subject_name"],
-                    faculty_name=s_data["faculty_name"],
-                    total_eligible_sessions=tot_e,
-                    attended_sessions=att,
-                    attendance_percentage=pct,
-                    effective_start_date=s_data["effective_start_date"],
-                    classes_to_recover=recover,
-                    classes_can_miss=miss,
-                    is_shortage=is_shortage,
-                    is_recoverable=is_rec,
-                    threshold=threshold,
-                )
-            )
 
         # Sort summaries alphabetically by subject code
         summaries.sort(key=lambda s: s.subject_code)
@@ -402,49 +369,30 @@ class EnrollmentService:
         if not ta:
             raise EntityNotFoundError(f"Teaching assignment {teaching_assignment_id} not found")
 
-        # 2. Check student enrollments in this term offering the same subject
+        # 2. Check student enrollment in this assignment's class section
         enr_stmt = (
             select(StudentEnrollment)
             .where(
                 and_(
                     StudentEnrollment.student_user_id == student_user_id,
-                    StudentEnrollment.academic_term_id == ta.academic_term_id,
+                    StudentEnrollment.class_section_id == ta.class_section_id,
                 )
             )
-            .order_by(StudentEnrollment.effective_start_date.asc())
+            .order_by(StudentEnrollment.effective_start_date.desc())
         )
         enr_res = await self.db.execute(enr_stmt)
-        term_enrollments = enr_res.scalars().all()
-
-        # Find teaching assignments for this subject across enrolled sections
-        sec_ids = [e.class_section_id for e in term_enrollments]
-        matching_ta_stmt = select(TeachingAssignment).where(
-            and_(
-                TeachingAssignment.class_section_id.in_(sec_ids),
-                TeachingAssignment.subject_id == ta.subject_id,
-                TeachingAssignment.academic_term_id == ta.academic_term_id,
-            )
-        )
-        matching_ta_res = await self.db.execute(matching_ta_stmt)
-        matching_tas = matching_ta_res.scalars().all()
-        matching_ta_map = {m.class_section_id: m for m in matching_tas}
-
-        if not matching_tas and ta.class_section_id not in sec_ids:
+        enrollments = enr_res.scalars().all()
+        if not enrollments:
             raise EntityNotFoundError("Student is not enrolled in this subject's class section")
 
-        # 3. Query all applicable sessions across the matching teaching assignments
+        # 3. Query all applicable sessions strictly bounded by student's enrollment intervals
         applicable_sessions = []
-        for enr in term_enrollments:
-            matched_ta = matching_ta_map.get(enr.class_section_id)
-            if not matched_ta and enr.class_section_id != ta.class_section_id:
-                continue
-            effective_ta_id = matched_ta.id if matched_ta else ta.id
-
+        for enr in enrollments:
             sess_stmt = (
                 select(AttendanceSession)
                 .where(
                     and_(
-                        AttendanceSession.teaching_assignment_id == effective_ta_id,
+                        AttendanceSession.teaching_assignment_id == teaching_assignment_id,
                         AttendanceSession.session_status.in_([AttendanceSessionStatus.FINALIZED, AttendanceSessionStatus.SYNCED]),
                         AttendanceSession.session_date >= enr.effective_start_date,
                     )
