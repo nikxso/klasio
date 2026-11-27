@@ -38,7 +38,20 @@ export default function AdminSettingsScreen() {
         title="Settings Restricted"
         message="Institutional policies, thresholds, and technical configurations require IT or Governance Administration authority."
         requiredCapability="institution.manage"
-        onBack={() => router.replace('/(admin)' as any)}
+        onBack={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            const role = SessionStore.getUser()?.role?.toUpperCase();
+            if (role === 'STUDENT') {
+              router.replace('/(student)/(tabs)' as any);
+            } else if (role === 'FACULTY') {
+              router.replace('/(faculty)/(tabs)' as any);
+            } else {
+              router.replace('/(admin)' as any);
+            }
+          }
+        }}
       />
     );
   }
@@ -100,21 +113,15 @@ export default function AdminSettingsScreen() {
   };
 
   const handleConfirmSignOut = async () => {
+    if (isSigningOut) return;
     setIsSigningOut(true);
     try {
       setShowSignOutSheet(false);
       // Allow native dialog to dismiss on UI thread before navigation transition
       await new Promise((resolve) => setTimeout(resolve, 150));
       await SessionStore.clearSession(true);
-      const rootNav = navigation.getParent()?.getParent() || navigation.getParent() || navigation;
-      if (rootNav?.reset) {
-        rootNav.reset({ index: 0, routes: [{ name: 'index' }] });
-      } else {
-        router.replace('/');
-      }
     } catch (e) {
       console.warn('Sign out error:', e);
-      router.replace('/');
     } finally {
       setIsSigningOut(false);
     }

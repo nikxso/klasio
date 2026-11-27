@@ -104,21 +104,15 @@ export default function FacultyProfileScreen() {
   };
 
   const handleConfirmSignOut = async () => {
+    if (isSigningOut) return;
     setIsSigningOut(true);
     try {
       setShowSignOutSheet(false);
       // Allow native dialog to dismiss on UI thread before navigation transition
       await new Promise((resolve) => setTimeout(resolve, 150));
       await SessionStore.clearSession(true);
-      const rootNav = navigation.getParent()?.getParent() || navigation.getParent() || navigation;
-      if (rootNav?.reset) {
-        rootNav.reset({ index: 0, routes: [{ name: 'index' }] });
-      } else {
-        router.replace('/');
-      }
     } catch (e) {
       console.warn('Sign out error:', e);
-      router.replace('/');
     } finally {
       setIsSigningOut(false);
     }

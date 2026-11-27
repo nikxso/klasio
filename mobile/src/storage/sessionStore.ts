@@ -67,6 +67,8 @@ const PERMISSION_ALIASES: Record<string, string[]> = {
 
 let activeSession: AuthSession | null = null;
 let isInitialized = false;
+let initPromise: Promise<AuthSession | null> | null = null;
+let sessionEpoch = 0;
 let customDbOverride: any = null;
 
 function shouldLogWarning(e: any): boolean {
@@ -153,9 +155,13 @@ export const SessionStore = {
   resetMemoryForTesting(): void {
     activeSession = null;
     isInitialized = false;
+    initPromise = null;
+    sessionEpoch = 0;
   },
 
   async setSession(session: AuthSession | null): Promise<void> {
+    sessionEpoch++;
+    initPromise = null;
     activeSession = session;
     isInitialized = true;
     sessionListeners.forEach((listener) => {
@@ -211,48 +217,64 @@ export const SessionStore = {
   },
 
   async initFromStorage(): Promise<AuthSession | null> {
-    try {
-      const db = await getSessionDb();
-      const row = await db.getFirstAsync<{
-        token: string;
-        user_json: string;
-        membership_id?: string;
-        authorization_snapshot_json?: string;
-        authorization_version?: string;
-      }>(
-        'SELECT token, user_json, membership_id, authorization_snapshot_json, authorization_version FROM local_auth_session WHERE id = 1;'
-      );
-      isInitialized = true;
-      if (row?.token && row?.user_json) {
-        const parsedUser = JSON.parse(row.user_json);
-        if (row.membership_id) parsedUser.membershipId = row.membership_id;
-        if (row.authorization_version) parsedUser.authorizationVersion = row.authorization_version;
-        if (row.authorization_snapshot_json) {
-          try {
-            parsedUser.authorizationSnapshot = JSON.parse(row.authorization_snapshot_json);
-          } catch {}
-        }
-        activeSession = {
-          token: row.token,
-          user: parsedUser,
-        };
-        sessionListeners.forEach((listener) => {
-          try {
-            listener(activeSession);
-          } catch (err) {
-            console.warn('[SessionStore] Listener callback error:', err);
-          }
-        });
-        return activeSession;
-      }
-      activeSession = null;
-    } catch (e: any) {
-      isInitialized = true;
-      if (shouldLogWarning(e)) {
-        console.error('[SessionStore] initFromStorage error:', e?.message || e);
-      }
+    if (initPromise) {
+      return initPromise;
     }
-    return null;
+    initPromise = (async () => {
+      const epoch = ++sessionEpoch;
+      try {
+        const db = await getSessionDb();
+        const row = await db.getFirstAsync<{
+          token: string;
+          user_json: string;
+          membership_id?: string;
+          authorization_snapshot_json?: string;
+          authorization_version?: string;
+        }>(
+          'SELECT token, user_json, membership_id, authorization_snapshot_json, authorization_version FROM local_auth_session WHERE id = 1;'
+        );
+        // If clearSession or setSession occurred while this read was in flight, discard results
+        if (sessionEpoch !== epoch) {
+          return activeSession;
+        }
+        isInitialized = true;
+        if (row?.token && row?.user_json) {
+          const parsedUser = JSON.parse(row.user_json);
+          if (row.membership_id) parsedUser.membershipId = row.membership_id;
+          if (row.authorization_version) parsedUser.authorizationVersion = row.authorization_version;
+          if (row.authorization_snapshot_json) {
+            try {
+              parsedUser.authorizationSnapshot = JSON.parse(row.authorization_snapshot_json);
+            } catch {}
+          }
+          activeSession = {
+            token: row.token,
+            user: parsedUser,
+          };
+          sessionListeners.forEach((listener) => {
+            try {
+              listener(activeSession);
+            } catch (err) {
+              console.warn('[SessionStore] Listener callback error:', err);
+            }
+          });
+          return activeSession;
+        }
+        activeSession = null;
+      } catch (e: any) {
+        if (sessionEpoch === epoch) {
+          isInitialized = true;
+          activeSession = null;
+        }
+        if (shouldLogWarning(e)) {
+          console.error('[SessionStore] initFromStorage error:', e?.message || e);
+        }
+      } finally {
+        initPromise = null;
+      }
+      return activeSession;
+    })();
+    return initPromise;
   },
 
   getMembershipId(): string | undefined {
@@ -566,6 +588,8 @@ export const SessionStore = {
   },
 
   async clearSession(preservePendingSync: boolean = true): Promise<void> {
+    sessionEpoch++;
+    initPromise = null;
     activeSession = null;
     isInitialized = true;
     try {

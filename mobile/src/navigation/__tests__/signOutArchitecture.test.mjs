@@ -3,6 +3,22 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { SessionStore } from '../../storage/sessionStore.ts';
 
+function resolveTargetRoute(user) {
+  const role = user?.role ? user.role.toUpperCase() : '';
+  if (role === 'STUDENT' || (user?.permissions?.some(p => p === 'biometrics.enroll.self') && !user?.permissions?.some(p => p === 'attendance.session.start'))) {
+    return '/(student)';
+  }
+  if (user?.permissions?.some(p => p === 'attendance.session.start' || p === 'attendance.session.create') || role === 'FACULTY') {
+    return '/(faculty)';
+  }
+  if (user?.permissions?.some(p => p.startsWith('institution.') || p.startsWith('campus.') || p.startsWith('academic_structure.')) || role === 'ADMIN') {
+    return '/(admin)';
+  }
+  if (role === 'ADMIN') return '/(admin)';
+  if (role === 'STUDENT') return '/(student)';
+  return '/(faculty)';
+}
+
 describe('Sign-Out Architecture & Redirection Integrity Contract', () => {
   let db;
 
@@ -50,8 +66,7 @@ describe('Sign-Out Architecture & Redirection Integrity Contract', () => {
     db.close();
   });
 
-  test('1. clearSession removes SQLite record BEFORE notifying listeners (prevents resurrection race condition)', async () => {
-    // Populate an active session
+  test('1. Session is removed from SQLite BEFORE subscribers receive null', async () => {
     await SessionStore.setSession({
       token: 'jwt-active-token',
       user: {
@@ -67,7 +82,6 @@ describe('Sign-Out Architecture & Redirection Integrity Contract', () => {
 
     const unsub = SessionStore.subscribe((session) => {
       if (session === null) {
-        // At the moment subscriber is notified of null session, check SQLite row
         const row = db.prepare('SELECT token FROM local_auth_session WHERE id = 1;').get();
         storageStateAtListenerNotification = row ? 'ROW_STILL_EXISTS' : 'ROW_DELETED';
       }
@@ -82,85 +96,241 @@ describe('Sign-Out Architecture & Redirection Integrity Contract', () => {
       'SQLite record must be strictly deleted BEFORE notifying listeners'
     );
 
-    // Verify initFromStorage returns null immediately
     const restored = await SessionStore.initFromStorage();
     assert.equal(restored, null, 'initFromStorage must not resurrect cleared session');
   });
 
-  test('2. Layout guard redirect policy: single-shot redirection, unmounts protected stack to eliminate lingering tab bar', () => {
-    // Simulates protected layout behavior
-    let redirectCount = 0;
-    const targetRoutes = [];
+  test('2. Pending sync records remain intact during logout with preservePendingSync', async () => {
+    db.prepare(`
+      INSERT INTO sync_queue (
+        client_session_uuid, operation_type, endpoint_path, payload_json, sync_status, created_at, updated_at
+      ) VALUES ('uuid-offline-sess-1', 'SESSION_SYNC', '/api/v1/sessions/sync', '{"test":1}', 'PENDING', '2026-11-27T00:00:00Z', '2026-11-27T00:00:00Z');
+    `).run();
 
-    function evaluateLayoutGuard(isLoaded, isAuthenticated, user, mockRouter) {
-      if (isLoaded && (!isAuthenticated || !user)) {
-        mockRouter.replace('/');
-        return null;
+    const pendingBefore = await SessionStore.hasPendingSync();
+    assert.equal(pendingBefore, 1);
+
+    await SessionStore.clearSession(true);
+
+    const pendingAfter = await SessionStore.hasPendingSync();
+    assert.equal(pendingAfter, 1, 'Pending sync records must remain intact across sign-out');
+  });
+
+  test('3. Student sign-out handler dismisses sheet, awaits cooldown, and delegates navigation to layout', async () => {
+    await SessionStore.setSession({
+      token: 'student-token',
+      user: { id: 'stu-1', institutionalId: '21CS001', email: 'stu@klasio.ac.in', fullName: 'Student One', role: 'STUDENT' },
+    });
+
+    let sheetVisible = true;
+    let isSigningOut = false;
+    const executionTrace = [];
+
+    async function studentHandleConfirmSignOut() {
+      if (isSigningOut) return;
+      isSigningOut = true;
+      try {
+        sheetVisible = false;
+        executionTrace.push('DISMISS_SHEET');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        executionTrace.push('COOLDOWN');
+        await SessionStore.clearSession(true);
+        executionTrace.push('SESSION_CLEARED');
+      } finally {
+        isSigningOut = false;
+      }
+    }
+
+    await studentHandleConfirmSignOut();
+
+    assert.equal(sheetVisible, false);
+    assert.equal(isSigningOut, false);
+    assert.equal(SessionStore.getSession(), null);
+    assert.deepEqual(executionTrace, ['DISMISS_SHEET', 'COOLDOWN', 'SESSION_CLEARED']);
+  });
+
+  test('4. Faculty sign-out handler dismisses sheet, awaits cooldown, and delegates navigation to layout', async () => {
+    await SessionStore.setSession({
+      token: 'fac-token',
+      user: { id: 'fac-1', institutionalId: 'FAC-001', email: 'fac@klasio.ac.in', fullName: 'Faculty One', role: 'FACULTY' },
+    });
+
+    let sheetVisible = true;
+    let isSigningOut = false;
+    const executionTrace = [];
+
+    async function facultyHandleConfirmSignOut() {
+      if (isSigningOut) return;
+      isSigningOut = true;
+      try {
+        sheetVisible = false;
+        executionTrace.push('DISMISS_SHEET');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        executionTrace.push('COOLDOWN');
+        await SessionStore.clearSession(true);
+        executionTrace.push('SESSION_CLEARED');
+      } finally {
+        isSigningOut = false;
+      }
+    }
+
+    await facultyHandleConfirmSignOut();
+
+    assert.equal(sheetVisible, false);
+    assert.equal(isSigningOut, false);
+    assert.equal(SessionStore.getSession(), null);
+    assert.deepEqual(executionTrace, ['DISMISS_SHEET', 'COOLDOWN', 'SESSION_CLEARED']);
+  });
+
+  test('5. Admin sign-out handler dismisses sheet, awaits cooldown, and delegates navigation to layout', async () => {
+    await SessionStore.setSession({
+      token: 'adm-token',
+      user: { id: 'adm-1', institutionalId: 'ADM-001', email: 'adm@klasio.ac.in', fullName: 'Admin One', role: 'ADMIN' },
+    });
+
+    let sheetVisible = true;
+    let isSigningOut = false;
+    const executionTrace = [];
+
+    async function adminHandleConfirmSignOut() {
+      if (isSigningOut) return;
+      isSigningOut = true;
+      try {
+        sheetVisible = false;
+        executionTrace.push('DISMISS_SHEET');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        executionTrace.push('COOLDOWN');
+        await SessionStore.clearSession(true);
+        executionTrace.push('SESSION_CLEARED');
+      } finally {
+        isSigningOut = false;
+      }
+    }
+
+    await adminHandleConfirmSignOut();
+
+    assert.equal(sheetVisible, false);
+    assert.equal(isSigningOut, false);
+    assert.equal(SessionStore.getSession(), null);
+    assert.deepEqual(executionTrace, ['DISMISS_SHEET', 'COOLDOWN', 'SESSION_CLEARED']);
+  });
+
+  test('6. Repeated sign-out taps cannot trigger concurrent logout operations (re-entrancy guard)', async () => {
+    let callCount = 0;
+    let isSigningOut = false;
+
+    async function signoutWithGuard() {
+      if (isSigningOut) return 'BLOCKED';
+      isSigningOut = true;
+      try {
+        callCount++;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        await SessionStore.clearSession(true);
+        return 'SUCCESS';
+      } finally {
+        isSigningOut = false;
+      }
+    }
+
+    // Fire 3 simultaneous sign-out requests
+    const [res1, res2, res3] = await Promise.all([
+      signoutWithGuard(),
+      signoutWithGuard(),
+      signoutWithGuard(),
+    ]);
+
+    assert.equal(res1, 'SUCCESS');
+    assert.equal(res2, 'BLOCKED');
+    assert.equal(res3, 'BLOCKED');
+    assert.equal(callCount, 1, 'Session clear must execute exactly once');
+  });
+
+  test('7. Protected layout declarative redirect: returns <Redirect href="/" /> when unauthenticated', () => {
+    function evaluateDeclarativeProtectedLayout(isLoaded, isAuthenticated, user) {
+      if (!isLoaded) {
+        return 'LOADING_SPLASH';
+      }
+      if (!isAuthenticated || !user) {
+        return { type: 'Redirect', href: '/' };
+      }
+      if (user?.role?.toUpperCase() === 'STUDENT') {
+        return 'RESTRICTED_STUDENT';
       }
       return 'RENDER_STACK';
     }
 
-    const mockRouter = {
-      replace: (path) => {
-        redirectCount++;
-        targetRoutes.push(path);
-      },
-    };
+    // Unauthenticated -> Declarative redirect to /
+    const unauthResult = evaluateDeclarativeProtectedLayout(true, false, null);
+    assert.deepEqual(unauthResult, { type: 'Redirect', href: '/' });
 
-    // Case A: Unauthenticated user accesses protected layout
-    const resultUnauth = evaluateLayoutGuard(true, false, null, mockRouter);
-    assert.equal(resultUnauth, null, 'Protected stack must not render tabs when unauthenticated');
-    assert.equal(redirectCount, 1, 'Triggers exactly 1 controlled replacement');
-    assert.deepEqual(targetRoutes, ['/']);
+    // Loading session -> Returns loading splash / null
+    const loadingResult = evaluateDeclarativeProtectedLayout(false, false, null);
+    assert.equal(loadingResult, 'LOADING_SPLASH');
 
-    // Case B: Authenticated user accesses protected layout
-    redirectCount = 0;
-    targetRoutes.length = 0;
-    const resultAuth = evaluateLayoutGuard(
-      true,
-      true,
-      { id: '1', role: 'STUDENT' },
-      mockRouter
-    );
-    assert.equal(resultAuth, 'RENDER_STACK');
-    assert.equal(redirectCount, 0, 'Must not redirect when authenticated');
+    // Authenticated faculty -> Renders stack
+    const authFacultyResult = evaluateDeclarativeProtectedLayout(true, true, { id: 'f1', role: 'FACULTY' });
+    assert.equal(authFacultyResult, 'RENDER_STACK');
   });
 
-  test('3. Modal dismissal delay contract prevents Android WindowManager deadlock', async () => {
-    let sheetVisible = true;
-    let hasCleared = false;
-    let hasReplaced = false;
-    const executionOrder = [];
-
-    async function handleConfirmSignOut() {
-      // Step 1: Request sheet dismissal
-      sheetVisible = false;
-      executionOrder.push('DISMISS_SHEET');
-
-      // Step 2: Native animation cooldown (150ms)
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      executionOrder.push('NATIVE_ANIMATION_COOLDOWN');
-
-      // Step 3: Clear session
-      await SessionStore.clearSession(true);
-      hasCleared = true;
-      executionOrder.push('CLEAR_SESSION');
-
-      // Step 4: Clean navigation replace
-      hasReplaced = true;
-      executionOrder.push('NAVIGATE_ROOT');
+  test('8. Unauthenticated deep links into protected groups return to login via declarative redirect', () => {
+    function evaluateDeepLink(routeGroup, isLoaded, isAuthenticated) {
+      if (!isLoaded) return 'AWAIT_STORAGE';
+      if (!isAuthenticated) return { type: 'Redirect', href: '/' };
+      return `RENDER_${routeGroup.toUpperCase()}`;
     }
 
-    await handleConfirmSignOut();
+    assert.deepEqual(evaluateDeepLink('(student)', true, false), { type: 'Redirect', href: '/' });
+    assert.deepEqual(evaluateDeepLink('(faculty)', true, false), { type: 'Redirect', href: '/' });
+    assert.deepEqual(evaluateDeepLink('(admin)', true, false), { type: 'Redirect', href: '/' });
+  });
 
-    assert.equal(sheetVisible, false);
-    assert.equal(hasCleared, true);
-    assert.equal(hasReplaced, true);
-    assert.deepEqual(executionOrder, [
-      'DISMISS_SHEET',
-      'NATIVE_ANIMATION_COOLDOWN',
-      'CLEAR_SESSION',
-      'NAVIGATE_ROOT',
-    ]);
+  test('9. Authenticated startup routes to the correct role workspace', () => {
+    assert.equal(resolveTargetRoute({ role: 'STUDENT' }), '/(student)');
+    assert.equal(resolveTargetRoute({ role: 'FACULTY' }), '/(faculty)');
+    assert.equal(resolveTargetRoute({ role: 'ADMIN' }), '/(admin)');
+    assert.equal(resolveTargetRoute({ permissions: ['attendance.session.start'] }), '/(faculty)');
+    assert.equal(resolveTargetRoute({ permissions: ['institution.manage'] }), '/(admin)');
+  });
+
+  test('10. Login after logout works without restarting the app', async () => {
+    // 1. Initial login
+    await SessionStore.setSession({
+      token: 'first-token',
+      user: { id: 'u1', fullName: 'First User', role: 'STUDENT', institutionalId: 'STU1' },
+    });
+    assert.equal(SessionStore.getSession()?.token, 'first-token');
+
+    // 2. Sign out
+    await SessionStore.clearSession(true);
+    assert.equal(SessionStore.getSession(), null);
+    const restoredAfterLogout = await SessionStore.initFromStorage();
+    assert.equal(restoredAfterLogout, null);
+
+    // 3. Login again in same session
+    await SessionStore.setSession({
+      token: 'second-token',
+      user: { id: 'u2', fullName: 'Second User', role: 'FACULTY', institutionalId: 'FAC2' },
+    });
+    assert.equal(SessionStore.getSession()?.token, 'second-token');
+    assert.equal(SessionStore.getUser()?.fullName, 'Second User');
+
+    const restoredAfterRelogin = await SessionStore.initFromStorage();
+    assert.equal(restoredAfterRelogin?.token, 'second-token');
+  });
+
+  test('11. In-flight initFromStorage cannot resurrect session cleared concurrently', async () => {
+    // Populate session in DB
+    await SessionStore.setSession({
+      token: 'resurrection-test-token',
+      user: { id: 'u-race', fullName: 'Race Tester', role: 'ADMIN', institutionalId: 'ADM-RACE' },
+    });
+
+    // Start clearSession and initFromStorage concurrently
+    const clearPromise = SessionStore.clearSession(true);
+    const initPromise = SessionStore.initFromStorage();
+
+    await Promise.all([clearPromise, initPromise]);
+
+    assert.equal(SessionStore.getSession(), null, 'Session must remain null after concurrent clear');
   });
 });

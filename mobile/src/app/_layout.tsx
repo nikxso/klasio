@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Stack, useRouter, useNavigationContainerRef } from 'expo-router';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -158,8 +158,6 @@ function GlobalUpdateBanner() {
 }
 
 export default function RootLayout() {
-  const router = useRouter();
-  const rootNavRef = useNavigationContainerRef();
   const [fontsLoaded] = useFonts({
     'ChangaOne-Regular': require('../../assets/fonts/ChangaOne-Regular.ttf'),
   });
@@ -167,31 +165,10 @@ export default function RootLayout() {
   useAutoSync();
 
   useEffect(() => {
-    let hasLoadedInitial = false;
-    SessionStore.initFromStorage().finally(() => {
-      hasLoadedInitial = true;
-    });
+    SessionStore.initFromStorage().catch(() => {});
     checkForAppUpdates(true).catch(() => {});
     verifyAndRecordUpdateLifecycle().catch(() => {});
-
-    // Top-level navigation guarantee: when session clears, reliably reset root stack to login
-    const unsub = SessionStore.subscribe((session) => {
-      if (!session && hasLoadedInitial) {
-        try {
-          if (rootNavRef.isReady()) {
-            rootNavRef.reset({ index: 0, routes: [{ name: 'index' }] });
-          } else {
-            router.replace('/');
-          }
-        } catch (_) {
-          try {
-            router.replace('/');
-          } catch (__) {}
-        }
-      }
-    });
-    return unsub;
-  }, [router, rootNavRef]);
+  }, []);
 
   // Startup check: require DirectPerception native perception module on Android
   const isDirectPerceptionMissing = Platform.OS === 'android' && !NativeModules.DirectPerception;

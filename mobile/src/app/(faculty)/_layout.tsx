@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import React from 'react';
+import { Stack, Redirect, useRouter } from 'expo-router';
 import { useSession } from '@/hooks/useSession';
 import { AccessRestrictedView } from '@/components/ui/kit';
 
@@ -7,16 +7,12 @@ export default function FacultyStackLayout() {
   const router = useRouter();
   const { user, isAuthenticated, isLoaded } = useSession();
 
-  useEffect(() => {
-    if (isLoaded && (!isAuthenticated || !user)) {
-      try {
-        router.replace('/');
-      } catch (_) {}
-    }
-  }, [isLoaded, isAuthenticated, user]);
-
-  if (isLoaded && (!isAuthenticated || !user)) {
+  if (!isLoaded) {
     return null;
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Redirect href="/" />;
   }
 
   if (user?.role?.toUpperCase() === 'STUDENT') {
@@ -45,6 +41,7 @@ export default function FacultyStackLayout() {
       <Stack.Screen name="enrollment" options={{ headerShown: false }} />
       <Stack.Screen name="people" options={{ headerShown: false }} />
       <Stack.Screen name="academics" options={{ headerShown: false }} />
+      <Stack.Screen name="requests" options={{ headerShown: false }} />
     </Stack>
   );
 }
