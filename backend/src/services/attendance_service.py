@@ -149,6 +149,29 @@ class AttendanceService:
         regular_faculty_id = assignment.faculty_user_id
         conducting_faculty_id = current_user.id
 
+        # 3b. Timetable Entry Validation (if supplied by client)
+        tt_entry_id = getattr(session_req, "timetable_entry_id", None)
+        if tt_entry_id:
+            from src.models.academic import TimetableEntry
+            tt_stmt = select(TimetableEntry).where(TimetableEntry.id == tt_entry_id)
+            tt_res = await self.db.execute(tt_stmt)
+            tt_entry = tt_res.scalar_one_or_none()
+            if not tt_entry:
+                return BatchSyncResultItem(
+                    client_session_uuid=session_req.client_session_uuid,
+                    status=SyncResultStatus.REJECTED,
+                    error_message=f"Timetable entry {tt_entry_id} not found",
+                )
+            if tt_entry.teaching_assignment_id != session_req.teaching_assignment_id:
+                return BatchSyncResultItem(
+                    client_session_uuid=session_req.client_session_uuid,
+                    status=SyncResultStatus.REJECTED,
+                    error_message=(
+                        f"Timetable entry {tt_entry_id} belongs to teaching assignment "
+                        f"{tt_entry.teaching_assignment_id}, not {session_req.teaching_assignment_id}"
+                    ),
+                )
+
         # 4. Roster & Date-Bounded Student Eligibility Validation
         enrollment_service = EnrollmentService(self.db)
         eligible_students = await enrollment_service.get_eligible_students_for_section(

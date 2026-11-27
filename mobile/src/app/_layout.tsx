@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useNavigationContainerRef } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LogBox, NativeModules, Platform, StyleSheet, Text, View } from 'react-native';
@@ -38,6 +38,7 @@ function UnsupportedDeviceScreen() {
 
 export default function RootLayout() {
   const router = useRouter();
+  const rootNavRef = useNavigationContainerRef();
   const [fontsLoaded] = useFonts({
     'ChangaOne-Regular': require('../../assets/fonts/ChangaOne-Regular.ttf'),
   });
@@ -51,16 +52,24 @@ export default function RootLayout() {
     });
     checkForAppUpdates(true).catch(() => {});
 
-    // Top-level navigation guarantee: when session clears, reliably transition root stack to login
+    // Top-level navigation guarantee: when session clears, reliably reset root stack to login
     const unsub = SessionStore.subscribe((session) => {
       if (!session && hasLoadedInitial) {
         try {
-          router.replace('/');
-        } catch (_) {}
+          if (rootNavRef.isReady()) {
+            rootNavRef.reset({ index: 0, routes: [{ name: 'index' }] });
+          } else {
+            router.replace('/');
+          }
+        } catch (_) {
+          try {
+            router.replace('/');
+          } catch (__) {}
+        }
       }
     });
     return unsub;
-  }, [router]);
+  }, [router, rootNavRef]);
 
   // Startup check: require DirectPerception native perception module on Android
   const isDirectPerceptionMissing = Platform.OS === 'android' && !NativeModules.DirectPerception;

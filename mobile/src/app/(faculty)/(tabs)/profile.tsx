@@ -110,7 +110,12 @@ export default function FacultyProfileScreen() {
       // Allow native dialog to dismiss on UI thread before navigation transition
       await new Promise((resolve) => setTimeout(resolve, 150));
       await SessionStore.clearSession(true);
-      router.replace('/');
+      const rootNav = navigation.getParent()?.getParent() || navigation.getParent() || navigation;
+      if (rootNav?.reset) {
+        rootNav.reset({ index: 0, routes: [{ name: 'index' }] });
+      } else {
+        router.replace('/');
+      }
     } catch (e) {
       console.warn('Sign out error:', e);
       router.replace('/');

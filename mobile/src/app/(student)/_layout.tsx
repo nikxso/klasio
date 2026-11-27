@@ -8,9 +8,15 @@ export default function StudentStackLayout() {
 
   useEffect(() => {
     if (isLoaded && !isAuthenticated) {
-      router.replace('/');
+      try {
+        router.replace('/');
+      } catch (_) {}
     }
   }, [isLoaded, isAuthenticated]);
+
+  if (isLoaded && !isAuthenticated) {
+    return null;
+  }
 
   return (
     <Stack

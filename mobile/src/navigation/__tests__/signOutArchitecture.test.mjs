@@ -87,17 +87,15 @@ describe('Sign-Out Architecture & Redirection Integrity Contract', () => {
     assert.equal(restored, null, 'initFromStorage must not resurrect cleared session');
   });
 
-  test('2. Layout guard redirect policy: single-shot redirection, no render-phase cycle, prevents blank screen', () => {
+  test('2. Layout guard redirect policy: single-shot redirection, unmounts protected stack to eliminate lingering tab bar', () => {
     // Simulates protected layout behavior
     let redirectCount = 0;
     const targetRoutes = [];
 
     function evaluateLayoutGuard(isLoaded, isAuthenticated, user, mockRouter) {
-      // In our robust architecture:
-      // Layouts keep the navigator mounted to prevent blank screen and ensure navigation dispatcher is active.
-      // useEffect performs single replace
       if (isLoaded && (!isAuthenticated || !user)) {
         mockRouter.replace('/');
+        return null;
       }
       return 'RENDER_STACK';
     }
@@ -111,7 +109,7 @@ describe('Sign-Out Architecture & Redirection Integrity Contract', () => {
 
     // Case A: Unauthenticated user accesses protected layout
     const resultUnauth = evaluateLayoutGuard(true, false, null, mockRouter);
-    assert.equal(resultUnauth, 'RENDER_STACK', 'Navigator must remain mounted to prevent blank screen');
+    assert.equal(resultUnauth, null, 'Protected stack must not render tabs when unauthenticated');
     assert.equal(redirectCount, 1, 'Triggers exactly 1 controlled replacement');
     assert.deepEqual(targetRoutes, ['/']);
 

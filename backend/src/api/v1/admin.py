@@ -96,7 +96,7 @@ router = APIRouter(prefix="/api/v1/admin", tags=["Admin Academic Catalog"])
 @router.get("/departments", response_model=List[DepartmentResponse], summary="List all departments")
 async def list_departments(
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.view")),
 ):
     stmt = select(Department).order_by(Department.name.asc())
     res = await db.execute(stmt)
@@ -107,7 +107,7 @@ async def list_departments(
 async def create_department(
     payload: DepartmentCreate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.create")),
 ):
     dept = Department(
         code=payload.code.strip().upper(),
@@ -124,7 +124,7 @@ async def update_department(
     department_id: uuid.UUID,
     payload: DepartmentUpdate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.update")),
 ):
     stmt = select(Department).where(Department.id == department_id)
     res = await db.execute(stmt)
@@ -155,7 +155,7 @@ async def update_department(
 async def delete_department(
     department_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.archive")),
 ):
     stmt = select(Department).where(Department.id == department_id)
     res = await db.execute(stmt)
@@ -315,7 +315,7 @@ async def delete_program(
 @router.get("/terms", response_model=List[AcademicTermResponse], summary="List all academic terms")
 async def list_terms(
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.view")),
 ):
     stmt = select(AcademicTerm).order_by(AcademicTerm.start_date.desc())
     res = await db.execute(stmt)
@@ -326,7 +326,7 @@ async def list_terms(
 async def create_term(
     payload: AcademicTermCreate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.create")),
 ):
     term = AcademicTerm(
         code=payload.code,
@@ -346,7 +346,7 @@ async def create_term(
 async def list_subjects(
     department_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.view")),
 ):
     stmt = select(Subject)
     if department_id:
@@ -360,7 +360,7 @@ async def list_subjects(
 async def create_subject(
     payload: SubjectCreate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.create")),
 ):
     subject = Subject(
         code=payload.code.strip().upper(),
@@ -380,7 +380,7 @@ async def update_subject(
     subject_id: uuid.UUID,
     payload: SubjectUpdate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.update")),
 ):
     stmt = select(Subject).where(Subject.id == subject_id)
     res = await db.execute(stmt)
@@ -415,7 +415,7 @@ async def update_subject(
 async def delete_subject(
     subject_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.archive")),
 ):
     stmt = select(Subject).where(Subject.id == subject_id)
     res = await db.execute(stmt)
@@ -504,7 +504,7 @@ async def update_section(
     section_id: uuid.UUID,
     payload: ClassSectionUpdate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.update")),
 ):
     stmt = select(ClassSection).where(ClassSection.id == section_id)
     res = await db.execute(stmt)
@@ -527,7 +527,7 @@ async def update_section(
 async def delete_section(
     section_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.archive")),
 ):
     stmt = select(ClassSection).where(ClassSection.id == section_id)
     res = await db.execute(stmt)
@@ -558,7 +558,7 @@ async def list_teaching_assignments(
     term_id: Optional[uuid.UUID] = None,
     faculty_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("teaching_assignment.view")),
 ):
     stmt = (
         select(TeachingAssignment)
@@ -609,7 +609,7 @@ async def list_teaching_assignments(
 async def create_teaching_assignment(
     payload: TeachingAssignmentCreate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("teaching_assignment.create")),
 ):
     # Validate section existence and tenant membership consistency
     sec_stmt = select(ClassSection).where(ClassSection.id == payload.class_section_id)
@@ -650,7 +650,7 @@ async def update_teaching_assignment(
     assignment_id: uuid.UUID,
     payload: TeachingAssignmentUpdate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("teaching_assignment.update")),
 ):
     stmt = select(TeachingAssignment).where(TeachingAssignment.id == assignment_id)
     res = await db.execute(stmt)
@@ -677,7 +677,7 @@ async def update_teaching_assignment(
 async def delete_teaching_assignment(
     assignment_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("teaching_assignment.update")),
 ):
     stmt = select(TeachingAssignment).where(TeachingAssignment.id == assignment_id)
     res = await db.execute(stmt)
@@ -707,7 +707,7 @@ async def delete_teaching_assignment(
 async def enroll_student(
     payload: StudentEnrollmentCreate,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("student_enrollment.create")),
 ):
     from src.services.enrollment_service import EnrollmentService
     enrollment_service = EnrollmentService(db)
@@ -723,7 +723,7 @@ async def enroll_student(
 async def transfer_student(
     payload: StudentTransferRequest,
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("student_enrollment.transfer")),
 ):
     """
     Execute a student section transfer effective on transfer_date (T).
@@ -1031,7 +1031,7 @@ async def list_admin_users(
 )
 async def list_departments_overview(
     db: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_permission("academic_structure.view")),
 ):
     stmt = (
         select(

@@ -9,9 +9,15 @@ export default function FacultyStackLayout() {
 
   useEffect(() => {
     if (isLoaded && (!isAuthenticated || !user)) {
-      router.replace('/');
+      try {
+        router.replace('/');
+      } catch (_) {}
     }
   }, [isLoaded, isAuthenticated, user]);
+
+  if (isLoaded && (!isAuthenticated || !user)) {
+    return null;
+  }
 
   if (user?.role?.toUpperCase() === 'STUDENT') {
     return (

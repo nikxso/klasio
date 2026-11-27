@@ -134,13 +134,7 @@ class TimetableService:
         payload: TimetableEntryCreate,
         institution_id: uuid.UUID = DEFAULT_INSTITUTION_ID,
     ) -> TimetableEntry:
-        # 1. Validate section exists
-        sec_stmt = select(ClassSection).where(ClassSection.id == payload.class_section_id)
-        sec = (await self.db.execute(sec_stmt)).scalar_one_or_none()
-        if not sec:
-            raise EntityNotFoundError(f"Class section {payload.class_section_id} not found")
-
-        # 2. Validate teaching assignment exists
+        # 1. Validate teaching assignment exists
         ta_stmt = (
             select(TeachingAssignment)
             .options(selectinload(TeachingAssignment.faculty_user))
@@ -150,24 +144,49 @@ class TimetableService:
         if not ta:
             raise EntityNotFoundError(f"Teaching assignment {payload.teaching_assignment_id} not found")
 
+        resolved_sec_id = payload.class_section_id or ta.class_section_id
+        resolved_term_id = payload.academic_term_id or ta.academic_term_id
+
+        # 2. Validate section exists
+        sec_stmt = select(ClassSection).where(ClassSection.id == resolved_sec_id)
+        sec = (await self.db.execute(sec_stmt)).scalar_one_or_none()
+        if not sec:
+            raise EntityNotFoundError(f"Class section {resolved_sec_id} not found")
+
         # 3. Validate period exists and is not break
         period = await self.get_period(payload.academic_period_id)
         if period.is_break:
             raise EligibilityError(f"Cannot schedule class during break period '{period.name}'")
 
         # 4. Conflict Check A: Section cannot be double-booked
-        sec_conflict_stmt = select(TimetableEntry).where(
-            and_(
-                TimetableEntry.class_section_id == payload.class_section_id,
-                TimetableEntry.day_of_week == payload.day_of_week,
-                TimetableEntry.academic_period_id == payload.academic_period_id,
-                TimetableEntry.is_active == True,
+        # Allow concurrent sessions for the same section ONLY when both are distinct non-DEFAULT teaching groups (e.g. Lab Batch A & Lab Batch B)
+        sec_conflict_stmt = (
+            select(TimetableEntry)
+            .join(TeachingAssignment, TimetableEntry.teaching_assignment_id == TeachingAssignment.id)
+            .where(
+                and_(
+                    TimetableEntry.class_section_id == resolved_sec_id,
+                    TimetableEntry.day_of_week == payload.day_of_week,
+                    TimetableEntry.academic_period_id == payload.academic_period_id,
+                    TimetableEntry.is_active == True,
+                )
             )
         )
-        if (await self.db.execute(sec_conflict_stmt)).scalar_one_or_none():
-            raise EligibilityError(
-                f"Class section {sec.section_code} already has a class scheduled on day {payload.day_of_week} period {period.name}"
-            )
+        existing_sec_entries = (await self.db.execute(sec_conflict_stmt)).scalars().all()
+        for existing_entry in existing_sec_entries:
+            existing_ta = (
+                await self.db.execute(
+                    select(TeachingAssignment).where(TeachingAssignment.id == existing_entry.teaching_assignment_id)
+                )
+            ).scalar_one_or_none()
+            if not existing_ta:
+                continue
+            is_new_group = bool(ta.teaching_group and ta.teaching_group != "DEFAULT")
+            is_exist_group = bool(existing_ta.teaching_group and existing_ta.teaching_group != "DEFAULT")
+            if not (is_new_group and is_exist_group and ta.teaching_group != existing_ta.teaching_group):
+                raise EligibilityError(
+                    f"Class section {sec.section_code} already has a class scheduled on day {payload.day_of_week} period {period.name}"
+                )
 
         # 5. Conflict Check B: Room cannot be double-booked (if room specified)
         if payload.room_number and payload.room_number.upper() != "TBD":
@@ -206,8 +225,8 @@ class TimetableService:
 
         entry = TimetableEntry(
             institution_id=institution_id,
-            academic_term_id=payload.academic_term_id,
-            class_section_id=payload.class_section_id,
+            academic_term_id=resolved_term_id,
+            class_section_id=resolved_sec_id,
             teaching_assignment_id=payload.teaching_assignment_id,
             academic_period_id=payload.academic_period_id,
             day_of_week=payload.day_of_week,

@@ -88,14 +88,14 @@ async def get_update_manifest(
     request: Request,
     expo_platform: Optional[str] = Header(None, alias="expo-platform"),
     expo_runtime_version: Optional[str] = Header(None, alias="expo-runtime-version"),
-    expo_protocol_version: Optional[str] = Header("0", alias="expo-protocol-version"),
+    expo_protocol_version: Optional[str] = Header("1", alias="expo-protocol-version"),
     expo_current_update_id: Optional[str] = Header(None, alias="expo-current-update-id"),
     expo_embedded_update_id: Optional[str] = Header(None, alias="expo-embedded-update-id"),
 ):
     """
-    Expo Updates Protocol v0 compliant manifest endpoint.
-    Mobile app queries this endpoint on launch to detect and download Over-The-Air updates.
-    Returns HTTP 204 No Content when the client is already running or contains the latest update.
+    Expo Updates Protocol compliant manifest endpoint.
+    Mobile app queries this endpoint on launch and in settings to detect and download Over-The-Air updates.
+    Returns HTTP 204 No Content with expo-protocol-version >= 1 when the client is already running the latest update.
     """
     platform_data, platform = resolve_platform_and_metadata(expo_platform)
     bundle_rel_path = platform_data.get("bundle")
@@ -116,6 +116,12 @@ async def get_update_manifest(
     update_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"klasio-ota-{bundle_rel_path}"))
     runtime_version = expo_runtime_version or "1.0.0"
 
+    # Protocol version negotiation:
+    # Expo Updates SDK 48+ requires expo-protocol-version >= 1 to recognize HTTP 204 as a valid no-update signal.
+    # If expo-protocol-version is "0", returning 204 causes native FileDownloader to throw "Empty body".
+    client_proto = str(expo_protocol_version) if expo_protocol_version is not None else "1"
+    response_proto_version = client_proto if client_proto != "0" else "1"
+
     # Invariant: If client already runs or embeds this update, send 204 No Content
     def _normalize_id(val: Optional[str]) -> Optional[str]:
         return val.strip().strip('"').strip("'").lower() if val else None
@@ -126,7 +132,7 @@ async def get_update_manifest(
         return Response(
             status_code=status.HTTP_204_NO_CONTENT,
             headers={
-                "expo-protocol-version": "0",
+                "expo-protocol-version": response_proto_version,
                 "cache-control": "no-cache",
             },
         )
@@ -136,7 +142,7 @@ async def get_update_manifest(
         return Response(
             status_code=status.HTTP_304_NOT_MODIFIED,
             headers={
-                "expo-protocol-version": "0",
+                "expo-protocol-version": response_proto_version,
                 "cache-control": "no-cache",
             },
         )
@@ -186,8 +192,11 @@ async def get_update_manifest(
         },
     }
 
+    # If client explicitly asked for protocol "0" on a full manifest fetch, honor it for backwards compatibility
+    advertised_proto = client_proto if client_proto == "0" else response_proto_version
+
     headers = {
-        "expo-protocol-version": "0",
+        "expo-protocol-version": advertised_proto,
         "content-type": "application/json",
         "cache-control": "no-cache",
         "etag": f'"{update_id}"',

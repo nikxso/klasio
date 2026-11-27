@@ -169,10 +169,10 @@ class AcademicPeriodResponse(AcademicPeriodCreate):
 
 
 class TimetableEntryCreate(BaseModel):
-    academic_term_id: uuid.UUID
-    class_section_id: uuid.UUID
     teaching_assignment_id: uuid.UUID
     academic_period_id: uuid.UUID
+    academic_term_id: Optional[uuid.UUID] = None
+    class_section_id: Optional[uuid.UUID] = None
     day_of_week: int = Field(..., ge=1, le=7, description="1=Monday ... 7=Sunday")
     room_number: str = Field(default="TBD", max_length=64)
     is_active: bool = True

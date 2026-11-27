@@ -82,6 +82,7 @@ async def test_ota_manifest_suppression_when_already_up_to_date():
             headers={"expo-platform": "android", "expo-current-update-id": update_id},
         )
         assert res_current.status_code == 204
+        assert res_current.headers.get("expo-protocol-version") == "1"
 
         # Case B: Client has this update embedded in APK
         res_embedded = await client.get(
@@ -89,6 +90,7 @@ async def test_ota_manifest_suppression_when_already_up_to_date():
             headers={"expo-platform": "android", "expo-embedded-update-id": update_id},
         )
         assert res_embedded.status_code == 204
+        assert res_embedded.headers.get("expo-protocol-version") == "1"
 
         # Case C: Conditional GET with If-None-Match ETag
         res_cached = await client.get(
@@ -96,3 +98,4 @@ async def test_ota_manifest_suppression_when_already_up_to_date():
             headers={"expo-platform": "android", "if-none-match": f'"{update_id}"'},
         )
         assert res_cached.status_code == 304
+        assert res_cached.headers.get("expo-protocol-version") == "1"
