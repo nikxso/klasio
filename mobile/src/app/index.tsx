@@ -153,10 +153,13 @@ export default function LoginScreen() {
         router.replace(targetRoute as any);
         return;
       } else {
-        let errMsg = 'Invalid credentials. Please verify your ID and password.';
+        let errMsg = res.status >= 500
+          ? `Server error (${res.status}). The service is currently restarting or unavailable. Please try again shortly.`
+          : 'Invalid credentials. Please verify your ID and password.';
         try {
           const errJson = await res.json();
-          if (errJson?.detail) errMsg = errJson.detail;
+          if (errJson?.message) errMsg = errJson.message;
+          else if (errJson?.detail) errMsg = errJson.detail;
         } catch (_) {}
         setAuthError(errMsg);
         setLoading(false);

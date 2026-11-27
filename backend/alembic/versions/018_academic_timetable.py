@@ -1,6 +1,6 @@
 """academic_timetable_enrollment
 
-Revision ID: 018_academic_timetable_enrollment
+Revision ID: 018_academic_timetable
 Revises: 017_target_schema_patch
 Create Date: 2026-11-27 12:00:00.000000+00:00
 
@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision: str = "018_academic_timetable_enrollment"
+revision: str = "018_academic_timetable"
 down_revision: Union[str, None] = "017_target_schema_patch"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
