@@ -124,6 +124,19 @@ export class NotificationRepository {
       ]
     );
 
+    // Trigger Android native Toast, Vibration, and in-app HUD
+    try {
+      const { triggerNotificationAlert } = await import('../services/notificationAlertService');
+      triggerNotificationAlert({
+        id: notificationId,
+        title: params.title,
+        message: params.message,
+        category,
+        priority,
+        actionRoute: params.actionRoute,
+      });
+    } catch (_) {}
+
     return {
       id: notificationId,
       recipient_user_id: recipientUserId,
@@ -242,5 +255,24 @@ export class NotificationRepository {
         });
       } catch (e) {}
     }
+  }
+
+  /**
+   * Permanently deletes a specific notification from local SQLite cache.
+   */
+  static async deleteNotification(notificationId: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync('DELETE FROM cached_notifications WHERE id = ?;', [notificationId]);
+  }
+
+  /**
+   * Permanently clears all notifications for a user/system from local SQLite cache.
+   */
+  static async clearAllNotifications(userId: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      'DELETE FROM cached_notifications WHERE recipient_user_id = ? OR recipient_user_id = "system" OR recipient_user_id = "default";',
+      [userId]
+    );
   }
 }

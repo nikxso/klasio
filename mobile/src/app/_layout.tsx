@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { Stack } from 'expo-router';
+import React, { useEffect, useState, useRef } from 'react';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
+  Animated,
   LogBox,
   NativeModules,
   Platform,
@@ -13,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useFonts } from 'expo-font';
-import { Sparkles, X } from 'lucide-react-native';
+import { Bell, Sparkles, X } from 'lucide-react-native';
 import { Colors } from '@/theme/tokens';
 import { SessionStore } from '@/storage/sessionStore';
 import { useAutoSync } from '@/services/autoSyncService';
@@ -25,6 +26,10 @@ import {
   isPendingUpdateAvailable,
   UpdateEventState,
 } from '@/services/updateService';
+import {
+  subscribeNotificationAlerts,
+  AlertNotificationPayload,
+} from '@/services/notificationAlertService';
 
 LogBox.ignoreAllLogs(true);
 
@@ -157,6 +162,95 @@ function GlobalUpdateBanner() {
   );
 }
 
+function GlobalNotificationHUD() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const [activeAlert, setActiveAlert] = useState<AlertNotificationPayload | null>(null);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(-60)).current;
+  const timerRef = useRef<any>(null);
+
+  useEffect(() => {
+    const unsub = subscribeNotificationAlerts((payload) => {
+      // Don't duplicate if update banner is already active for system updates
+      if (payload.category === 'SYSTEM' && isPendingUpdateAvailable()) {
+        return;
+      }
+
+      setActiveAlert(payload);
+      if (timerRef.current) clearTimeout(timerRef.current);
+
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.spring(slideAnim, { toValue: 0, friction: 8, tension: 50, useNativeDriver: true }),
+      ]).start();
+
+      timerRef.current = setTimeout(() => {
+        dismissAlert();
+      }, 4500);
+    });
+
+    return () => {
+      unsub();
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const dismissAlert = () => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: -60, duration: 200, useNativeDriver: true }),
+    ]).start(() => {
+      setActiveAlert(null);
+    });
+  };
+
+  if (!activeAlert) return null;
+
+  return (
+    <Animated.View
+      pointerEvents="box-none"
+      style={[
+        styles.globalAlertWrapper,
+        {
+          top: Math.max(insets.top + 8, 16),
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }],
+        },
+      ]}
+    >
+      <Pressable
+        style={styles.globalAlertCard}
+        onPress={() => {
+          dismissAlert();
+          router.push('/notifications' as any);
+        }}
+      >
+        <View style={styles.alertIconCol}>
+          <Bell size={16} color="#FFFFFF" />
+        </View>
+
+        <View style={styles.alertTextCol}>
+          <Text style={styles.alertTitle} numberOfLines={1}>
+            {activeAlert.title}
+          </Text>
+          <Text style={styles.alertMessage} numberOfLines={1}>
+            {activeAlert.message}
+          </Text>
+        </View>
+
+        <Pressable
+          onPress={dismissAlert}
+          hitSlop={8}
+          style={({ pressed }) => [styles.alertCloseBtn, pressed && { opacity: 0.6 }]}
+        >
+          <X size={14} color="#94A3B8" />
+        </Pressable>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     'ChangaOne-Regular': require('../../assets/fonts/ChangaOne-Regular.ttf'),
@@ -198,6 +292,7 @@ export default function RootLayout() {
         <Stack.Screen name="notifications/index" options={{ headerShown: false }} />
       </Stack>
       <GlobalUpdateBanner />
+      <GlobalNotificationHUD />
     </SafeAreaProvider>
   );
 }
@@ -350,5 +445,54 @@ const styles = StyleSheet.create({
     padding: 4,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  globalAlertWrapper: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 99998,
+    alignItems: 'center',
+  },
+  globalAlertCard: {
+    width: '100%',
+    maxWidth: 500,
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  alertIconCol: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alertTextCol: {
+    flex: 1,
+  },
+  alertTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 1,
+  },
+  alertMessage: {
+    fontSize: 12,
+    color: '#CBD5E1',
+  },
+  alertCloseBtn: {
+    padding: 6,
   },
 });

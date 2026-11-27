@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,10 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  Animated,
+  PanResponder,
+  Platform,
+  ToastAndroid,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -20,9 +24,15 @@ import {
   ChevronRight,
   Info,
   Sparkles,
+  Trash2,
+  X,
+  ExternalLink,
+  RefreshCw,
+  Clock,
+  ArrowRight,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
+import { Screen, Card, Chip, SectionTitle, Sheet, Button } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { SessionStore } from '@/storage/sessionStore';
 import {
@@ -48,6 +58,7 @@ export default function NotificationCenterScreen() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [activeDetailItem, setActiveDetailItem] = useState<NotificationItem | null>(null);
 
   const currentUser = SessionStore.getUser();
   const token = SessionStore.getToken();
@@ -170,33 +181,44 @@ export default function NotificationCenterScreen() {
         prev.map((n) => (n.id === item.id ? { ...n, is_read: true } : n))
       );
     }
+    setActiveDetailItem(item);
+  };
 
-    if (item.category === 'SYSTEM' && isPendingUpdateAvailable()) {
-      Alert.alert(
-        'Apply Update Now?',
-        'A downloaded Klasio update is ready to be applied. Would you like to restart now?',
-        [
-          { text: 'Later', style: 'cancel' },
-          {
-            text: 'Restart Now',
-            style: 'default',
-            onPress: async () => {
-              await applyUpdateAndReload();
-            },
-          },
-        ]
-      );
-      return;
-    }
-
-    const targetRoute = resolveSafeActionRoute(item);
-    if (targetRoute) {
-      try {
-        router.push(targetRoute as any);
-      } catch (e) {
-        console.warn('Notification navigation error:', e);
+  const handleDeleteNotification = async (notificationId: string) => {
+    try {
+      await NotificationRepository.deleteNotification(notificationId);
+      setNotifications((prev) => prev.filter((n) => n.id !== notificationId));
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Notification deleted', ToastAndroid.SHORT);
       }
+    } catch (e) {
+      Alert.alert('Error', 'Failed to delete notification.');
     }
+  };
+
+  const handleClearAll = () => {
+    Alert.alert(
+      'Clear All Notifications?',
+      'This will permanently delete all notifications from your device cache.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await NotificationRepository.clearAllNotifications(userId);
+              setNotifications([]);
+              if (Platform.OS === 'android') {
+                ToastAndroid.show('All notifications cleared', ToastAndroid.SHORT);
+              }
+            } catch (e) {
+              Alert.alert('Error', 'Failed to clear notifications.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleMarkAllRead = async () => {
@@ -227,7 +249,7 @@ export default function NotificationCenterScreen() {
           />
         );
       case 'REQUEST':
-        return <MessageSquare size={18} color="#3b82f6" />;
+        return <MessageSquare size={18} color="#2563eb" />;
       case 'SYSTEM':
         return <Sparkles size={18} color={Colors.forest} />;
       default:
@@ -251,16 +273,28 @@ export default function NotificationCenterScreen() {
         }
       }}
       right={
-        unreadCount > 0 ? (
-          <Pressable
-            onPress={handleMarkAllRead}
-            style={styles.markAllButton}
-            accessibilityLabel="Mark all as read"
-          >
-            <CheckCheck size={16} color={Colors.forest} />
-            <Text style={styles.markAllText}>Mark read</Text>
-          </Pressable>
-        ) : undefined
+        <View style={styles.headerActionsRow}>
+          {unreadCount > 0 && (
+            <Pressable
+              onPress={handleMarkAllRead}
+              style={styles.markAllButton}
+              accessibilityLabel="Mark all as read"
+            >
+              <CheckCheck size={14} color={Colors.forest} />
+              <Text style={styles.markAllText}>Mark read</Text>
+            </Pressable>
+          )}
+          {notifications.length > 0 && (
+            <Pressable
+              onPress={handleClearAll}
+              style={styles.clearAllButton}
+              accessibilityLabel="Clear all notifications"
+            >
+              <Trash2 size={14} color={Colors.rose} />
+              <Text style={styles.clearAllText}>Clear all</Text>
+            </Pressable>
+          )}
+        </View>
       }
     >
       {/* Category Filter Pills */}
@@ -307,73 +341,419 @@ export default function NotificationCenterScreen() {
           </View>
         ) : (
           <View style={styles.notificationsList}>
-            {notifications.map((item) => {
-              return (
-                <Pressable
-                  key={item.id}
-                  style={[
-                    styles.notificationCard,
-                    !item.is_read && styles.notificationCardUnread,
-                  ]}
-                  onPress={() => handleNotificationPress(item)}
-                >
-                  <View style={styles.iconCircle}>
-                    {getCategoryIcon(item.category, item.priority)}
-                  </View>
-
-                  <View style={styles.cardContent}>
-                    <View style={styles.cardHeaderRow}>
-                      <Text
-                        style={[
-                          styles.notificationTitle,
-                          !item.is_read && styles.notificationTitleUnread,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {item.title}
-                      </Text>
-                      <Text style={styles.timeText}>
-                        {formatRelativeTime(item.created_at)}
-                      </Text>
-                    </View>
-
-                    <Text style={styles.notificationMessage} numberOfLines={3}>
-                      {item.message}
-                    </Text>
-
-                    <View style={styles.cardFooterRow}>
-                      <Chip
-                        tone={
-                          item.category === 'ATTENDANCE'
-                            ? 'forest'
-                            : item.category === 'ALERT'
-                            ? 'apricot'
-                            : 'soft'
-                        }
-                      >
-                        {item.category}
-                      </Chip>
-
-                      {resolveSafeActionRoute(item) && (
-                        <View style={styles.viewLinkRow}>
-                          <Text style={styles.viewLinkText}>View</Text>
-                          <ChevronRight size={12} color={Colors.forest} />
-                        </View>
-                      )}
-                    </View>
-                  </View>
-
-                  {!item.is_read && <View style={styles.unreadDot} />}
-                </Pressable>
-              );
-            })}
+            {notifications.map((item) => (
+              <SwipeableNotificationCard
+                key={item.id}
+                item={item}
+                onPress={() => handleNotificationPress(item)}
+                onDelete={handleDeleteNotification}
+                resolveSafeActionRoute={resolveSafeActionRoute}
+                formatRelativeTime={formatRelativeTime}
+                getCategoryIcon={getCategoryIcon}
+              />
+            ))}
           </View>
         )}
       </ScrollView>
+
+      {/* Detailed Explanation Bottom Sheet */}
+      <Sheet
+        visible={!!activeDetailItem}
+        onClose={() => setActiveDetailItem(null)}
+      >
+        {activeDetailItem && (
+          <NotificationDetailBody
+            item={activeDetailItem}
+            onClose={() => setActiveDetailItem(null)}
+            onDelete={(id) => {
+              setActiveDetailItem(null);
+              handleDeleteNotification(id);
+            }}
+            resolveSafeActionRoute={resolveSafeActionRoute}
+            formatRelativeTime={formatRelativeTime}
+          />
+        )}
+      </Sheet>
     </Screen>
   );
 }
 
+// -----------------------------------------------------------------------------
+// Swipeable Notification Card
+// -----------------------------------------------------------------------------
+interface SwipeableCardProps {
+  item: NotificationItem;
+  onPress: () => void;
+  onDelete: (id: string) => void;
+  resolveSafeActionRoute: (item: NotificationItem) => string | null;
+  formatRelativeTime: (isoString: string) => string;
+  getCategoryIcon: (category: string, priority: string) => React.ReactNode;
+}
+
+function SwipeableNotificationCard({
+  item,
+  onPress,
+  onDelete,
+  resolveSafeActionRoute,
+  formatRelativeTime,
+  getCategoryIcon,
+}: SwipeableCardProps) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const isDeletingRef = useRef(false);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 12 && Math.abs(gestureState.dy) < 15;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dx < 0) {
+          translateX.setValue(Math.max(gestureState.dx, -140));
+        } else if (gestureState.dx > 0) {
+          translateX.setValue(Math.min(gestureState.dx * 0.2, 20));
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx < -90) {
+          if (!isDeletingRef.current) {
+            isDeletingRef.current = true;
+            Animated.timing(translateX, {
+              toValue: -400,
+              duration: 200,
+              useNativeDriver: true,
+            }).start(() => {
+              onDelete(item.id);
+            });
+          }
+        } else {
+          Animated.spring(translateX, {
+            toValue: 0,
+            friction: 7,
+            tension: 40,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    })
+  ).current;
+
+  const handleDeletePress = () => {
+    if (!isDeletingRef.current) {
+      isDeletingRef.current = true;
+      Animated.timing(translateX, {
+        toValue: -400,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => {
+        onDelete(item.id);
+      });
+    }
+  };
+
+  return (
+    <View style={styles.swipeContainer}>
+      {/* Background Delete Button revealed on swipe */}
+      <View style={styles.deleteBackground}>
+        <Pressable
+          onPress={handleDeletePress}
+          style={styles.deleteBackgroundButton}
+          accessibilityLabel="Delete notification"
+        >
+          <Trash2 size={20} color="#ffffff" />
+          <Text style={styles.deleteBackgroundText}>Delete</Text>
+        </Pressable>
+      </View>
+
+      {/* Foreground Card */}
+      <Animated.View
+        style={[
+          styles.animatedCardWrapper,
+          { transform: [{ translateX }] },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <Pressable
+          style={[
+            styles.notificationCard,
+            !item.is_read && styles.notificationCardUnread,
+          ]}
+          onPress={onPress}
+        >
+          <View style={styles.iconCircle}>
+            {getCategoryIcon(item.category, item.priority)}
+          </View>
+
+          <View style={styles.cardContent}>
+            <View style={styles.cardHeaderRow}>
+              <Text
+                style={[
+                  styles.notificationTitle,
+                  !item.is_read && styles.notificationTitleUnread,
+                ]}
+                numberOfLines={1}
+              >
+                {item.title}
+              </Text>
+              <Text style={styles.timeText}>
+                {formatRelativeTime(item.created_at)}
+              </Text>
+            </View>
+
+            <Text style={styles.notificationMessage} numberOfLines={2}>
+              {item.message}
+            </Text>
+
+            <View style={styles.cardFooterRow}>
+              <View style={styles.badgeRow}>
+                <Chip
+                  tone={
+                    item.category === 'ATTENDANCE'
+                      ? 'forest'
+                      : item.category === 'ALERT'
+                      ? 'rose'
+                      : item.category === 'REQUEST'
+                      ? 'apricot'
+                      : 'soft'
+                  }
+                >
+                  {item.category}
+                </Chip>
+                {item.priority && item.priority !== 'NORMAL' && (
+                  <Chip tone={item.priority === 'URGENT' || item.priority === 'HIGH' ? 'rose' : 'amber'}>
+                    {item.priority}
+                  </Chip>
+                )}
+              </View>
+
+              <View style={styles.actionPromptRow}>
+                <View style={styles.viewLinkRow}>
+                  <Text style={styles.viewLinkText}>Details</Text>
+                  <ChevronRight size={12} color={Colors.forest} />
+                </View>
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    handleDeletePress();
+                  }}
+                  hitSlop={8}
+                  style={styles.cardDeleteIconBtn}
+                  accessibilityLabel="Delete"
+                >
+                  <Trash2 size={13} color={Colors.inkTertiary} />
+                </Pressable>
+              </View>
+            </View>
+          </View>
+
+          {!item.is_read && <View style={styles.unreadDot} />}
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Detailed Notification Bottom Sheet Content
+// -----------------------------------------------------------------------------
+interface DetailBodyProps {
+  item: NotificationItem;
+  onClose: () => void;
+  onDelete: (id: string) => void;
+  resolveSafeActionRoute: (item: NotificationItem) => string | null;
+  formatRelativeTime: (isoString: string) => string;
+}
+
+function NotificationDetailBody({
+  item,
+  onClose,
+  onDelete,
+  resolveSafeActionRoute,
+  formatRelativeTime,
+}: DetailBodyProps) {
+  const router = useRouter();
+  const targetRoute = resolveSafeActionRoute(item);
+  const isSystemUpdate =
+    item.category === 'SYSTEM' || item.id?.startsWith('ota-') || item.title?.includes('Update');
+
+  const handleDestinationAction = async () => {
+    onClose();
+    if (isSystemUpdate && isPendingUpdateAvailable()) {
+      await applyUpdateAndReload();
+      return;
+    }
+    if (targetRoute) {
+      try {
+        router.push(targetRoute as any);
+      } catch (e) {
+        console.warn('Navigation error:', e);
+      }
+    }
+  };
+
+  return (
+    <View style={styles.sheetBody}>
+      {/* Header bar with close button */}
+      <View style={styles.sheetTopRow}>
+        <View style={styles.sheetBadgeRow}>
+          <Chip
+            tone={
+              item.category === 'ATTENDANCE'
+                ? 'forest'
+                : item.category === 'ALERT'
+                ? 'rose'
+                : item.category === 'REQUEST'
+                ? 'apricot'
+                : 'soft'
+            }
+          >
+            {item.category}
+          </Chip>
+          {item.priority && item.priority !== 'NORMAL' && (
+            <Chip tone={item.priority === 'URGENT' || item.priority === 'HIGH' ? 'rose' : 'amber'}>
+              {item.priority} Priority
+            </Chip>
+          )}
+        </View>
+        <Pressable
+          onPress={onClose}
+          hitSlop={12}
+          style={styles.sheetCloseButton}
+          accessibilityLabel="Close"
+        >
+          <X size={20} color={Colors.ink} />
+        </Pressable>
+      </View>
+
+      <Text style={styles.sheetTitle}>{item.title}</Text>
+      <View style={styles.timeInfoRow}>
+        <Clock size={12} color={Colors.inkTertiary} />
+        <Text style={styles.sheetTimeText}>
+          {formatRelativeTime(item.created_at)} • {new Date(item.created_at).toLocaleString()}
+        </Text>
+      </View>
+
+      <Text style={styles.sheetMessage}>{item.message}</Text>
+
+      {/* Contextual In-Depth Explanation Box */}
+      {isSystemUpdate ? (
+        <View style={styles.explanationBox}>
+          <View style={styles.explanationHeader}>
+            <Sparkles size={16} color={Colors.forest} />
+            <Text style={styles.explanationHeading}>What's New in this Klasio Release</Text>
+          </View>
+          <View style={styles.bulletList}>
+            <Text style={styles.bulletItem}>
+              • <Text style={styles.bulletBold}>Notification Center</Text>: Persistent local storage, swipe gestures to delete alerts, and 1-tap Clear All.
+            </Text>
+            <Text style={styles.bulletItem}>
+              • <Text style={styles.bulletBold}>Native System Feedback</Text>: Real-time Android toast popups, haptic vibration, and in-app status bar HUD alerts.
+            </Text>
+            <Text style={styles.bulletItem}>
+              • <Text style={styles.bulletBold}>Faculty Student Requests</Text>: Complete workflow for reviewing and resolving student attendance excuse petitions.
+            </Text>
+            <Text style={styles.bulletItem}>
+              • <Text style={styles.bulletBold}>Offline Sync Integrity</Text>: Tamper-proof SQLite cache with automated cloud sync and zero-image biometrics.
+            </Text>
+          </View>
+        </View>
+      ) : item.category === 'REQUEST' ? (
+        <View style={styles.explanationBox}>
+          <View style={styles.explanationHeader}>
+            <MessageSquare size={16} color="#2563eb" />
+            <Text style={styles.explanationHeading}>Student Attendance Excuse</Text>
+          </View>
+          <Text style={styles.explanationText}>
+            A student has submitted an excuse or amendment request for an attendance session. Faculty members and academic advisors can evaluate the justification, check supporting documentation, and approve or decline the request.
+          </Text>
+        </View>
+      ) : item.category === 'ATTENDANCE' ? (
+        <View style={styles.explanationBox}>
+          <View style={styles.explanationHeader}>
+            <CalendarDays size={16} color={Colors.forest} />
+            <Text style={styles.explanationHeading}>Attendance Session Record</Text>
+          </View>
+          <Text style={styles.explanationText}>
+            This attendance session was conducted using biometric face recognition or manual roster verification. Tapping below opens the full session roster and audit history.
+          </Text>
+        </View>
+      ) : item.category === 'ALERT' ? (
+        <View style={styles.explanationBox}>
+          <View style={styles.explanationHeader}>
+            <AlertTriangle size={16} color={Colors.rose} />
+            <Text style={styles.explanationHeading}>Attendance Shortage Warning</Text>
+          </View>
+          <Text style={styles.explanationText}>
+            Attendance is approaching or below the required 75% institutional threshold. Check your subject-wise analytics to review the minimum consecutive classes needed for recovery.
+          </Text>
+        </View>
+      ) : item.category === 'DELEGATION' ? (
+        <View style={styles.explanationBox}>
+          <View style={styles.explanationHeader}>
+            <ShieldCheck size={16} color="#7c3aed" />
+            <Text style={styles.explanationHeading}>Institutional Delegation</Text>
+          </View>
+          <Text style={styles.explanationText}>
+            An academic role or course session has been delegated. You can view active delegations and approve or revoke scoped permissions.
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Action Buttons */}
+      <View style={styles.sheetActionContainer}>
+        {isSystemUpdate && isPendingUpdateAvailable() ? (
+          <Button
+            variant="primary"
+            tone="forest"
+            onPress={handleDestinationAction}
+            icon={<RefreshCw size={16} color="#ffffff" />}
+          >
+            Restart App Now to Apply
+          </Button>
+        ) : targetRoute ? (
+          <Button
+            variant="primary"
+            tone="forest"
+            onPress={handleDestinationAction}
+            icon={isSystemUpdate ? <ArrowRight size={16} color="#ffffff" /> : <ExternalLink size={16} color="#ffffff" />}
+          >
+            {isSystemUpdate
+              ? 'View App Settings'
+              : item.category === 'REQUEST'
+              ? 'Open Student Requests'
+              : item.category === 'ATTENDANCE'
+              ? 'View Attendance Session'
+              : item.category === 'ALERT'
+              ? 'View Attendance & Recovery'
+              : 'Take Me There'}
+          </Button>
+        ) : null}
+
+        <View style={styles.sheetBottomButtonRow}>
+          <Button
+            variant="ghost"
+            tone="rose"
+            onPress={() => onDelete(item.id)}
+            style={{ flex: 1 }}
+            icon={<Trash2 size={16} color={Colors.rose} />}
+          >
+            Delete
+          </Button>
+          <Button
+            variant="soft"
+            onPress={onClose}
+            style={{ flex: 1 }}
+          >
+            Close
+          </Button>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Styles
+// -----------------------------------------------------------------------------
 const styles = StyleSheet.create({
   filterRow: {
     flexDirection: 'row',
@@ -406,6 +786,39 @@ const styles = StyleSheet.create({
   },
   notificationsList: {
     gap: 10,
+  },
+  swipeContainer: {
+    position: 'relative',
+    borderRadius: Radii.lg,
+    overflow: 'hidden',
+  },
+  deleteBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#ef4444',
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    borderRadius: Radii.lg,
+  },
+  deleteBackgroundButton: {
+    width: 90,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  deleteBackgroundText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  animatedCardWrapper: {
+    backgroundColor: '#ffffff',
+    borderRadius: Radii.lg,
   },
   notificationCard: {
     flexDirection: 'row',
@@ -464,6 +877,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  actionPromptRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   viewLinkRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -474,6 +897,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.forest,
   },
+  cardDeleteIconBtn: {
+    padding: 2,
+  },
   unreadDot: {
     width: 8,
     height: 8,
@@ -481,11 +907,16 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.forest,
     marginTop: 6,
   },
+  headerActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   markAllButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: Radii.sm,
     backgroundColor: 'rgba(16, 185, 129, 0.1)',
@@ -494,6 +925,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: Colors.forest,
+  },
+  clearAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: Radii.sm,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  clearAllText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.rose,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -511,5 +956,92 @@ const styles = StyleSheet.create({
     color: Colors.inkSecondary,
     textAlign: 'center',
     paddingHorizontal: 30,
+  },
+
+  // Bottom Sheet Styles
+  sheetBody: {
+    paddingHorizontal: 4,
+    paddingBottom: 24,
+    gap: 12,
+  },
+  sheetTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  sheetBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  sheetCloseButton: {
+    padding: 4,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.ink,
+    lineHeight: 24,
+  },
+  timeInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  sheetTimeText: {
+    fontSize: 12,
+    color: Colors.inkTertiary,
+  },
+  sheetMessage: {
+    fontSize: 14,
+    color: Colors.inkSecondary,
+    lineHeight: 21,
+    marginTop: 2,
+  },
+  explanationBox: {
+    backgroundColor: '#f8fafc',
+    borderRadius: Radii.md,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginTop: 6,
+    gap: 8,
+  },
+  explanationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  explanationHeading: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  explanationText: {
+    fontSize: 13,
+    color: Colors.inkSecondary,
+    lineHeight: 19,
+  },
+  bulletList: {
+    gap: 6,
+  },
+  bulletItem: {
+    fontSize: 12,
+    color: Colors.inkSecondary,
+    lineHeight: 18,
+  },
+  bulletBold: {
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  sheetActionContainer: {
+    marginTop: 12,
+    gap: 10,
+  },
+  sheetBottomButtonRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
   },
 });

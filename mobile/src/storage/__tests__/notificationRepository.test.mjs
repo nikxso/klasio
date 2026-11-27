@@ -155,4 +155,24 @@ test('Notification Repository & OTA Lifecycle Local Persistence', async (t) => {
     const updatedRow = db.prepare(`SELECT value FROM local_key_value WHERE key = ?;`).get(key);
     assert.equal(updatedRow.value, 'update-uuid-1000');
   });
+
+  await t.test('6. Delete single notification removes it by id', () => {
+    db.prepare('DELETE FROM cached_notifications WHERE id = ?;').run('ota-drop-test-123');
+    const row = db.prepare('SELECT * FROM cached_notifications WHERE id = ?;').get('ota-drop-test-123');
+    assert.equal(row, undefined);
+  });
+
+  await t.test('7. Clear all notifications removes all records for user and system', () => {
+    db.prepare(`
+      DELETE FROM cached_notifications 
+      WHERE recipient_user_id = ? OR recipient_user_id = 'system' OR recipient_user_id = 'default';
+    `).run(userId);
+
+    const remaining = db.prepare(`
+      SELECT COUNT(*) as count FROM cached_notifications 
+      WHERE (recipient_user_id = ? OR recipient_user_id = 'system' OR recipient_user_id = 'default');
+    `).get(userId);
+
+    assert.equal(remaining.count, 0);
+  });
 });
