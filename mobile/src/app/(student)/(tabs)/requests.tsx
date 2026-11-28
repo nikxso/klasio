@@ -25,6 +25,7 @@ import {
   Button,
   SectionTitle,
   Sheet,
+  SkeletonList,
 } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import {
@@ -44,6 +45,7 @@ export default function StudentRequestsScreen() {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [noteText, setNoteText] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const recentDates = useMemo(() => {
     const list: string[] = [];
@@ -145,6 +147,8 @@ export default function StudentRequestsScreen() {
       }
     } catch (e) {
       console.warn('Failed to load student requests:', e);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -250,7 +254,9 @@ export default function StudentRequestsScreen() {
       <SectionTitle>Your requests</SectionTitle>
 
       <View style={styles.requestsList}>
-        {requests.length === 0 ? (
+        {loading && requests.length === 0 ? (
+          <SkeletonList count={3} lines={3} hasAvatar={false} hasBadge />
+        ) : requests.length === 0 ? (
           <Card style={styles.emptyCard}>
             <Text style={styles.emptyText}>You're all caught up.</Text>
           </Card>

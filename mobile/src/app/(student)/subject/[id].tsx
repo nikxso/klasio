@@ -22,7 +22,7 @@ import {
   Check,
 } from 'lucide-react-native';
 
-import { Screen, Card, Ring, Bar, Chip, IconBubble, SectionTitle, Button } from '@/components/ui/kit';
+import { Screen, Card, Ring, Bar, Chip, IconBubble, SectionTitle, Button, SkeletonCard, SkeletonList } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
@@ -152,9 +152,9 @@ export default function SubjectAttendanceHistoryScreen() {
   if (loading) {
     return (
       <Screen title={title} subtitle={subtitle} onBack={() => router.back()}>
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={Colors.forest} />
-          <Text style={styles.loadingText}>Loading attendance sessions...</Text>
+        <View style={{ gap: 14, marginTop: 8 }}>
+          <SkeletonCard lines={3} hasAvatar hasBadge />
+          <SkeletonList count={4} lines={2} hasAvatar />
         </View>
       </Screen>
     );

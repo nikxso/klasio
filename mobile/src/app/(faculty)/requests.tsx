@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   MessageSquare,
   Check,
@@ -32,6 +32,7 @@ import {
   IconBubble,
   Sheet,
   AccessRestrictedView,
+  SkeletonList,
 } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
@@ -123,9 +124,11 @@ export default function FacultyRequestsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchRequests();
+    }, [fetchRequests])
+  );
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -208,14 +211,16 @@ export default function FacultyRequestsScreen() {
   };
 
   const filteredRequests = requests.filter((r) => {
-    if (filter === 'PENDING') return r.status === 'PENDING' || r.status === 'UNDER_REVIEW';
-    if (filter === 'RESOLVED') return r.status === 'APPROVED' || r.status === 'REJECTED';
+    const st = (r.status || '').toUpperCase();
+    if (filter === 'PENDING') return st === 'PENDING' || st === 'UNDER_REVIEW';
+    if (filter === 'RESOLVED') return st === 'APPROVED' || st === 'REJECTED';
     return true;
   });
 
-  const pendingCount = requests.filter(
-    (r) => r.status === 'PENDING' || r.status === 'UNDER_REVIEW'
-  ).length;
+  const pendingCount = requests.filter((r) => {
+    const st = (r.status || '').toUpperCase();
+    return st === 'PENDING' || st === 'UNDER_REVIEW';
+  }).length;
 
   return (
     <Screen
@@ -257,10 +262,7 @@ export default function FacultyRequestsScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.loadingBox}>
-          <ActivityIndicator size="large" color={Colors.forest} />
-          <Text style={styles.loadingText}>Loading student requests...</Text>
-        </View>
+        <SkeletonList count={4} lines={3} hasAvatar={false} hasBadge />
       ) : errorMsg && requests.length === 0 ? (
         <Card style={styles.emptyCard}>
           <IconBubble icon={AlertCircle} tone="rose" size={48} />

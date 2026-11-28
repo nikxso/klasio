@@ -33,7 +33,7 @@ import Svg, {
   Circle,
 } from 'react-native-svg';
 
-import { Screen, Card, Chip, SectionTitle, Avatar, Button, AccessRestrictedView } from '@/components/ui/kit';
+import { Screen, Card, Chip, SectionTitle, Avatar, Button, AccessRestrictedView, SkeletonMetricGrid, SkeletonList } from '@/components/ui/kit';
 import { Colors, Radii, Shadows } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
@@ -96,6 +96,7 @@ export default function FacultyReportsScreen() {
 
   const [reportList, setReportList] = useState<ReportAssignmentData[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [shortageOnly, setShortageOnly] = useState<boolean>(false);
   const [exporting, setExporting] = useState<boolean>(false);
@@ -152,6 +153,8 @@ export default function FacultyReportsScreen() {
       }
     } catch (err) {
       console.warn('Failed to load reports metadata:', err);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -367,12 +370,19 @@ export default function FacultyReportsScreen() {
           </Pressable>
         }
       >
-        <Card style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No classes assigned</Text>
-          <Text style={styles.emptySubtitle}>
-            Attendance intelligence and reports will appear here once teaching assignments are configured.
-          </Text>
-        </Card>
+        {loading ? (
+          <View style={{ gap: 16 }}>
+            <SkeletonMetricGrid count={4} />
+            <SkeletonList count={3} lines={2} hasAvatar />
+          </View>
+        ) : (
+          <Card style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>No classes assigned</Text>
+            <Text style={styles.emptySubtitle}>
+              Attendance intelligence and reports will appear here once teaching assignments are configured.
+            </Text>
+          </Card>
+        )}
       </Screen>
     );
   }

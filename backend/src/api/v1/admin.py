@@ -109,8 +109,15 @@ async def create_department(
     db: AsyncSession = Depends(get_db_session),
     admin_user: User = Depends(require_permission("academic_structure.create")),
 ):
+    code = payload.code.strip().upper()
+    existing = (
+        await db.execute(select(Department).where(Department.code == code))
+    ).scalar_one_or_none()
+    if existing:
+        raise ConflictError(f"Department with code '{code}' already exists.")
+
     dept = Department(
-        code=payload.code.strip().upper(),
+        code=code,
         name=payload.name.strip(),
     )
     db.add(dept)

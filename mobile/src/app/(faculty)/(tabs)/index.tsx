@@ -26,7 +26,7 @@ import {
   MessageSquare,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, SectionTitle } from '@/components/ui/kit';
+import { Screen, Card, Chip, SectionTitle, SkeletonCard, SkeletonList } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
 import { SessionStore, AuthUser } from '@/storage/sessionStore';
@@ -230,7 +230,12 @@ export default function FacultyHomeScreen() {
       scrollable
     >
       {/* Next Class Hero Card */}
-      {nextClass ? (
+      {loading && classes.length === 0 ? (
+        <View style={{ gap: 14, marginBottom: 16 }}>
+          <SkeletonCard lines={3} hasAvatar={false} hasBadge />
+          <SkeletonList count={3} lines={2} hasAvatar />
+        </View>
+      ) : nextClass ? (
         <View style={styles.heroCard}>
           <View style={styles.heroFloatCircle} />
 

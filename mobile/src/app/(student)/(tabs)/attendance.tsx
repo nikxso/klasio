@@ -33,6 +33,8 @@ import {
   IconBubble,
   SectionTitle,
   Button,
+  SkeletonCard,
+  SkeletonList,
 } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
@@ -285,6 +287,13 @@ export default function StudentAttendanceScreen() {
       }
       scrollable
     >
+      {loading && !data ? (
+        <View style={{ gap: 14 }}>
+          <SkeletonCard lines={4} hasAvatar={false} />
+          <SkeletonList count={3} lines={2} hasAvatar />
+        </View>
+      ) : (
+        <>
       {isOffline && (
         <View style={styles.offlineBanner}>
           <WifiOff size={16} color={Colors.amber} />
@@ -534,6 +543,8 @@ export default function StudentAttendanceScreen() {
           title="Attendance Progression Trend"
         />
       </View>
+        </>
+      )}
     </Screen>
   );
 }

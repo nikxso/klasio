@@ -24,7 +24,7 @@ import {
   Info,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, Button, SectionTitle, AccessRestrictedView } from '@/components/ui/kit';
+import { Screen, Card, Chip, Button, SectionTitle, AccessRestrictedView, SkeletonList } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
@@ -283,7 +283,7 @@ export default function SelectAttendanceContextScreen() {
         />
 
         {loadingAssignments ? (
-          <ActivityIndicator color={Colors.forest} style={{ marginVertical: 12 }} />
+          <SkeletonList count={3} lines={2} hasAvatar />
         ) : (
           <View style={styles.assignmentList}>
             {assignments.map((item) => {

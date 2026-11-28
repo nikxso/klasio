@@ -31,7 +31,7 @@ import {
   Edit3,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, Avatar, Sheet, Button, AccessRestrictedView } from '@/components/ui/kit';
+import { Screen, Card, Chip, Avatar, Sheet, Button, AccessRestrictedView, SkeletonList } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
@@ -1166,7 +1166,7 @@ export default function AdminPeopleScreen() {
           {accessSubTab === 'memberships' && (
             <Card style={styles.listCard}>
               {loading ? (
-                <ActivityIndicator color={Colors.forest} style={{ paddingVertical: 20 }} />
+                <SkeletonList count={4} lines={2} hasAvatar />
               ) : memberships.length > 0 ? (
                 memberships.map((m, idx) => (
                   <View key={m.id}>
@@ -1311,7 +1311,7 @@ export default function AdminPeopleScreen() {
       ) : (
         <Card style={styles.listCard}>
           {loading ? (
-            <ActivityIndicator color={Colors.forest} style={{ paddingVertical: 20 }} />
+            <SkeletonList count={5} lines={2} hasAvatar />
           ) : filteredList.length > 0 ? (
             filteredList.map((person, index) => (
               <View key={person.id}>

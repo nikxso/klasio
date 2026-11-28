@@ -22,7 +22,7 @@ import {
   RefreshCw,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, IconBubble, SectionTitle, Avatar, AccessRestrictedView } from '@/components/ui/kit';
+import { Screen, Card, Chip, IconBubble, SectionTitle, Avatar, AccessRestrictedView, SkeletonMetricGrid, SkeletonList } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { KlasioLogo } from '@/components/ui/KlasioLogo';
@@ -213,21 +213,29 @@ export default function AdminHomeScreen() {
       scrollable
     >
       {/* 2x2 Metric Grid */}
-      <View style={styles.metricsGrid}>
-        {metrics.map((m) => {
-          const Icon = m.icon;
-          return (
-            <Card key={m.label} style={styles.metricCard}>
-              <IconBubble icon={Icon} tone={m.tone} size={38} />
-              <Text style={styles.metricValue}>{m.value}</Text>
-              <Text style={styles.metricLabel}>{m.label}</Text>
-            </Card>
-          );
-        })}
-      </View>
+      {loading ? (
+        <>
+          <SkeletonMetricGrid count={4} />
+          <SectionTitle>Institutional Management</SectionTitle>
+          <SkeletonList count={3} lines={2} hasAvatar />
+        </>
+      ) : (
+        <>
+          <View style={styles.metricsGrid}>
+            {metrics.map((m) => {
+              const Icon = m.icon;
+              return (
+                <Card key={m.label} style={styles.metricCard}>
+                  <IconBubble icon={Icon} tone={m.tone} size={38} />
+                  <Text style={styles.metricValue}>{m.value}</Text>
+                  <Text style={styles.metricLabel}>{m.label}</Text>
+                </Card>
+              );
+            })}
+          </View>
 
-      {/* Needs Your Attention */}
-      <SectionTitle>Institutional Management</SectionTitle>
+          {/* Needs Your Attention */}
+          <SectionTitle>Institutional Management</SectionTitle>
       <View style={styles.attentionList}>
         {approvals.length > 0 ? (
           <Card style={styles.attentionCard}>
@@ -313,6 +321,8 @@ export default function AdminHomeScreen() {
               </View>
             ))}
           </Card>
+        </>
+      )}
         </>
       )}
     </Screen>

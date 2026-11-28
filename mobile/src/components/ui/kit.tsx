@@ -19,6 +19,13 @@ import { Colors, Radii, Shadows, Tone, ToneColors } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 export { AccessRestrictedView } from './AccessRestrictedView';
 export type { AccessRestrictedViewProps } from './AccessRestrictedView';
+export {
+  Skeleton,
+  SkeletonCard,
+  SkeletonList,
+  SkeletonChips,
+  SkeletonMetricGrid,
+} from './Skeleton';
 
 // ---------------------------------------------------------------------------
 // Screen Container

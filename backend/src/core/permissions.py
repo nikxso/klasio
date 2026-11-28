@@ -130,10 +130,27 @@ async def ensure_legacy_role_mapping(
             RoleAssignment.membership_id == membership.id,
             RoleAssignment.status == AssignmentStatus.ACTIVE,
         )
-        .limit(1)
     )
-    existing = (await db.execute(stmt)).scalar_one_or_none()
-    if existing:
+    existing_ids = (await db.execute(stmt)).scalars().all()
+    if existing_ids:
+        # Ensure at least one active assignment for legacy ADMIN/FACULTY/STUDENT has an explicit scope
+        scope_check = (
+            select(RoleAssignmentScope.id)
+            .where(RoleAssignmentScope.role_assignment_id.in_(existing_ids))
+            .limit(1)
+        )
+        if (await db.execute(scope_check)).scalar_one_or_none():
+            return
+        if user.role == UserRole.ADMIN:
+            for aid in existing_ids:
+                db.add(
+                    RoleAssignmentScope(
+                        role_assignment_id=aid,
+                        institution_id=membership.institution_id,
+                        scope_type=RoleScopeType.INSTITUTION,
+                    )
+                )
+            await db.flush()
         return
 
     target_code = "STUDENT"

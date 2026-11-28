@@ -26,6 +26,8 @@ import {
   IconBubble,
   Bar,
   SectionTitle,
+  SkeletonCard,
+  SkeletonList,
 } from '@/components/ui/kit';
 import { Colors } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
@@ -245,6 +247,14 @@ export default function StudentHomeScreen() {
       }
       scrollable
     >
+      {loading && !data ? (
+        <View style={{ gap: 14, marginBottom: 16 }}>
+          <SkeletonCard lines={3} hasAvatar hasBadge />
+          <SkeletonCard lines={3} hasAvatar={false} />
+          <SkeletonList count={3} lines={2} hasAvatar />
+        </View>
+      ) : (
+        <>
       {enrollment?.has_active_enrollment && (
         <Card style={styles.enrollmentBanner}>
           <IconBubble icon={GraduationCap} tone="forest" size={40} />
@@ -419,6 +429,8 @@ export default function StudentHomeScreen() {
           </Card>
         )}
       </View>
+        </>
+      )}
     </Screen>
   );
 }

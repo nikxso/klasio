@@ -32,7 +32,7 @@ import {
   ArrowRight,
 } from 'lucide-react-native';
 
-import { Screen, Card, Chip, SectionTitle, Sheet, Button } from '@/components/ui/kit';
+import { Screen, Card, Chip, SectionTitle, Sheet, Button, SkeletonList } from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { SessionStore } from '@/storage/sessionStore';
 import {
@@ -120,7 +120,15 @@ export default function NotificationCenterScreen() {
       if (role === 'STUDENT') return '/(student)/(tabs)/requests';
       if (
         role === 'FACULTY' ||
-        SessionStore.hasAnyRole(['FACULTY', 'HEAD_OF_DEPARTMENT', 'CLASS_ADVISOR', 'ADMIN'])
+        SessionStore.hasAnyRole([
+          'FACULTY',
+          'HEAD_OF_DEPARTMENT',
+          'CLASS_ADVISOR',
+          'ADMIN',
+          'INSTITUTION_OWNER',
+          'CENTRAL_INSTITUTION_ADMIN',
+          'CAMPUS_ADMIN',
+        ])
       ) {
         return '/(faculty)/requests';
       }
@@ -330,7 +338,7 @@ export default function NotificationCenterScreen() {
         }
       >
         {loading ? (
-          <ActivityIndicator color={Colors.forest} style={{ marginTop: 40 }} />
+          <SkeletonList count={5} lines={2} hasAvatar hasBadge />
         ) : notifications.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Bell size={44} color={Colors.soft} strokeWidth={1.5} />

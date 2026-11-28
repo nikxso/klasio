@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, ActivityIndicator, RefreshControl } 
 import { useRouter } from 'expo-router';
 import { BookOpen, ChevronRight, Users, Sparkles, AlertCircle, RefreshCw, BarChart3 } from 'lucide-react-native';
 
-import { Screen, Card, Ring, Chip, Button, SectionTitle, IconBubble } from '@/components/ui/kit';
+import { Screen, Card, Ring, Chip, Button, SectionTitle, IconBubble, SkeletonList } from '@/components/ui/kit';
 import { Colors } from '@/theme/tokens';
 import { RosterRepository } from '@/storage/rosterRepository';
 import { API_BASE_URL } from '@/config/api';
@@ -27,7 +27,7 @@ export interface TeachingAssignmentUI {
 export default function FacultyAssignmentsScreen() {
   const router = useRouter();
   const [assignments, setAssignments] = useState<TeachingAssignmentUI[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const loadAssignments = async () => {
     setLoading(true);
@@ -133,7 +133,9 @@ export default function FacultyAssignmentsScreen() {
       }
     >
       <View style={styles.listContainer}>
-        {assignments.length === 0 ? (
+        {loading && assignments.length === 0 ? (
+          <SkeletonList count={4} lines={3} hasAvatar hasBadge />
+        ) : assignments.length === 0 ? (
           <Card style={styles.emptyCard}>
             <Text style={styles.emptyText}>No classes to show yet.</Text>
           </Card>

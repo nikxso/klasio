@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 import uuid
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import (
@@ -182,7 +182,15 @@ class RequestService:
         )
 
         if reviewer_user.role != UserRole.ADMIN:
-            query = query.where(StudentAttendanceRequest.teaching_assignment_id.in_(permitted_ids))
+            if permitted_ids:
+                query = query.where(
+                    or_(
+                        StudentAttendanceRequest.teaching_assignment_id.in_(permitted_ids),
+                        TeachingAssignment.faculty_user_id == reviewer_user.id,
+                    )
+                )
+            else:
+                query = query.where(TeachingAssignment.faculty_user_id == reviewer_user.id)
 
         if teaching_assignment_id:
             query = query.where(
@@ -245,10 +253,21 @@ class RequestService:
 
         scoping = ScopingService(self.db)
         permitted_ids = await scoping.get_permitted_assignment_ids(reviewer_user)
-        if reviewer_user.role != UserRole.ADMIN and req.teaching_assignment_id not in permitted_ids:
-            raise UnauthorizedRoleError(
-                "You are not authorized to review attendance requests for this assignment"
+        if (
+            reviewer_user.role != UserRole.ADMIN
+            and req.teaching_assignment_id not in permitted_ids
+        ):
+            # Also allow the direct faculty owner even if the assignment was deactivated
+            assign_res = await self.db.execute(
+                select(TeachingAssignment.faculty_user_id).where(
+                    TeachingAssignment.id == req.teaching_assignment_id
+                )
             )
+            owner_id = assign_res.scalar_one_or_none()
+            if owner_id != reviewer_user.id:
+                raise UnauthorizedRoleError(
+                    "You are not authorized to review attendance requests for this assignment"
+                )
 
         req.status = payload.status
         req.reviewer_user_id = reviewer_user.id

@@ -6,7 +6,7 @@ import {
   Pressable,
   TextInput,
   ScrollView,
-  ActivityIndicator,
+  RefreshControl,
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -28,7 +28,18 @@ import {
   Users,
 } from 'lucide-react-native';
 
-import { Screen, Card, IconBubble, SectionTitle, Sheet, Button, Chip, AccessRestrictedView } from '@/components/ui/kit';
+import {
+  Screen,
+  Card,
+  IconBubble,
+  SectionTitle,
+  Sheet,
+  Button,
+  Chip,
+  AccessRestrictedView,
+  SkeletonList,
+  SkeletonChips,
+} from '@/components/ui/kit';
 import { Colors, Radii } from '@/theme/tokens';
 import { API_BASE_URL } from '@/config/api';
 import { SessionStore } from '@/storage/sessionStore';
@@ -137,7 +148,8 @@ export default function AdminAcademicsScreen() {
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [sections, setSections] = useState<SectionItem[]>([]);
   const [facultyUsers, setFacultyUsers] = useState<FacultyUserItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Section Roster Modal States
   const [selectedRosterSection, setSelectedRosterSection] = useState<SectionItem | null>(null);
@@ -219,122 +231,143 @@ export default function AdminAcademicsScreen() {
   const [assignSubId, setAssignSubId] = useState('');
   const [assignTermId, setAssignTermId] = useState('');
 
-  const loadAcademicsData = useCallback(async () => {
-    setLoading(true);
-    const token = SessionStore.getToken();
+  const loadAcademicsData = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    let token = SessionStore.getToken();
+    if (!token) {
+      const stored = await SessionStore.initFromStorage();
+      token = stored?.token || undefined;
+    }
+
     const headers: Record<string, string> = {
       Accept: 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
 
+    const safeFetchJson = async (url: string) => {
+      const res = await fetch(url, { headers });
+      if (!res.ok) return null;
+      return res.json();
+    };
+
     try {
-      // 0. Campuses
-      const resCampuses = await fetch(`${API_BASE_URL}/api/v1/admin/campuses`, { headers });
-      if (resCampuses.ok) {
-        const cList = await resCampuses.json();
-        setCampuses(cList);
+      const [
+        cList,
+        deptsOverview,
+        dList,
+        tList,
+        sList,
+        secList,
+        fList,
+        pList,
+        perList,
+        ttList,
+        aList,
+      ] = await Promise.all([
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/campuses`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/departments/overview`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/departments`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/terms`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/subjects`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/sections`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/users?role=faculty`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/programs`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/periods`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/timetable`).catch(() => null),
+        safeFetchJson(`${API_BASE_URL}/api/v1/admin/assignments`).catch(() => null),
+      ]);
+
+      if (Array.isArray(cList)) setCampuses(cList);
+
+      if (Array.isArray(deptsOverview)) {
+        setDepartments(
+          deptsOverview.map((d: any) => ({
+            id: d.id,
+            code: d.code,
+            name: d.name,
+            sections: d.sections_count || 0,
+            subjects: d.subjects_count || 0,
+          }))
+        );
       }
 
-      // 1. Overview
-      const resOverview = await fetch(`${API_BASE_URL}/api/v1/admin/departments/overview`, { headers });
-      if (resOverview.ok) {
-        const depts = await resOverview.json();
-        if (Array.isArray(depts) && depts.length > 0) {
-          setDepartments(
-            depts.map((d: any) => ({
-              id: d.id,
-              code: d.code,
-              name: d.name,
-              sections: d.sections_count || 0,
-              subjects: d.subjects_count || 0,
-            }))
-          );
+      if (Array.isArray(dList)) {
+        setRawDepartments(dList);
+        if (dList.length > 0) {
+          setSubDeptId((prev) => prev || dList[0].id);
+          setSecDeptId((prev) => prev || dList[0].id);
+          setProgDeptId((prev) => prev || dList[0].id);
         }
       }
 
-      // 2. Full Departments List
-      const resDepts = await fetch(`${API_BASE_URL}/api/v1/admin/departments`, { headers });
-      if (resDepts.ok) {
-        const dList = await resDepts.json();
-        setRawDepartments(dList);
-        if (dList.length > 0 && !subDeptId) setSubDeptId(dList[0].id);
-        if (dList.length > 0 && !secDeptId) setSecDeptId(dList[0].id);
-      }
-
-      // 3. Terms
-      const resTerms = await fetch(`${API_BASE_URL}/api/v1/admin/terms`, { headers });
-      if (resTerms.ok) {
-        const tList = await resTerms.json();
+      if (Array.isArray(tList)) {
         setTerms(tList);
-        if (tList.length > 0 && !secTermId) setSecTermId(tList[0].id);
-        if (tList.length > 0 && !assignTermId) setAssignTermId(tList[0].id);
+        if (tList.length > 0) {
+          setSecTermId((prev) => prev || tList[0].id);
+          setAssignTermId((prev) => prev || tList[0].id);
+        }
       }
 
-      // 4. Subjects
-      const resSubs = await fetch(`${API_BASE_URL}/api/v1/admin/subjects`, { headers });
-      if (resSubs.ok) {
-        const sList = await resSubs.json();
+      if (Array.isArray(sList)) {
         setSubjects(sList);
-        if (sList.length > 0 && !assignSubId) setAssignSubId(sList[0].id);
+        if (sList.length > 0) {
+          setAssignSubId((prev) => prev || sList[0].id);
+        }
       }
 
-      // 5. Sections
-      const resSecs = await fetch(`${API_BASE_URL}/api/v1/admin/sections`, { headers });
-      if (resSecs.ok) {
-        const cList = await resSecs.json();
-        setSections(cList);
-        if (cList.length > 0 && !assignSecId) setAssignSecId(cList[0].id);
+      if (Array.isArray(secList)) {
+        setSections(secList);
+        if (secList.length > 0) {
+          setAssignSecId((prev) => prev || secList[0].id);
+        }
       }
 
-      // 6. Faculty
-      const resFaculty = await fetch(`${API_BASE_URL}/api/v1/admin/users?role=faculty`, { headers });
-      if (resFaculty.ok) {
-        const fList = await resFaculty.json();
+      if (Array.isArray(fList)) {
         setFacultyUsers(fList);
-        if (fList.length > 0 && !assignFacultyId) setAssignFacultyId(fList[0].id);
+        if (fList.length > 0) {
+          setAssignFacultyId((prev) => prev || fList[0].id);
+        }
       }
 
-      // 7. Programs
-      const resPrograms = await fetch(`${API_BASE_URL}/api/v1/admin/programs`, { headers });
-      if (resPrograms.ok) {
-        const pList = await resPrograms.json();
+      if (Array.isArray(pList)) {
         setPrograms(pList);
-        if (pList.length > 0 && !progDeptId) setProgDeptId(pList[0].department_id);
+        if (pList.length > 0) {
+          setProgDeptId((prev) => prev || pList[0].department_id);
+        }
       }
 
-      // 8. Periods
-      const resPeriods = await fetch(`${API_BASE_URL}/api/v1/admin/periods`, { headers });
-      if (resPeriods.ok) {
-        const perList = await resPeriods.json();
+      if (Array.isArray(perList)) {
         setPeriods(perList);
         const nonBreak = perList.filter((p: PeriodItem) => !p.is_break);
-        if (nonBreak.length > 0 && !ttPeriodId) setTtPeriodId(nonBreak[0].id);
+        if (nonBreak.length > 0) {
+          setTtPeriodId((prev) => prev || nonBreak[0].id);
+        }
       }
 
-      // 9. Timetable
-      const resTimetable = await fetch(`${API_BASE_URL}/api/v1/admin/timetable`, { headers });
-      if (resTimetable.ok) {
-        const ttList = await resTimetable.json();
+      if (Array.isArray(ttList)) {
         setTimetable(ttList);
       }
 
-      // 10. Assignments
-      const resAssignments = await fetch(`${API_BASE_URL}/api/v1/admin/assignments`, { headers });
-      if (resAssignments.ok) {
-        const aList = await resAssignments.json();
+      if (Array.isArray(aList)) {
         setAssignments(aList);
-        if (aList.length > 0 && !ttAssignmentId) {
-          setTtAssignmentId(aList[0].id);
-          if (!ttSectionId) setTtSectionId(aList[0].class_section_id);
-          if (!ttTermId) setTtTermId(aList[0].academic_term_id);
+        if (aList.length > 0) {
+          setTtAssignmentId((prev) => prev || aList[0].id);
+          setTtSectionId((prev) => prev || aList[0].class_section_id);
+          setTtTermId((prev) => prev || aList[0].academic_term_id);
         }
       }
     } catch (e) {
       console.warn('Load academics error:', e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [subDeptId, secDeptId, secTermId, assignTermId, assignSubId, assignSecId, assignFacultyId, progDeptId, ttPeriodId, ttAssignmentId, ttSectionId, ttTermId]);
+  }, []);
 
   useEffect(() => {
     loadAcademicsData();
@@ -1107,14 +1140,15 @@ export default function AdminAcademicsScreen() {
     <Screen
       title="Academics"
       subtitle="Manage Departments, Subjects, Sections & Campuses"
-      onBack={() => {
-        if (router.canGoBack()) {
-          router.back();
-        } else {
-          router.replace('/(faculty)' as any);
-        }
-      }}
       scrollable
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => loadAcademicsData(true)}
+          tintColor={Colors.forest}
+          colors={[Colors.primary, Colors.forest]}
+        />
+      }
     >
       {/* Modern Segmented Navigation Bar */}
       <View style={styles.tabBarWrapper}>
@@ -1230,7 +1264,7 @@ export default function AdminAcademicsScreen() {
           <SectionTitle>Departments</SectionTitle>
           <View style={styles.departmentsList}>
             {loading && departments.length === 0 ? (
-              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+              <SkeletonList count={4} lines={2} hasAvatar />
             ) : departments.length === 0 ? (
               <Card style={styles.deptCard}>
                 <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
@@ -1270,7 +1304,7 @@ export default function AdminAcademicsScreen() {
           <SectionTitle>Degree & Academic Programs</SectionTitle>
           <View style={styles.departmentsList}>
             {loading && programs.length === 0 ? (
-              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+              <SkeletonList count={3} lines={2} hasAvatar />
             ) : programs.length === 0 ? (
               <Card style={styles.deptCard}>
                 <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
@@ -1310,7 +1344,7 @@ export default function AdminAcademicsScreen() {
           <SectionTitle>Course Subjects</SectionTitle>
           <View style={styles.departmentsList}>
             {loading && subjects.length === 0 ? (
-              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+              <SkeletonList count={4} lines={2} hasAvatar />
             ) : subjects.length === 0 ? (
               <Card style={styles.deptCard}>
                 <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
@@ -1351,7 +1385,7 @@ export default function AdminAcademicsScreen() {
           <SectionTitle>Class Sections</SectionTitle>
           <View style={styles.departmentsList}>
             {loading && sections.length === 0 ? (
-              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+              <SkeletonList count={4} lines={2} hasAvatar />
             ) : sections.length === 0 ? (
               <Card style={styles.deptCard}>
                 <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
@@ -1436,7 +1470,7 @@ export default function AdminAcademicsScreen() {
           <SectionTitle>Timetable & Period Schedule</SectionTitle>
           <View style={styles.departmentsList}>
             {loading && timetable.length === 0 ? (
-              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+              <SkeletonList count={4} lines={2} hasAvatar />
             ) : timetable.length === 0 ? (
               <Card style={styles.deptCard}>
                 <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
@@ -1486,7 +1520,7 @@ export default function AdminAcademicsScreen() {
           <SectionTitle>Campuses</SectionTitle>
           <View style={styles.departmentsList}>
             {loading && campuses.length === 0 ? (
-              <ActivityIndicator color={Colors.forest} style={{ marginVertical: 20 }} />
+              <SkeletonList count={3} lines={2} hasAvatar />
             ) : campuses.length === 0 ? (
               <Card style={styles.deptCard}>
                 <Text style={[styles.deptSub, { textAlign: 'center', width: '100%' }]}>
@@ -1976,8 +2010,12 @@ export default function AdminAcademicsScreen() {
         />
 
         <Text style={styles.inputLabel}>Select Department</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && rawDepartments.length === 0 && departments.length === 0 ? (
+          <SkeletonChips count={3} />
+        ) : (rawDepartments.length > 0 ? rawDepartments : departments).length === 0 ? (
+          <Text style={styles.emptyOptionText}>No departments available. Create a department first.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {(rawDepartments.length > 0 ? rawDepartments : departments).map((d) => (
               <Pressable
                 key={d.id}
@@ -1993,7 +2031,7 @@ export default function AdminAcademicsScreen() {
               </Pressable>
             ))}
           </View>
-        </ScrollView>
+        )}
 
         <Text style={styles.inputLabel}>Credits</Text>
         <TextInput
@@ -2033,8 +2071,12 @@ export default function AdminAcademicsScreen() {
         />
 
         <Text style={styles.inputLabel}>Select Department</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && rawDepartments.length === 0 && departments.length === 0 ? (
+          <SkeletonChips count={3} />
+        ) : (rawDepartments.length > 0 ? rawDepartments : departments).length === 0 ? (
+          <Text style={styles.emptyOptionText}>No departments available. Create a department first.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {(rawDepartments.length > 0 ? rawDepartments : departments).map((d) => (
               <Pressable
                 key={d.id}
@@ -2050,11 +2092,15 @@ export default function AdminAcademicsScreen() {
               </Pressable>
             ))}
           </View>
-        </ScrollView>
+        )}
 
         <Text style={styles.inputLabel}>Select Academic Term</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && terms.length === 0 ? (
+          <SkeletonChips count={3} />
+        ) : terms.length === 0 ? (
+          <Text style={styles.emptyOptionText}>No academic terms available. Configure a term first.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {terms.map((t) => (
               <Pressable
                 key={t.id}
@@ -2070,7 +2116,7 @@ export default function AdminAcademicsScreen() {
               </Pressable>
             ))}
           </View>
-        </ScrollView>
+        )}
 
         <Text style={styles.inputLabel}>Cohort Year</Text>
         <TextInput
@@ -2101,8 +2147,12 @@ export default function AdminAcademicsScreen() {
         {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
 
         <Text style={styles.inputLabel}>Select Faculty</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && facultyUsers.length === 0 ? (
+          <SkeletonChips count={3} />
+        ) : facultyUsers.length === 0 ? (
+          <Text style={styles.emptyOptionText}>No faculty accounts available.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {facultyUsers.map((f) => (
               <Pressable
                 key={f.id}
@@ -2118,11 +2168,15 @@ export default function AdminAcademicsScreen() {
               </Pressable>
             ))}
           </View>
-        </ScrollView>
+        )}
 
         <Text style={styles.inputLabel}>Select Section</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && sections.length === 0 ? (
+          <SkeletonChips count={3} />
+        ) : sections.length === 0 ? (
+          <Text style={styles.emptyOptionText}>No class sections available. Create a section first.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {sections.map((sec) => (
               <Pressable
                 key={sec.id}
@@ -2138,11 +2192,15 @@ export default function AdminAcademicsScreen() {
               </Pressable>
             ))}
           </View>
-        </ScrollView>
+        )}
 
         <Text style={styles.inputLabel}>Select Subject</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && subjects.length === 0 ? (
+          <SkeletonChips count={3} />
+        ) : subjects.length === 0 ? (
+          <Text style={styles.emptyOptionText}>No subjects available. Create a subject first.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {subjects.map((sub) => (
               <Pressable
                 key={sub.id}
@@ -2158,7 +2216,7 @@ export default function AdminAcademicsScreen() {
               </Pressable>
             ))}
           </View>
-        </ScrollView>
+        )}
 
         <View style={{ marginTop: 20 }}>
           <Button
@@ -2198,8 +2256,12 @@ export default function AdminAcademicsScreen() {
         />
 
         <Text style={styles.inputLabel}>Department</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && rawDepartments.length === 0 && departments.length === 0 ? (
+          <SkeletonChips count={3} />
+        ) : (rawDepartments.length > 0 ? rawDepartments : departments).length === 0 ? (
+          <Text style={styles.emptyOptionText}>No departments available. Create a department first.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {(rawDepartments.length > 0 ? rawDepartments : departments).map((d) => (
               <Pressable
                 key={d.id}
@@ -2215,7 +2277,7 @@ export default function AdminAcademicsScreen() {
               </Pressable>
             ))}
           </View>
-        </ScrollView>
+        )}
 
         <View style={{ marginTop: 20 }}>
           <Button
@@ -2236,8 +2298,12 @@ export default function AdminAcademicsScreen() {
         {errorMessage && <Text style={styles.errorBanner}>{errorMessage}</Text>}
 
         <Text style={styles.inputLabel}>Select Teaching Assignment</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && assignments.length === 0 ? (
+          <SkeletonChips count={3} />
+        ) : assignments.length === 0 ? (
+          <Text style={styles.emptyOptionText}>No teaching assignments found. Assign a teacher to a section first.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {assignments.map((a) => (
               <Pressable
                 key={a.id}
@@ -2257,11 +2323,15 @@ export default function AdminAcademicsScreen() {
               </Pressable>
             ))}
           </View>
-        </ScrollView>
+        )}
 
         <Text style={styles.inputLabel}>Select Period</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+        {loading && periods.length === 0 ? (
+          <SkeletonChips count={4} />
+        ) : periods.filter((p) => !p.is_break).length === 0 ? (
+          <Text style={styles.emptyOptionText}>No active class periods configured.</Text>
+        ) : (
+          <View style={styles.pickerWrap}>
             {periods
               .filter((p) => !p.is_break)
               .map((p) => (
@@ -2279,7 +2349,7 @@ export default function AdminAcademicsScreen() {
                 </Pressable>
               ))}
           </View>
-        </ScrollView>
+        )}
 
         <Text style={styles.inputLabel}>Day of Week</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
@@ -2391,7 +2461,7 @@ export default function AdminAcademicsScreen() {
           </View>
 
           {loadingRoster ? (
-            <ActivityIndicator color={Colors.forest} style={{ marginVertical: 30 }} />
+            <SkeletonList count={4} lines={2} hasAvatar />
           ) : rosterStudents.length === 0 ? (
             <Text style={{ textAlign: 'center', color: Colors.soft, marginVertical: 20 }}>
               No students enrolled in this section.
@@ -2550,11 +2620,28 @@ export default function AdminAcademicsScreen() {
 
 const styles = StyleSheet.create({
   tabBarWrapper: {
-    marginBottom: 12,
+    marginBottom: 14,
   },
   modernTabScrollContent: {
     gap: 8,
-    paddingVertical: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+  },
+  pickerWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  emptyOptionText: {
+    fontSize: 12,
+    color: Colors.soft,
+    fontStyle: 'italic',
+    backgroundColor: Colors.cream,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginBottom: 12,
   },
   modernTabPill: {
     flexDirection: 'row',
